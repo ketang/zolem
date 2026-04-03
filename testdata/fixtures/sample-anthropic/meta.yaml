@@ -1,0 +1,5 @@
+id: sample-anthropic
+provider: anthropic
+version: v1
+stream: true
+status: 200
