@@ -65,3 +65,32 @@ func TestLoadDefaults(t *testing.T) {
 		t.Errorf("default mode: got %q, want lorem", cfg.Mode)
 	}
 }
+
+func TestLoadFileNotFound(t *testing.T) {
+	_, err := config.Load("/nonexistent/path/config.yaml")
+	if err == nil {
+		t.Error("expected error for missing file")
+	}
+}
+
+func TestLoadInvalidYAML(t *testing.T) {
+	f, _ := os.CreateTemp(t.TempDir(), "*.yaml")
+	f.WriteString(":\tinvalid: yaml: [")
+	f.Close()
+
+	_, err := config.Load(f.Name())
+	if err == nil {
+		t.Error("expected error for invalid YAML")
+	}
+}
+
+func TestLoadInvalidMode(t *testing.T) {
+	f, _ := os.CreateTemp(t.TempDir(), "*.yaml")
+	f.WriteString("mode: turbo\n")
+	f.Close()
+
+	_, err := config.Load(f.Name())
+	if err == nil {
+		t.Error("expected error for invalid mode")
+	}
+}

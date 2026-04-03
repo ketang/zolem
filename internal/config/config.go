@@ -42,6 +42,9 @@ type RouteConfig struct {
 	Labels   map[string]string `yaml:"labels"`
 }
 
+// Load reads a YAML configuration file and returns a parsed Config.
+// Defaults: Mode="lorem", Server.Addr=":8080", Specs.RefreshInterval=6h.
+// Valid modes are "lorem" and "fixture".
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
