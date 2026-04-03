@@ -73,7 +73,7 @@ zolem/
 - Create: `go.mod`
 - Create: `cmd/zolem/main.go`
 
-- [ ] **Step 1: Initialize the module**
+- [x] **Step 1: Initialize the module**
 
 ```bash
 cd /home/ketan/project/zolem
@@ -82,7 +82,7 @@ go mod init zolem.dev/zolem
 
 Expected output: `go: creating new go.mod: module zolem.dev/zolem`
 
-- [ ] **Step 2: Add dependencies**
+- [x] **Step 2: Add dependencies**
 
 ```bash
 go get github.com/go-chi/chi/v5@latest
@@ -92,7 +92,7 @@ go get gopkg.in/yaml.v3@latest
 go mod tidy
 ```
 
-- [ ] **Step 3: Write the minimal main.go**
+- [x] **Step 3: Write the minimal main.go**
 
 ```go
 // cmd/zolem/main.go
@@ -122,7 +122,7 @@ func main() {
 }
 ```
 
-- [ ] **Step 4: Verify it compiles (will fail at runtime — config doesn't exist yet)**
+- [x] **Step 4: Verify it compiles (will fail at runtime — config doesn't exist yet)**
 
 ```bash
 go build ./cmd/zolem/
@@ -130,7 +130,7 @@ go build ./cmd/zolem/
 
 Expected: binary produced, no compile errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add go.mod go.sum cmd/zolem/main.go
@@ -145,7 +145,7 @@ git commit -m "feat: project scaffold with module and main entrypoint"
 - Create: `internal/config/config.go`
 - Create: `internal/config/config_test.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 // internal/config/config_test.go
@@ -217,7 +217,7 @@ func TestLoadDefaults(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to confirm failure**
+- [x] **Step 2: Run to confirm failure**
 
 ```bash
 go test ./internal/config/ -v
@@ -225,7 +225,7 @@ go test ./internal/config/ -v
 
 Expected: compile error — package does not exist yet.
 
-- [ ] **Step 3: Implement config.go**
+- [x] **Step 3: Implement config.go**
 
 ```go
 // internal/config/config.go
@@ -293,7 +293,7 @@ func Load(path string) (*Config, error) {
 }
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 ```bash
 go test ./internal/config/ -v
@@ -301,7 +301,7 @@ go test ./internal/config/ -v
 
 Expected: `PASS`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/config/
@@ -316,7 +316,7 @@ git commit -m "feat: config struct and YAML loader with defaults"
 - Create: `internal/router/router.go`
 - Create: `internal/router/router_test.go`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```go
 // internal/router/router_test.go
@@ -398,7 +398,7 @@ func TestMatch_FirstWins(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to confirm failure**
+- [x] **Step 2: Run to confirm failure**
 
 ```bash
 go test ./internal/router/ -v
@@ -406,7 +406,7 @@ go test ./internal/router/ -v
 
 Expected: compile error.
 
-- [ ] **Step 3: Implement router.go**
+- [x] **Step 3: Implement router.go**
 
 ```go
 // internal/router/router.go
@@ -483,7 +483,7 @@ func matchParts(host, pattern []string) ([]string, bool) {
 }
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 ```bash
 go test ./internal/router/ -v
@@ -491,7 +491,7 @@ go test ./internal/router/ -v
 
 Expected: `PASS`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/router/
@@ -516,7 +516,7 @@ git commit -m "feat: virtual host router with wildcard label extraction"
 - OpenAI: `https://raw.githubusercontent.com/openai/openai-openapi/master/openapi.yaml`
 - Gemini v1beta: `https://raw.githubusercontent.com/googleapis/googleapis/master/google/ai/generativelanguage/v1beta/generativelanguage_v1beta.yaml` (if not found, use Google's discovery endpoint: `https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta`)
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 ```go
 // internal/specs/fetcher_test.go
@@ -599,7 +599,7 @@ func TestFetcher_ServesFromCacheOnSecondCall(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to confirm failure**
+- [x] **Step 2: Run to confirm failure**
 
 ```bash
 go test ./internal/specs/ -run TestFetcher -v
@@ -607,7 +607,7 @@ go test ./internal/specs/ -run TestFetcher -v
 
 Expected: compile error.
 
-- [ ] **Step 3: Implement fetcher.go**
+- [x] **Step 3: Implement fetcher.go**
 
 ```go
 // internal/specs/fetcher.go
@@ -703,7 +703,7 @@ func fetchURL(url string) ([]byte, error) {
 }
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 ```bash
 go test ./internal/specs/ -run TestFetcher -v
@@ -711,7 +711,7 @@ go test ./internal/specs/ -run TestFetcher -v
 
 Expected: `PASS`
 
-- [ ] **Step 5: Create minimal bundled spec stubs** (these get replaced with real spec content — for now just valid JSON/YAML skeletons so the build doesn't break)
+- [x] **Step 5: Create minimal bundled spec stubs** (these get replaced with real spec content — for now just valid JSON/YAML skeletons so the build doesn't break)
 
 ```bash
 mkdir -p specs
@@ -720,7 +720,7 @@ echo '{"openapi":"3.1.0","info":{"title":"OpenAI API","version":"v1"},"paths":{}
 echo '{"openapi":"3.1.0","info":{"title":"Gemini API","version":"v1beta"},"paths":{}}' > specs/gemini-v1beta.json
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add internal/specs/fetcher.go internal/specs/fetcher_test.go specs/
@@ -735,7 +735,7 @@ git commit -m "feat: spec fetcher with disk cache and fallback"
 - Create: `internal/specs/validator.go`
 - Create: `internal/specs/validator_test.go`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 ```go
 // internal/specs/validator_test.go
@@ -789,7 +789,7 @@ func TestValidator_UnknownProviderVersion(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to confirm failure**
+- [x] **Step 2: Run to confirm failure**
 
 ```bash
 go test ./internal/specs/ -run TestValidator -v
@@ -797,7 +797,7 @@ go test ./internal/specs/ -run TestValidator -v
 
 Expected: compile error.
 
-- [ ] **Step 3: Implement validator.go**
+- [x] **Step 3: Implement validator.go**
 
 ```go
 // internal/specs/validator.go
@@ -891,7 +891,7 @@ func collectMessages(ve *jsonschema.ValidationError) []string {
 }
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 ```bash
 go test ./internal/specs/ -run TestValidator -v
@@ -899,7 +899,7 @@ go test ./internal/specs/ -run TestValidator -v
 
 Expected: `PASS`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/specs/validator.go internal/specs/validator_test.go
