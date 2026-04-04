@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 
 	"zolem.dev/zolem/internal/response"
 )
@@ -63,6 +64,5 @@ func streamResponse(w http.ResponseWriter, model string, tokens []string, inputT
 var pseudoCounter uint64
 
 func pseudoRandID() uint64 {
-	pseudoCounter++
-	return pseudoCounter
+	return atomic.AddUint64(&pseudoCounter, 1)
 }

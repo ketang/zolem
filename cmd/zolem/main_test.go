@@ -104,7 +104,10 @@ func TestVirtualHost_NoRouteReturnsZolemError(t *testing.T) {
 
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/anything", bytes.NewBufferString("{}"))
 	req.Host = "unknown.host.dev"
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
 	defer resp.Body.Close()
 
 	if resp.Header.Get("X-Zolem-Error") != "true" {
