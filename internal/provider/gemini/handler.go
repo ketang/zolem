@@ -1,0 +1,191 @@
+package gemini
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+	"zolem.dev/zolem/internal/fixture"
+	"zolem.dev/zolem/internal/response"
+	"zolem.dev/zolem/internal/router"
+	"zolem.dev/zolem/internal/specs"
+)
+
+type Handler struct {
+	validator *specs.Validator
+	matcher   *fixture.Matcher
+	lorem     *response.LoremGenerator
+	mux       *chi.Mux
+}
+
+func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, lorem *response.LoremGenerator) *Handler {
+	h := &Handler{validator: validator, matcher: matcher, lorem: lorem}
+	h.mux = chi.NewRouter()
+	// chi uses ':param' syntax so colons in literal path segments break routing.
+	// Use a catch-all under /v1/models/ and /v1beta/models/ and dispatch by
+	// the action suffix (:generateContent vs :streamGenerateContent).
+	h.mux.Post("/v1/models/*", h.handleCatchAll("v1"))
+	h.mux.Post("/v1beta/models/*", h.handleCatchAll("v1beta"))
+	return h
+}
+
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.mux.ServeHTTP(w, r)
+}
+
+// handleCatchAll returns a handler that resolves the model name and action
+// from the wildcard path segment (e.g. "gemini-2.0-flash:generateContent").
+func (h *Handler) handleCatchAll(version string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// wildcard contains everything after /v1/models/ or /v1beta/models/
+		wildcard := chi.URLParam(r, "*")
+
+		// split on ':' to get model and action
+		colonIdx := strings.LastIndex(wildcard, ":")
+		if colonIdx == -1 {
+			http.NotFound(w, r)
+			return
+		}
+		model := wildcard[:colonIdx]
+		action := wildcard[colonIdx+1:]
+
+		// strip any query string from action (e.g. "streamGenerateContent?alt=sse")
+		if qIdx := strings.Index(action, "?"); qIdx != -1 {
+			action = action[:qIdx]
+		}
+
+		var stream bool
+		switch action {
+		case "generateContent":
+			stream = false
+		case "streamGenerateContent":
+			stream = true
+		default:
+			http.NotFound(w, r)
+			return
+		}
+
+		h.handleGenerate(w, r, version, model, stream)
+	}
+}
+
+func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version, model string, stream bool) {
+	if r.Header.Get("x-goog-api-key") == "" {
+		writeForbidden(w)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeInvalidRequest(w, "failed to read request body")
+		return
+	}
+
+	if err := h.validator.Validate("gemini", version, body); err != nil {
+		writeInvalidRequest(w, err.Error())
+		return
+	}
+
+	var req GenerateContentRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeInvalidRequest(w, "invalid JSON: "+err.Error())
+		return
+	}
+	if len(req.Contents) == 0 {
+		writeInvalidRequest(w, "contents is required")
+		return
+	}
+
+	matchReq := fixture.MatchRequest{
+		Provider: "gemini", Version: version,
+		Labels: labelsFromContext(r.Context()),
+		Body:   json.RawMessage(body),
+	}
+	matched, _ := h.matcher.Match(r.Context(), matchReq)
+	if matched != nil {
+		serveFixture(w, matched, stream, model)
+		return
+	}
+
+	tokens := h.lorem.Generate(30)
+	promptTokens := estimatePromptTokens(req)
+
+	if stream {
+		streamResponse(w, model, tokens, promptTokens)
+		return
+	}
+
+	text := strings.Join(tokens, "")
+	resp := GenerateContentResponse{
+		Candidates: []Candidate{{
+			Content:      Content{Parts: []Part{{Text: text}}, Role: "model"},
+			FinishReason: "STOP",
+			Index:        0,
+		}},
+		UsageMetadata: UsageMetadata{
+			PromptTokenCount:     promptTokens,
+			CandidatesTokenCount: len(tokens),
+			TotalTokenCount:      promptTokens + len(tokens),
+		},
+		ModelVersion: model,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func serveFixture(w http.ResponseWriter, f *fixture.Fixture, stream bool, model string) {
+	if !stream {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(f.Status)
+		w.Write(f.ResponseBody)
+		return
+	}
+	var resp GenerateContentResponse
+	if err := json.Unmarshal(f.ResponseBody, &resp); err != nil || len(resp.Candidates) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(f.Status)
+		w.Write(f.ResponseBody)
+		return
+	}
+	text := ""
+	if len(resp.Candidates[0].Content.Parts) > 0 {
+		text = resp.Candidates[0].Content.Parts[0].Text
+	}
+	tokens := tokenize(text)
+	streamResponse(w, model, tokens, resp.UsageMetadata.PromptTokenCount)
+}
+
+func tokenize(text string) []string {
+	words := strings.Fields(text)
+	tokens := make([]string, len(words))
+	for i, w := range words {
+		if i < len(words)-1 {
+			tokens[i] = w + " "
+		} else {
+			tokens[i] = w
+		}
+	}
+	return tokens
+}
+
+func estimatePromptTokens(req GenerateContentRequest) int {
+	total := 0
+	for _, c := range req.Contents {
+		for _, p := range c.Parts {
+			total += len(strings.Fields(p.Text)) + 4
+		}
+	}
+	return total
+}
+
+func labelsFromContext(ctx context.Context) map[string]string {
+	if v := ctx.Value(router.LabelsKey{}); v != nil {
+		if labels, ok := v.(map[string]string); ok {
+			return labels
+		}
+	}
+	return map[string]string{}
+}
