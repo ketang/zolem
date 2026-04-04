@@ -52,7 +52,9 @@ func (r *Runner) Score(ctx context.Context, mod CompiledModule, input []byte) (f
 	}
 	defer inst.Close(ctx)
 
-	mem := inst.Memory()
+	// Fixtures are expected to export memory under the standard "memory" name;
+	// using any memory instance would miss the error path the loader relies on.
+	mem := inst.ExportedMemory("memory")
 	if mem == nil {
 		return -1, fmt.Errorf("module has no exported memory")
 	}
