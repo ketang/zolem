@@ -68,6 +68,18 @@ func newAnthropicHandler(t *testing.T, validator *specs.Validator, buildFixtures
 	return anthropic.NewHandler(validator, matcher, response.NewLoremGenerator())
 }
 
+func loadAnthropicVendoredSnapshot(t *testing.T, validator *specs.Validator) {
+	t.Helper()
+
+	data, ok := specs.VendoredFallbacks()["anthropic:v1"]
+	if !ok {
+		t.Fatal("missing anthropic vendored snapshot")
+	}
+	if err := specs.LoadProviderSchema(validator, "anthropic", "v1", data); err != nil {
+		t.Fatalf("load anthropic vendored snapshot: %v", err)
+	}
+}
+
 func compileWASM(t *testing.T, r *fixture.Runner, wasm []byte) fixture.CompiledModule {
 	t.Helper()
 	mod, err := r.CompileWASM(context.Background(), wasm)
@@ -140,23 +152,10 @@ func TestMessages_InvalidJSON(t *testing.T) {
 
 func TestMessages_ValidationFailure(t *testing.T) {
 	validator := specs.NewValidator()
-	schema := `{
-		"$schema": "https://json-schema.org/draft/2020-12/schema",
-		"type": "object",
-		"required": ["model", "messages"],
-		"properties": {
-			"model": {"type": "string"},
-			"messages": {"type": "array"},
-			"max_tokens": {"type": "integer"}
-		},
-		"additionalProperties": true
-	}`
-	if err := validator.LoadRaw("anthropic", "v1", []byte(schema)); err != nil {
-		t.Fatalf("load schema: %v", err)
-	}
+	loadAnthropicVendoredSnapshot(t, validator)
 	h := newAnthropicHandler(t, validator, func(*fixture.Runner) []fixture.Fixture { return nil })
 
-	req := newAuthRequest(`{"model":"claude-3-5-sonnet-20241022","max_tokens":100}`)
+	req := newAuthRequest(`{"model":"claude-3-5-sonnet-20241022","max_tokens":100,"messages":[{"role":"system","content":"hi"}]}`)
 	rr := httptest.NewRecorder()
 
 	h.ServeHTTP(rr, req)
