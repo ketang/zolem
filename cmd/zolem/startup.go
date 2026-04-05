@@ -49,7 +49,7 @@ func (d startupDeps) withDefaults() startupDeps {
 	}
 	if d.newFetcher == nil {
 		d.newFetcher = func(cacheDir string, sources map[string]string) specFetcher {
-			return specs.NewFetcher(cacheDir, sources)
+			return specs.NewFetcherWithFallback(cacheDir, sources, specs.VendoredFallbacks())
 		}
 	}
 	if d.newRunner == nil {
@@ -130,7 +130,7 @@ func loadSpecs(validator *specs.Validator, fetcher specFetcher) []string {
 			warnings = append(warnings, fmt.Sprintf("failed to fetch spec %s: %v (validation disabled)", key, err))
 			continue
 		}
-		if err := validator.LoadRaw(provider, version, data); err != nil {
+		if err := specs.LoadProviderSchema(validator, provider, version, data); err != nil {
 			warnings = append(warnings, fmt.Sprintf("failed to load spec %s: %v", key, err))
 		}
 	}
@@ -215,7 +215,6 @@ func splitKey(key string) (string, string) {
 
 func specSourceMap() map[string]string {
 	return map[string]string{
-		"anthropic:v1":  "https://raw.githubusercontent.com/anthropics/anthropic-sdk-python/main/api.json",
 		"openai:v1":     "https://raw.githubusercontent.com/openai/openai-openapi/master/openapi.yaml",
 		"gemini:v1":     "https://generativelanguage.googleapis.com/$discovery/rest?version=v1",
 		"gemini:v1beta": "https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta",

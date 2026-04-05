@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Anthropic Messages API Request",
+  "description": "Normalized request schema for POST /v1/messages derived from Anthropic's public API docs.",
+  "type": "object",
+  "required": [
+    "model",
+    "max_tokens",
+    "messages"
+  ],
+  "properties": {
+    "model": {
+      "type": "string"
+    },
+    "max_tokens": {
+      "type": "integer"
+    },
+    "messages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/message"
+      }
+    },
+    "system": {
+      "type": "string"
+    },
+    "stream": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "message": {
+      "type": "object",
+      "required": [
+        "role",
+        "content"
+      ],
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": [
+            "user",
+            "assistant"
+          ]
+        },
+        "content": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}
