@@ -24,6 +24,8 @@ func (PassThroughNormalizer) Normalize(source ContractSource, raw []byte) (Norma
 	switch source.Kind {
 	case SourceKindVendoredDocsSnapshot:
 		return NormalizedSchema{Bytes: raw}, nil
+	case SourceKindOpenAPI:
+		return OpenAPINormalizer{}.Normalize(source, raw)
 	default:
 		return NormalizedSchema{}, fmt.Errorf("normalization for source kind %q is not implemented", source.Kind)
 	}

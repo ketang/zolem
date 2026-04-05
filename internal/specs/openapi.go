@@ -8,16 +8,44 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
+// OpenAPINormalizer implements Normalizer for OpenAPI source documents.
+type OpenAPINormalizer struct{}
+
+func (OpenAPINormalizer) Normalize(source ContractSource, raw []byte) (NormalizedSchema, error) {
+	doc, err := loadOpenAPIDocument(raw)
+	if err != nil {
+		return NormalizedSchema{}, err
+	}
+
+	schemaRef, err := lookupRequestSchema(doc, source)
+	if err != nil {
+		return NormalizedSchema{}, err
+	}
+
+	normalized, err := normalizeSchemaRef(schemaRef)
+	if err != nil {
+		return NormalizedSchema{}, err
+	}
+
+	data, err := json.Marshal(normalized)
+	if err != nil {
+		return NormalizedSchema{}, fmt.Errorf("marshal normalized schema: %w", err)
+	}
+
+	return NormalizedSchema{Bytes: data}, nil
+}
+
 // NormalizeOpenAPI extracts the supported request schema from an upstream
 // OpenAPI document and converts it into the JSON Schema shape expected by the
 // validator.
 func NormalizeOpenAPI(provider, version string, data []byte) ([]byte, error) {
+	source := ContractSource{Provider: provider, Version: version, Kind: SourceKindOpenAPI}
 	doc, err := loadOpenAPIDocument(data)
 	if err != nil {
 		return nil, fmt.Errorf("parse openapi document for %s/%s: %w", provider, version, err)
 	}
 
-	schemaRef, err := lookupRequestSchema(doc, provider, version)
+	schemaRef, err := lookupRequestSchema(doc, source)
 	if err != nil {
 		return nil, fmt.Errorf("extract openapi request schema for %s/%s: %w", provider, version, err)
 	}
@@ -39,46 +67,49 @@ func loadOpenAPIDocument(raw []byte) (*openapi3.T, error) {
 	loader := openapi3.NewLoader()
 	doc, err := loader.LoadFromData(raw)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse openapi document: %w", err)
 	}
 	if err := doc.Validate(context.Background()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("validate openapi document: %w", err)
 	}
 	return doc, nil
 }
 
-func lookupRequestSchema(doc *openapi3.T, provider, version string) (*openapi3.SchemaRef, error) {
-	path, method, err := supportedOpenAPIOperation(provider, version)
+func lookupRequestSchema(doc *openapi3.T, source ContractSource) (*openapi3.SchemaRef, error) {
+	path, method, err := supportedOpenAPIOperation(source)
 	if err != nil {
 		return nil, err
 	}
 
 	pathItem := doc.Paths.Value(path)
 	if pathItem == nil {
-		return nil, fmt.Errorf("operation not found: %s %s", method, path)
+		return nil, fmt.Errorf("openapi operation not found for %s: %s %s", source.Key(), method, path)
 	}
 
 	operation := pathItem.GetOperation(method)
 	if operation == nil {
-		return nil, fmt.Errorf("operation not found: %s %s", method, path)
+		return nil, fmt.Errorf("openapi operation not found for %s: %s %s", source.Key(), method, path)
 	}
 	if operation.RequestBody == nil || operation.RequestBody.Value == nil {
-		return nil, fmt.Errorf("request body not found: %s %s", method, path)
+		return nil, fmt.Errorf("openapi request body not found for %s: %s %s", source.Key(), method, path)
 	}
 
 	content := operation.RequestBody.Value.Content
 	if mediaType := content.Get("application/json"); mediaType != nil && mediaType.Schema != nil {
 		return mediaType.Schema, nil
 	}
-	return nil, fmt.Errorf("application/json request body schema not found: %s %s", method, path)
+	if mediaType := content.Get("application/octet-stream"); mediaType != nil && mediaType.Schema != nil {
+		return mediaType.Schema, nil
+	}
+	return nil, fmt.Errorf("openapi json request body schema not found for %s: %s %s", source.Key(), method, path)
 }
 
-func supportedOpenAPIOperation(provider, version string) (path string, method string, err error) {
-	switch provider + ":" + version {
+func supportedOpenAPIOperation(source ContractSource) (path string, method string, err error) {
+	switch source.Key() {
 	case "openai:v1", "openrouter:v1":
 		return "/v1/chat/completions", "POST", nil
 	default:
-		return "", "", fmt.Errorf("no supported openapi operation configured for %s:%s", provider, version)
+		return "", "", fmt.Errorf("no supported openapi operation configured for %s", source.Key())
 	}
 }
 
@@ -90,23 +121,18 @@ func normalizeSchemaRef(ref *openapi3.SchemaRef) (map[string]any, error) {
 		return nil, fmt.Errorf("schema ref has no value")
 	}
 
-	schema := ref.Value
 	result := map[string]any{}
-
+	schema := ref.Value
 	if schema.Type != nil {
-		types := schema.Type.Slice()
-		switch {
-		case schema.Nullable && len(types) == 0:
-			result["type"] = []string{"null"}
-		case schema.Nullable && len(types) == 1:
-			result["type"] = []string{types[0], "null"}
-		case schema.Nullable:
-			result["type"] = append(append([]string{}, types...), "null")
-		case len(types) == 1:
-			result["type"] = types[0]
-		case len(types) > 1:
-			result["type"] = append([]string{}, types...)
+		if schema.Nullable {
+			result["type"] = append([]string{}, append(schema.Type.Slice(), "null")...)
+		} else if len(schema.Type.Slice()) == 1 {
+			result["type"] = schema.Type.Slice()[0]
+		} else {
+			result["type"] = schema.Type.Slice()
 		}
+	} else if schema.Nullable {
+		result["type"] = []string{"null"}
 	}
 
 	if schema.Title != "" {
@@ -121,11 +147,11 @@ func normalizeSchemaRef(ref *openapi3.SchemaRef) (map[string]any, error) {
 	if schema.Default != nil {
 		result["default"] = schema.Default
 	}
-	if len(schema.Enum) > 0 {
-		result["enum"] = append([]any(nil), schema.Enum...)
+	if schema.Enum != nil {
+		result["enum"] = schema.Enum
 	}
-	if len(schema.Required) > 0 {
-		result["required"] = append([]string(nil), schema.Required...)
+	if schema.Required != nil {
+		result["required"] = schema.Required
 	}
 	if schema.Min != nil {
 		result["minimum"] = *schema.Min

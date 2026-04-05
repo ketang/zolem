@@ -4,8 +4,19 @@
   "required": ["model", "messages"],
   "properties": {
     "model": {"type": "string"},
-    "messages": {"type": "array"},
+    "messages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["role", "content"],
+        "properties": {
+          "role": {"type": "string"},
+          "content": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
     "stream": {"type": "boolean"}
   },
-  "additionalProperties": true
+  "additionalProperties": false
 }
