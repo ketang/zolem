@@ -56,7 +56,49 @@ func (f fakeFetcher) Get(provider, version string) ([]byte, error) {
 	if result, ok := f[provider+":"+version]; ok {
 		return result.data, result.err
 	}
-	return nil, errors.New("unexpected spec request")
+	return nil, nil
+}
+
+type fakeContractLoader struct {
+	fallbacks map[string]loadResult
+	refreshes map[string]loadResult
+}
+
+type loadResult struct {
+	schema specs.NormalizedSchema
+	err    error
+}
+
+func (f fakeContractLoader) LoadFallback(source specs.ContractSource) (specs.NormalizedSchema, error) {
+	if result, ok := f.fallbacks[source.Key()]; ok {
+		return result.schema, result.err
+	}
+	return specs.NormalizedSchema{}, errors.New("unexpected fallback contract request")
+}
+
+func (f fakeContractLoader) Refresh(source specs.ContractSource) (specs.NormalizedSchema, error) {
+	if result, ok := f.refreshes[source.Key()]; ok {
+		return result.schema, result.err
+	}
+	return specs.NormalizedSchema{}, errors.New("unexpected refresh contract request")
+}
+
+func fakeLoaderForTests() fakeContractLoader {
+	return fakeContractLoader{
+		fallbacks: map[string]loadResult{
+			"anthropic:v1":  {schema: specs.NormalizedSchema{Bytes: []byte(startupMinimalAnthropicSchema)}},
+			"openai:v1":     {schema: specs.NormalizedSchema{Bytes: []byte(startupMinimalOpenAISchema)}},
+			"openrouter:v1": {schema: specs.NormalizedSchema{Bytes: []byte(startupMinimalOpenAISchema)}},
+			"gemini:v1":     {schema: specs.NormalizedSchema{Bytes: []byte(startupMinimalGeminiSchema)}},
+			"gemini:v1beta": {schema: specs.NormalizedSchema{Bytes: []byte(startupMinimalGeminiSchema)}},
+		},
+		refreshes: map[string]loadResult{
+			"openai:v1":     {err: errors.New("fetch failed")},
+			"openrouter:v1": {err: errors.New("fetch failed")},
+			"gemini:v1":     {err: errors.New("fetch failed")},
+			"gemini:v1beta": {err: errors.New("fetch failed")},
+		},
+	}
 }
 
 func disabledOllamaClient(context.Context, config.OllamaConfig) (textGenerator, []string) {
@@ -87,20 +129,18 @@ func TestRun_ConfigLoadFailure(t *testing.T) {
 	}
 }
 
-func TestBuildStartupApp_SpecWarnings(t *testing.T) {
+func TestBuildStartupApp_RefreshWarningsKeepFallbackSchema(t *testing.T) {
 	cfg := &config.Config{
 		Specs: config.SpecsConfig{CacheDir: t.TempDir()},
 	}
 
 	validator := specs.NewValidator()
 	app, warnings, err := buildStartupApp(cfg, startupDeps{
-		newFetcher: func(string, map[string]string) specFetcher {
-			return fakeFetcher{
-				"anthropic:v1":  {err: errors.New("fetch failed")},
-				"openai:v1":     {data: []byte("not-json")},
-				"gemini:v1":     {data: []byte(`{"type":"object"}`)},
-				"gemini:v1beta": {data: []byte(`{"type":"object"}`)},
-			}
+		newContractLoader: func(string) contractLoader {
+			loader := fakeLoaderForTests()
+			loader.refreshes["openai:v1"] = loadResult{err: errors.New("normalize failed")}
+			loader.refreshes["openrouter:v1"] = loadResult{err: errors.New("normalize failed")}
+			return loader
 		},
 		newValidator: func() *specs.Validator {
 			return validator
@@ -116,14 +156,20 @@ func TestBuildStartupApp_SpecWarnings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(warnings) < 2 {
+	if len(warnings) < 4 {
 		t.Fatalf("expected warnings, got %v", warnings)
 	}
-	if !containsWarning(warnings, "failed to fetch spec anthropic:v1") {
-		t.Fatalf("missing fetch warning: %v", warnings)
+	if !containsWarning(warnings, "failed to refresh contract openai:v1") {
+		t.Fatalf("missing openai refresh warning: %v", warnings)
 	}
-	if !containsWarning(warnings, "failed to load spec openai:v1") {
-		t.Fatalf("missing validation warning: %v", warnings)
+	if !containsWarning(warnings, "failed to refresh contract openrouter:v1") {
+		t.Fatalf("missing openrouter refresh warning: %v", warnings)
+	}
+	if err := validator.Validate("openai", "v1", []byte(`{"model":"gpt-4o","messages":[]}`)); err != nil {
+		t.Fatalf("expected fallback openai schema to remain loaded, got %v", err)
+	}
+	if err := validator.Validate("openai", "v1", []byte(`{"messages":[]}`)); err == nil {
+		t.Fatal("expected fallback openai schema to reject missing model")
 	}
 }
 
@@ -243,13 +289,8 @@ func TestBuildStartupApp_FixtureDirLoadFailure(t *testing.T) {
 	}
 
 	_, _, err := buildStartupApp(cfg, startupDeps{
-		newFetcher: func(string, map[string]string) specFetcher {
-			return fakeFetcher{
-				"anthropic:v1":  {err: errors.New("fetch failed")},
-				"openai:v1":     {err: errors.New("fetch failed")},
-				"gemini:v1":     {err: errors.New("fetch failed")},
-				"gemini:v1beta": {err: errors.New("fetch failed")},
-			}
+		newContractLoader: func(string) contractLoader {
+			return fakeLoaderForTests()
 		},
 		newRunner:       fixture.NewRunner,
 		newLorem:        response.NewLoremGenerator,
@@ -273,13 +314,8 @@ func TestBuildStartupApp_WASMReadFailure(t *testing.T) {
 	}
 
 	_, _, err := buildStartupApp(cfg, startupDeps{
-		newFetcher: func(string, map[string]string) specFetcher {
-			return fakeFetcher{
-				"anthropic:v1":  {err: errors.New("fetch failed")},
-				"openai:v1":     {err: errors.New("fetch failed")},
-				"gemini:v1":     {err: errors.New("fetch failed")},
-				"gemini:v1beta": {err: errors.New("fetch failed")},
-			}
+		newContractLoader: func(string) contractLoader {
+			return fakeLoaderForTests()
 		},
 		newRunner:       fixture.NewRunner,
 		newLorem:        response.NewLoremGenerator,
@@ -305,13 +341,8 @@ func TestBuildStartupApp_WASMCompileFailure(t *testing.T) {
 	}
 
 	_, _, err := buildStartupApp(cfg, startupDeps{
-		newFetcher: func(string, map[string]string) specFetcher {
-			return fakeFetcher{
-				"anthropic:v1":  {err: errors.New("fetch failed")},
-				"openai:v1":     {err: errors.New("fetch failed")},
-				"gemini:v1":     {err: errors.New("fetch failed")},
-				"gemini:v1beta": {err: errors.New("fetch failed")},
-			}
+		newContractLoader: func(string) contractLoader {
+			return fakeLoaderForTests()
 		},
 		newRunner:       fixture.NewRunner,
 		newLorem:        response.NewLoremGenerator,
@@ -727,13 +758,8 @@ func TestRun_UsesTLSWhenConfigured(t *testing.T) {
 		loadConfig: func(string) (*config.Config, error) {
 			return cfg, nil
 		},
-		newFetcher: func(string, map[string]string) specFetcher {
-			return fakeFetcher{
-				"anthropic:v1":  {err: errors.New("fetch failed")},
-				"openai:v1":     {err: errors.New("fetch failed")},
-				"gemini:v1":     {err: errors.New("fetch failed")},
-				"gemini:v1beta": {err: errors.New("fetch failed")},
-			}
+		newContractLoader: func(string) contractLoader {
+			return fakeLoaderForTests()
 		},
 		newRunner:       fixture.NewRunner,
 		newLorem:        response.NewLoremGenerator,
@@ -784,13 +810,8 @@ func TestRun_UsesPlainHTTPWhenTLSMissing(t *testing.T) {
 		loadConfig: func(string) (*config.Config, error) {
 			return cfg, nil
 		},
-		newFetcher: func(string, map[string]string) specFetcher {
-			return fakeFetcher{
-				"anthropic:v1":  {err: errors.New("fetch failed")},
-				"openai:v1":     {err: errors.New("fetch failed")},
-				"gemini:v1":     {err: errors.New("fetch failed")},
-				"gemini:v1beta": {err: errors.New("fetch failed")},
-			}
+		newContractLoader: func(string) contractLoader {
+			return fakeLoaderForTests()
 		},
 		newRunner:       fixture.NewRunner,
 		newLorem:        response.NewLoremGenerator,
@@ -887,3 +908,39 @@ func decodeJSON(t *testing.T, body io.Reader, v any) {
 		t.Fatalf("decode response: %v", err)
 	}
 }
+
+const startupMinimalAnthropicSchema = `{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["model", "max_tokens", "messages"],
+  "properties": {
+    "model": {"type": "string"},
+    "max_tokens": {"type": "integer"},
+    "messages": {"type": "array"},
+    "stream": {"type": "boolean"}
+  },
+  "additionalProperties": true
+}`
+
+const startupMinimalOpenAISchema = `{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["model", "messages"],
+  "properties": {
+    "model": {"type": "string"},
+    "messages": {"type": "array"},
+    "stream": {"type": "boolean"}
+  },
+  "additionalProperties": true
+}`
+
+const startupMinimalGeminiSchema = `{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["contents"],
+  "properties": {
+    "contents": {"type": "array"},
+    "generationConfig": {"type": "object"}
+  },
+  "additionalProperties": true
+}`

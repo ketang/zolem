@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["model", "messages"],
+  "properties": {
+    "model": {"type": "string"},
+    "messages": {"type": "array"},
+    "stream": {"type": "boolean"}
+  },
+  "additionalProperties": true
+}

@@ -22,6 +22,11 @@ import (
 	"zolem.dev/zolem/internal/specs"
 )
 
+type contractLoader interface {
+	LoadFallback(source specs.ContractSource) (specs.NormalizedSchema, error)
+	Refresh(source specs.ContractSource) (specs.NormalizedSchema, error)
+}
+
 type specFetcher interface {
 	Get(provider, version string) ([]byte, error)
 }
@@ -31,17 +36,19 @@ type textGenerator interface {
 }
 
 type startupDeps struct {
-	loadConfig      func(string) (*config.Config, error)
-	newValidator    func() *specs.Validator
-	newFetcher      func(cacheDir string, sources map[string]string) specFetcher
-	newRunner       func() *fixture.Runner
-	newLorem        func() *response.LoremGenerator
-	newFaker        func() *response.FakerGenerator
-	newOllamaClient func(context.Context, config.OllamaConfig) (textGenerator, []string)
-	readFile        func(string) ([]byte, error)
-	listen          func(addr string, handler http.Handler) error
-	listenTLS       func(addr, certFile, keyFile string, handler http.Handler) error
-	logf            func(string, ...any)
+	loadConfig        func(string) (*config.Config, error)
+	newValidator      func() *specs.Validator
+	contractRegistry  func() specs.Registry
+	newContractLoader func(cacheDir string) contractLoader
+	newFetcher        func(cacheDir string, sources map[string]string) specFetcher
+	newRunner         func() *fixture.Runner
+	newLorem          func() *response.LoremGenerator
+	newFaker          func() *response.FakerGenerator
+	newOllamaClient   func(context.Context, config.OllamaConfig) (textGenerator, []string)
+	readFile          func(string) ([]byte, error)
+	listen            func(addr string, handler http.Handler) error
+	listenTLS         func(addr, certFile, keyFile string, handler http.Handler) error
+	logf              func(string, ...any)
 }
 
 type startupApp struct {
@@ -69,6 +76,14 @@ func (d startupDeps) withDefaults() startupDeps {
 	}
 	if d.newValidator == nil {
 		d.newValidator = specs.NewValidator
+	}
+	if d.contractRegistry == nil {
+		d.contractRegistry = specs.DefaultRegistry
+	}
+	if d.newContractLoader == nil {
+		d.newContractLoader = func(cacheDir string) contractLoader {
+			return specs.NewContractLoader(cacheDir)
+		}
 	}
 	if d.newFetcher == nil {
 		d.newFetcher = func(cacheDir string, sources map[string]string) specFetcher {
@@ -168,7 +183,7 @@ func buildStartupApp(cfg *config.Config, deps startupDeps) (*startupApp, []strin
 	deps = deps.withDefaults()
 
 	validator := deps.newValidator()
-	warnings := loadSpecs(validator, deps.newFetcher(cfg.Specs.CacheDir, specSourceMap()))
+	warnings := loadContracts(validator, deps.contractRegistry(), deps.newContractLoader(cfg.Specs.CacheDir))
 
 	runner := deps.newRunner()
 	fixtures, fixtureWarnings, err := loadFixtures(cfg, runner, deps.readFile)
@@ -245,13 +260,39 @@ func loadLocalFixtures(backend, fixturesDir, fixtureNamespace string, runner *fi
 	return loadFixtures(cfg, runner, readFile)
 }
 
+func loadContracts(validator *specs.Validator, registry specs.Registry, loader contractLoader) []string {
+	var warnings []string
+	for _, source := range registry.List() {
+		fallback, err := loader.LoadFallback(source)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("failed to load fallback contract %s: %v", source.Key(), err))
+		} else if err := validator.LoadNormalized(source.Provider, source.Version, fallback); err != nil {
+			warnings = append(warnings, fmt.Sprintf("failed to compile fallback contract %s: %v", source.Key(), err))
+		}
+
+		if !source.HasRemote() {
+			continue
+		}
+
+		normalized, err := loader.Refresh(source)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("failed to refresh contract %s: %v", source.Key(), err))
+			continue
+		}
+		if err := validator.LoadNormalized(source.Provider, source.Version, normalized); err != nil {
+			warnings = append(warnings, fmt.Sprintf("failed to compile refreshed contract %s: %v", source.Key(), err))
+		}
+	}
+	return warnings
+}
+
 func loadSpecs(validator *specs.Validator, fetcher specFetcher) []string {
 	var warnings []string
 	for _, key := range specKeys() {
 		provider, version := splitKey(key)
 		data, err := fetcher.Get(provider, version)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("failed to fetch spec %s: %v (validation disabled)", key, err))
+			warnings = append(warnings, fmt.Sprintf("failed to fetch spec %s: %v", key, err))
 			continue
 		}
 		if err := specs.LoadProviderSchema(validator, provider, version, data); err != nil {
