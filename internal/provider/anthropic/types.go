@@ -1,5 +1,11 @@
 package anthropic
 
+import (
+	"bytes"
+	"encoding/json"
+	"strings"
+)
+
 type MessagesRequest struct {
 	Model     string    `json:"model"`
 	MaxTokens int       `json:"max_tokens"`
@@ -9,8 +15,47 @@ type MessagesRequest struct {
 }
 
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string         `json:"role"`
+	Content MessageContent `json:"content"`
+}
+
+type MessageContent struct {
+	Text   string
+	Blocks []ContentBlock
+}
+
+func (c *MessageContent) UnmarshalJSON(data []byte) error {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil
+	}
+
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		c.Text = text
+		c.Blocks = nil
+		return nil
+	}
+
+	var blocks []ContentBlock
+	if err := json.Unmarshal(data, &blocks); err != nil {
+		return err
+	}
+	c.Text = ""
+	c.Blocks = blocks
+	return nil
+}
+
+func (c MessageContent) PlainText() string {
+	if c.Text != "" {
+		return c.Text
+	}
+	var parts []string
+	for _, block := range c.Blocks {
+		if block.Type == "text" && block.Text != "" {
+			parts = append(parts, block.Text)
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 type MessagesResponse struct {

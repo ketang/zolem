@@ -24,6 +24,12 @@ func TestSourceVerification_AnthropicV1SnapshotInvariants(t *testing.T) {
 					Enum []string `json:"enum"`
 				} `json:"properties"`
 			} `json:"message"`
+			MessageContentBlock struct {
+				Required   []string `json:"required"`
+				Properties map[string]struct {
+					Enum []string `json:"enum"`
+				} `json:"properties"`
+			} `json:"message_content_block"`
 		} `json:"$defs"`
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
@@ -34,6 +40,8 @@ func TestSourceVerification_AnthropicV1SnapshotInvariants(t *testing.T) {
 	assertContainsAll(t, keys(doc.Properties), "model", "max_tokens", "messages", "system", "stream")
 	assertContainsAll(t, doc.Defs.Message.Required, "role", "content")
 	assertContainsAll(t, doc.Defs.Message.Properties["role"].Enum, "user", "assistant")
+	assertContainsAll(t, doc.Defs.MessageContentBlock.Required, "type", "text")
+	assertContainsAll(t, doc.Defs.MessageContentBlock.Properties["type"].Enum, "text")
 
 	validator := specs.NewValidator()
 	if err := specs.LoadProviderSchema(validator, "anthropic", "v1", data); err != nil {
@@ -43,6 +51,11 @@ func TestSourceVerification_AnthropicV1SnapshotInvariants(t *testing.T) {
 	valid := []byte(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"system":"be precise","messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	if err := validator.Validate("anthropic", "v1", valid); err != nil {
 		t.Fatalf("valid anthropic request rejected: %v", err)
+	}
+
+	validSDKShape := []byte(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`)
+	if err := validator.Validate("anthropic", "v1", validSDKShape); err != nil {
+		t.Fatalf("valid anthropic sdk-shaped request rejected: %v", err)
 	}
 
 	drifted := []byte(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"tool","content":"hello"}]}`)

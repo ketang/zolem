@@ -136,7 +136,7 @@ func tokenize(text string) []string {
 func estimateInputTokens(req MessagesRequest) int {
 	total := 0
 	for _, m := range req.Messages {
-		total += len(strings.Fields(m.Content)) + 4
+		total += len(strings.Fields(m.Content.PlainText())) + 4
 	}
 	return total
 }
