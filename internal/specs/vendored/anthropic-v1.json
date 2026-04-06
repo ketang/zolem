@@ -45,6 +45,35 @@
           ]
         },
         "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/message_content_block"
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "message_content_block": {
+      "type": "object",
+      "required": [
+        "type",
+        "text"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "text"
+          ]
+        },
+        "text": {
           "type": "string"
         }
       },

@@ -23,6 +23,11 @@ func TestVendoredFallbacks_AnthropicSnapshotValidatesMessagesRequests(t *testing
 		t.Fatalf("expected valid anthropic request, got %v", err)
 	}
 
+	validSDKShape := []byte(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`)
+	if err := validator.Validate("anthropic", "v1", validSDKShape); err != nil {
+		t.Fatalf("expected valid anthropic sdk-shaped request, got %v", err)
+	}
+
 	invalid := []byte(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"system","content":"hello"}]}`)
 	if err := validator.Validate("anthropic", "v1", invalid); err == nil {
 		t.Fatal("expected invalid anthropic request to fail validation")
