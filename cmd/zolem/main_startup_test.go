@@ -190,6 +190,9 @@ func TestSpecSourceMap_CanonicalSourceInvariants(t *testing.T) {
 	if got := sources["openai:v1"]; got != "https://raw.githubusercontent.com/openai/openai-openapi/master/openapi.yaml" {
 		t.Fatalf("unexpected openai:v1 source: %q", got)
 	}
+	if got := sources["openrouter:v1"]; got != "https://openrouter.ai/openapi.yaml" {
+		t.Fatalf("unexpected openrouter:v1 source: %q", got)
+	}
 	if got := sources["gemini:v1"]; got != "https://generativelanguage.googleapis.com/$discovery/rest?version=v1" {
 		t.Fatalf("unexpected gemini:v1 source: %q", got)
 	}
