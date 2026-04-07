@@ -216,11 +216,12 @@ func splitKey(key string) (string, string) {
 func specSourceMap() map[string]string {
 	return map[string]string{
 		"openai:v1":     "https://raw.githubusercontent.com/openai/openai-openapi/master/openapi.yaml",
+		"openrouter:v1": "https://openrouter.ai/openapi.yaml",
 		"gemini:v1":     "https://generativelanguage.googleapis.com/$discovery/rest?version=v1",
 		"gemini:v1beta": "https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta",
 	}
 }
 
 func specKeys() []string {
-	return []string{"anthropic:v1", "openai:v1", "gemini:v1", "gemini:v1beta"}
+	return []string{"anthropic:v1", "openai:v1", "openrouter:v1", "gemini:v1", "gemini:v1beta"}
 }

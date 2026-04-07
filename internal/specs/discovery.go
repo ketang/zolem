@@ -45,8 +45,15 @@ type discoverySchema struct {
 // LoadProviderSchema normalizes provider-specific source documents before
 // compiling them into the validator.
 func LoadProviderSchema(validator *Validator, provider, version string, data []byte) error {
-	if provider == "gemini" {
+	switch provider {
+	case "gemini":
 		normalized, err := NormalizeGeminiDiscovery(version, data)
+		if err != nil {
+			return err
+		}
+		return validator.LoadRaw(provider, version, normalized)
+	case "openai", "openrouter":
+		normalized, err := NormalizeOpenAPI(provider, version, data)
 		if err != nil {
 			return err
 		}
