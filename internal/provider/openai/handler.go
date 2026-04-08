@@ -19,12 +19,12 @@ import (
 type Handler struct {
 	validator *specs.Validator
 	matcher   *fixture.Matcher
-	lorem     *response.LoremGenerator
+	generator response.Generator
 	mux       *chi.Mux
 }
 
-func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, lorem *response.LoremGenerator) *Handler {
-	h := &Handler{validator: validator, matcher: matcher, lorem: lorem}
+func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator) *Handler {
+	h := &Handler{validator: validator, matcher: matcher, generator: generator}
 	h.mux = chi.NewRouter()
 	h.mux.Post("/v1/chat/completions", h.handleChatCompletions)
 	return h
@@ -73,7 +73,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	tokens := h.lorem.Generate(30)
+	tokens := h.generator.Generate(30)
 	promptTokens := estimatePromptTokens(req)
 
 	if req.Stream {

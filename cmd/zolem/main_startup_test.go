@@ -18,6 +18,21 @@ import (
 	"zolem.dev/zolem/internal/specs"
 )
 
+type fakeGenerator struct {
+	tokens []string
+}
+
+func (g *fakeGenerator) Generate(n int) []string {
+	if n <= 0 || len(g.tokens) == 0 {
+		return nil
+	}
+	out := make([]string, n)
+	for i := range out {
+		out[i] = g.tokens[i%len(g.tokens)]
+	}
+	return out
+}
+
 type fakeFetcher map[string]fetchResult
 
 type fetchResult struct {
@@ -203,6 +218,7 @@ func TestSpecSourceMap_CanonicalSourceInvariants(t *testing.T) {
 
 func TestBuildStartupApp_FixtureDirLoadFailure(t *testing.T) {
 	cfg := &config.Config{
+		Mode:     "fixture",
 		Specs:    config.SpecsConfig{CacheDir: t.TempDir()},
 		Fixtures: config.FixturesConfig{Dir: filepath.Join(t.TempDir(), "missing-fixtures")},
 	}
@@ -231,6 +247,7 @@ func TestBuildStartupApp_WASMReadFailure(t *testing.T) {
 	writeFixtureDir(t, fixturesDir, "broken-read", []byte("not-used"))
 
 	cfg := &config.Config{
+		Mode:     "fixture",
 		Specs:    config.SpecsConfig{CacheDir: t.TempDir()},
 		Fixtures: config.FixturesConfig{Dir: fixturesDir},
 	}
@@ -261,6 +278,7 @@ func TestBuildStartupApp_WASMCompileFailure(t *testing.T) {
 	writeFixtureDir(t, fixturesDir, "broken-compile", []byte{0x00, 0x01, 0x02})
 
 	cfg := &config.Config{
+		Mode:     "fixture",
 		Specs:    config.SpecsConfig{CacheDir: t.TempDir()},
 		Fixtures: config.FixturesConfig{Dir: fixturesDir},
 	}
@@ -322,6 +340,48 @@ func TestBuildHandler_ZolemErrorResponses(t *testing.T) {
 			t.Fatalf("unexpected payload: %#v", payload)
 		}
 	})
+}
+
+func TestLoadFixtures_SkipsOutsideFixtureMode(t *testing.T) {
+	fixturesDir := t.TempDir()
+	writeFixtureDir(t, fixturesDir, "ignored", []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00})
+
+	runner := fixture.NewRunner()
+	t.Cleanup(runner.Close)
+
+	fixtures, warnings, err := loadFixtures(&config.Config{
+		Mode:     "faker",
+		Fixtures: config.FixturesConfig{Dir: fixturesDir},
+	}, runner, os.ReadFile)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(fixtures) != 0 {
+		t.Fatalf("fixtures: got %d, want 0", len(fixtures))
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings: got %v, want none", warnings)
+	}
+}
+
+func TestSelectGenerator_UsesFakerMode(t *testing.T) {
+	got := selectGenerator("faker", startupDeps{
+		newLorem: func() *response.LoremGenerator {
+			t.Fatal("lorem generator should not be selected")
+			return nil
+		},
+		newFaker: func() *response.FakerGenerator {
+			return response.NewFakerGenerator()
+		},
+	})
+
+	text := strings.Join(got.Generate(8), "")
+	if strings.Contains(text, "lorem") {
+		t.Fatalf("faker generator text should not use lorem vocabulary: %q", text)
+	}
+	if !strings.Contains(text, "Summit Labs") {
+		t.Fatalf("faker generator text: got %q, want faker-style output", text)
+	}
 }
 
 func TestRun_UsesTLSWhenConfigured(t *testing.T) {

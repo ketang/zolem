@@ -29,6 +29,7 @@ type startupDeps struct {
 	newFetcher   func(cacheDir string, sources map[string]string) specFetcher
 	newRunner    func() *fixture.Runner
 	newLorem     func() *response.LoremGenerator
+	newFaker     func() *response.FakerGenerator
 	readFile     func(string) ([]byte, error)
 	listen       func(addr string, handler http.Handler) error
 	listenTLS    func(addr, certFile, keyFile string, handler http.Handler) error
@@ -57,6 +58,9 @@ func (d startupDeps) withDefaults() startupDeps {
 	}
 	if d.newLorem == nil {
 		d.newLorem = response.NewLoremGenerator
+	}
+	if d.newFaker == nil {
+		d.newFaker = response.NewFakerGenerator
 	}
 	if d.readFile == nil {
 		d.readFile = os.ReadFile
@@ -113,7 +117,7 @@ func buildStartupApp(cfg *config.Config, deps startupDeps) (*startupApp, []strin
 	}
 
 	matcher := fixture.NewMatcher(runner, fixtures)
-	handler := buildHandler(cfg.Routes, validator, matcher, deps.newLorem())
+	handler := buildHandler(cfg.Routes, validator, matcher, selectGenerator(cfg.Mode, deps))
 
 	return &startupApp{
 		handler: handler,
@@ -138,6 +142,10 @@ func loadSpecs(validator *specs.Validator, fetcher specFetcher) []string {
 }
 
 func loadFixtures(cfg *config.Config, runner *fixture.Runner, readFile func(string) ([]byte, error)) ([]fixture.Fixture, []string, error) {
+	if cfg.Mode != "fixture" {
+		return nil, nil, nil
+	}
+
 	if cfg.Fixtures.Dir == "" {
 		return nil, nil, nil
 	}
@@ -171,10 +179,10 @@ func loadFixtures(cfg *config.Config, runner *fixture.Runner, readFile func(stri
 	return fixtures, warnings, nil
 }
 
-func buildHandler(routes []config.RouteConfig, validator *specs.Validator, matcher *fixture.Matcher, lorem *response.LoremGenerator) http.Handler {
-	anthropicH := anthropic.NewHandler(validator, matcher, lorem)
-	openaiH := openai.NewHandler(validator, matcher, lorem)
-	geminiH := gemini.NewHandler(validator, matcher, lorem)
+func buildHandler(routes []config.RouteConfig, validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator) http.Handler {
+	anthropicH := anthropic.NewHandler(validator, matcher, generator)
+	openaiH := openai.NewHandler(validator, matcher, generator)
+	geminiH := gemini.NewHandler(validator, matcher, generator)
 	r := router.New(routes)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -198,6 +206,15 @@ func buildHandler(routes []config.RouteConfig, validator *specs.Validator, match
 			writeZolemError(w, "unknown provider: "+routeCtx.Provider)
 		}
 	})
+}
+
+func selectGenerator(mode string, deps startupDeps) response.Generator {
+	switch mode {
+	case "faker":
+		return deps.newFaker()
+	default:
+		return deps.newLorem()
+	}
 }
 
 func writeZolemError(w http.ResponseWriter, message string) {

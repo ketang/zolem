@@ -17,12 +17,12 @@ import (
 type Handler struct {
 	validator *specs.Validator
 	matcher   *fixture.Matcher
-	lorem     *response.LoremGenerator
+	generator response.Generator
 	mux       *chi.Mux
 }
 
-func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, lorem *response.LoremGenerator) *Handler {
-	h := &Handler{validator: validator, matcher: matcher, lorem: lorem}
+func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator) *Handler {
+	h := &Handler{validator: validator, matcher: matcher, generator: generator}
 	h.mux = chi.NewRouter()
 	// chi uses ':param' syntax so colons in literal path segments break routing.
 	// Use a catch-all under /v1/models/ and /v1beta/models/ and dispatch by
@@ -110,7 +110,7 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 		return
 	}
 
-	tokens := h.lorem.Generate(30)
+	tokens := h.generator.Generate(30)
 	promptTokens := estimatePromptTokens(req)
 
 	if stream {
