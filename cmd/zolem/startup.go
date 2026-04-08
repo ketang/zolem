@@ -34,6 +34,7 @@ type startupDeps struct {
 	newFetcher      func(cacheDir string, sources map[string]string) specFetcher
 	newRunner       func() *fixture.Runner
 	newLorem        func() *response.LoremGenerator
+	newFaker        func() *response.FakerGenerator
 	newOllamaClient func(context.Context, config.OllamaConfig) (textGenerator, []string)
 	readFile        func(string) ([]byte, error)
 	listen          func(addr string, handler http.Handler) error
@@ -63,6 +64,9 @@ func (d startupDeps) withDefaults() startupDeps {
 	}
 	if d.newLorem == nil {
 		d.newLorem = response.NewLoremGenerator
+	}
+	if d.newFaker == nil {
+		d.newFaker = response.NewFakerGenerator
 	}
 	if d.newOllamaClient == nil {
 		d.newOllamaClient = func(ctx context.Context, cfg config.OllamaConfig) (textGenerator, []string) {
@@ -130,9 +134,9 @@ func buildStartupApp(cfg *config.Config, deps startupDeps) (*startupApp, []strin
 	}
 
 	matcher := fixture.NewMatcher(runner, fixtures)
-	generator, generatorWarnings := deps.newOllamaClient(context.Background(), cfg.Ollama)
-	warnings = append(warnings, generatorWarnings...)
-	handler := buildHandler(cfg.Routes, validator, matcher, deps.newLorem(), generator)
+	ollamaClient, ollamaWarnings := deps.newOllamaClient(context.Background(), cfg.Ollama)
+	warnings = append(warnings, ollamaWarnings...)
+	handler := buildHandler(cfg.Routes, validator, matcher, selectGenerator(cfg.Mode, deps), ollamaClient)
 
 	return &startupApp{
 		handler: handler,
@@ -157,6 +161,10 @@ func loadSpecs(validator *specs.Validator, fetcher specFetcher) []string {
 }
 
 func loadFixtures(cfg *config.Config, runner *fixture.Runner, readFile func(string) ([]byte, error)) ([]fixture.Fixture, []string, error) {
+	if cfg.Mode != "fixture" {
+		return nil, nil, nil
+	}
+
 	if cfg.Fixtures.Dir == "" {
 		return nil, nil, nil
 	}
@@ -190,10 +198,10 @@ func loadFixtures(cfg *config.Config, runner *fixture.Runner, readFile func(stri
 	return fixtures, warnings, nil
 }
 
-func buildHandler(routes []config.RouteConfig, validator *specs.Validator, matcher *fixture.Matcher, lorem *response.LoremGenerator, generator textGenerator) http.Handler {
-	anthropicH := anthropic.NewHandler(validator, matcher, lorem, generator)
-	openaiH := openai.NewHandler(validator, matcher, lorem, generator)
-	geminiH := gemini.NewHandler(validator, matcher, lorem, generator)
+func buildHandler(routes []config.RouteConfig, validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, ollamaClient textGenerator) http.Handler {
+	anthropicH := anthropic.NewHandler(validator, matcher, generator, ollamaClient)
+	openaiH := openai.NewHandler(validator, matcher, generator, ollamaClient)
+	geminiH := gemini.NewHandler(validator, matcher, generator, ollamaClient)
 	r := router.New(routes)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -217,6 +225,15 @@ func buildHandler(routes []config.RouteConfig, validator *specs.Validator, match
 			writeZolemError(w, "unknown provider: "+routeCtx.Provider)
 		}
 	})
+}
+
+func selectGenerator(mode string, deps startupDeps) response.Generator {
+	switch mode {
+	case "faker":
+		return deps.newFaker()
+	default:
+		return deps.newLorem()
+	}
 }
 
 func writeZolemError(w http.ResponseWriter, message string) {

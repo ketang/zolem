@@ -17,19 +17,19 @@ import (
 )
 
 type Handler struct {
-	validator *specs.Validator
-	matcher   *fixture.Matcher
-	lorem     *response.LoremGenerator
-	generator textGenerator
-	mux       *chi.Mux
+	validator    *specs.Validator
+	matcher      *fixture.Matcher
+	generator    response.Generator
+	ollamaClient textGenerator
+	mux          *chi.Mux
 }
 
 type textGenerator interface {
 	Generate(context.Context, string) (string, error)
 }
 
-func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, lorem *response.LoremGenerator, generator textGenerator) *Handler {
-	h := &Handler{validator: validator, matcher: matcher, lorem: lorem, generator: generator}
+func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, ollamaClient textGenerator) *Handler {
+	h := &Handler{validator: validator, matcher: matcher, generator: generator, ollamaClient: ollamaClient}
 	h.mux = chi.NewRouter()
 	h.mux.Post("/v1/chat/completions", h.handleChatCompletions)
 	return h
@@ -99,7 +99,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	tokens := h.lorem.Generate(30)
+	tokens := h.generator.Generate(30)
 
 	if req.Stream {
 		streamResponse(w, req.Model, tokens, promptTokens)
@@ -170,11 +170,11 @@ func promptFromRequest(req ChatCompletionRequest) string {
 }
 
 func (h *Handler) generateText(ctx context.Context, prompt string) (string, bool) {
-	if h.generator == nil {
+	if h.ollamaClient == nil {
 		return "", false
 	}
 
-	text, err := h.generator.Generate(ctx, prompt)
+	text, err := h.ollamaClient.Generate(ctx, prompt)
 	if err != nil {
 		return "", false
 	}

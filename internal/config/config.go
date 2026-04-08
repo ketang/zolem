@@ -58,7 +58,7 @@ type RouteConfig struct {
 
 // Load reads a YAML configuration file and returns a parsed Config.
 // Defaults: Mode="lorem", Server.Addr=":8080", Specs.RefreshInterval=6h.
-// Valid modes are "lorem" and "fixture".
+// Valid modes are "lorem", "fixture", and "faker".
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -72,8 +72,8 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
-	if cfg.Mode != "lorem" && cfg.Mode != "fixture" {
-		return nil, fmt.Errorf("invalid mode %q: must be lorem or fixture", cfg.Mode)
+	if cfg.Mode != "lorem" && cfg.Mode != "fixture" && cfg.Mode != "faker" {
+		return nil, fmt.Errorf("invalid mode %q: must be lorem, fixture, or faker", cfg.Mode)
 	}
 	return cfg, nil
 }
