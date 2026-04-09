@@ -53,7 +53,7 @@ func newGeminiAdditionalHandler(t *testing.T, runner *fixture.Runner, fixtures [
 		}
 	}
 
-	return gemini.NewHandler(validator, fixture.NewMatcher(runner, fixtures), response.NewLoremGenerator())
+	return gemini.NewHandler(validator, fixture.NewMatcher(runner, fixtures), response.NewLoremGenerator(), nil)
 }
 
 func compileGeminiFixture(t *testing.T, runner *fixture.Runner, id, version string, status int, responseBody []byte, threshold uint32) fixture.Fixture {

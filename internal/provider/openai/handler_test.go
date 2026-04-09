@@ -2,6 +2,7 @@ package openai_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,11 +15,27 @@ import (
 	"zolem.dev/zolem/internal/specs"
 )
 
+type stubGenerator struct {
+	text string
+}
+
+func (g stubGenerator) Generate(context.Context, string) (string, error) {
+	return g.text, nil
+}
+
+type testGenerator interface {
+	Generate(context.Context, string) (string, error)
+}
+
 func newHandler(t *testing.T) *openai.Handler {
+	return newHandlerWithGenerator(t, nil)
+}
+
+func newHandlerWithGenerator(t *testing.T, generator testGenerator) *openai.Handler {
 	t.Helper()
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)
-	return openai.NewHandler(specs.NewValidator(), fixture.NewMatcher(runner, nil), response.NewLoremGenerator())
+	return openai.NewHandler(specs.NewValidator(), fixture.NewMatcher(runner, nil), response.NewLoremGenerator(), generator)
 }
 
 func TestChatCompletions_MissingAuth(t *testing.T) {
@@ -76,5 +93,27 @@ func TestChatCompletions_LoremStreaming(t *testing.T) {
 	}
 	if !strings.Contains(body2, "data: [DONE]") {
 		t.Errorf("missing [DONE] terminator, got:\n%s", body2)
+	}
+}
+
+func TestChatCompletions_OllamaFallback_NonStreaming(t *testing.T) {
+	h := newHandlerWithGenerator(t, stubGenerator{text: "hello from ollama"})
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer sk-test")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", rr.Code)
+	}
+
+	var resp openai.ChatCompletionResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got := resp.Choices[0].Message.Content; got != "hello from ollama" {
+		t.Fatalf("content: got %q, want hello from ollama", got)
 	}
 }

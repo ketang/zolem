@@ -75,7 +75,7 @@ func newRunner(t *testing.T) *fixture.Runner {
 
 func newTestHandler(t *testing.T, validator *specs.Validator, runner *fixture.Runner, fixtures []fixture.Fixture) *openai.Handler {
 	t.Helper()
-	return openai.NewHandler(validator, fixture.NewMatcher(runner, fixtures), response.NewLoremGenerator())
+	return openai.NewHandler(validator, fixture.NewMatcher(runner, fixtures), response.NewLoremGenerator(), nil)
 }
 
 func compileFixture(t *testing.T, runner *fixture.Runner, wasm []byte) fixture.CompiledModule {

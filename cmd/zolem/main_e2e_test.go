@@ -83,9 +83,9 @@ func TestMain_E2E(t *testing.T) {
 
 	t.Run("openai-stream", func(t *testing.T) {
 		resp, body := doRequest(t, svc.baseURL, http.MethodPost, "acme.api.openai.zolem.dev", "/v1/chat/completions", `{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hello"}]}`, map[string]string{
-			"Content-Type": "application/json",
+			"Content-Type":  "application/json",
 			"Authorization": "Bearer sk-test",
-			"Accept":       "text/event-stream",
+			"Accept":        "text/event-stream",
 		})
 		defer resp.Body.Close()
 
@@ -150,8 +150,8 @@ func TestMain_E2E(t *testing.T) {
 
 	t.Run("gemini-stream", func(t *testing.T) {
 		resp, body := doRequest(t, svc.baseURL, http.MethodPost, "acme.api.gemini.zolem.dev", "/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse", `{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`, map[string]string{
-			"Content-Type":    "application/json",
-			"x-goog-api-key":  "test-key",
+			"Content-Type":   "application/json",
+			"x-goog-api-key": "test-key",
 		})
 		defer resp.Body.Close()
 
@@ -387,6 +387,8 @@ specs:
 fixtures:
   dir: %s
   watch: false
+ollama:
+  enabled: false
 routes:
   - host: "*.api.anthropic.zolem.dev"
     provider: anthropic
@@ -567,18 +569,18 @@ func assertContainsInOrder(t *testing.T, body []byte, needles []string) {
 }
 
 type openAIStreamChunk struct {
-	ID      string                 `json:"id"`
-	Object  string                 `json:"object"`
-	Created int64                  `json:"created"`
-	Model   string                 `json:"model"`
-	Choices []openAIStreamChoice    `json:"choices"`
-	Usage   *openAIStreamUsage     `json:"usage,omitempty"`
+	ID      string               `json:"id"`
+	Object  string               `json:"object"`
+	Created int64                `json:"created"`
+	Model   string               `json:"model"`
+	Choices []openAIStreamChoice `json:"choices"`
+	Usage   *openAIStreamUsage   `json:"usage,omitempty"`
 }
 
 type openAIStreamChoice struct {
-	Index        int              `json:"index"`
+	Index        int               `json:"index"`
 	Delta        openAIStreamDelta `json:"delta"`
-	FinishReason *string          `json:"finish_reason"`
+	FinishReason *string           `json:"finish_reason"`
 }
 
 type openAIStreamDelta struct {

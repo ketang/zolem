@@ -18,11 +18,16 @@ type Handler struct {
 	validator *specs.Validator
 	matcher   *fixture.Matcher
 	lorem     *response.LoremGenerator
+	generator textGenerator
 	mux       *chi.Mux
 }
 
-func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, lorem *response.LoremGenerator) *Handler {
-	h := &Handler{validator: validator, matcher: matcher, lorem: lorem}
+type textGenerator interface {
+	Generate(context.Context, string) (string, error)
+}
+
+func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, lorem *response.LoremGenerator, generator textGenerator) *Handler {
+	h := &Handler{validator: validator, matcher: matcher, lorem: lorem, generator: generator}
 	h.mux = chi.NewRouter()
 	// chi uses ':param' syntax so colons in literal path segments break routing.
 	// Use a catch-all under /v1/models/ and /v1beta/models/ and dispatch by
@@ -110,8 +115,33 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 		return
 	}
 
-	tokens := h.lorem.Generate(30)
 	promptTokens := estimatePromptTokens(req)
+	if text, ok := h.generateText(r.Context(), promptFromRequest(req)); ok {
+		completionTokens := len(strings.Fields(text))
+		if stream {
+			streamResponse(w, model, tokenize(text), promptTokens)
+			return
+		}
+
+		resp := GenerateContentResponse{
+			Candidates: []Candidate{{
+				Content:      Content{Parts: []Part{{Text: text}}, Role: "model"},
+				FinishReason: "STOP",
+				Index:        0,
+			}},
+			UsageMetadata: UsageMetadata{
+				PromptTokenCount:     promptTokens,
+				CandidatesTokenCount: completionTokens,
+				TotalTokenCount:      promptTokens + completionTokens,
+			},
+			ModelVersion: model,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+
+	tokens := h.lorem.Generate(30)
 
 	if stream {
 		streamResponse(w, model, tokens, promptTokens)
@@ -179,6 +209,40 @@ func estimatePromptTokens(req GenerateContentRequest) int {
 		}
 	}
 	return total
+}
+
+func promptFromRequest(req GenerateContentRequest) string {
+	var lines []string
+	for _, content := range req.Contents {
+		role := content.Role
+		if role == "" {
+			role = "user"
+		}
+		var parts []string
+		for _, part := range content.Parts {
+			if text := strings.TrimSpace(part.Text); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		if len(parts) == 0 {
+			continue
+		}
+		lines = append(lines, role+": "+strings.Join(parts, " "))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (h *Handler) generateText(ctx context.Context, prompt string) (string, bool) {
+	if h.generator == nil {
+		return "", false
+	}
+
+	text, err := h.generator.Generate(ctx, prompt)
+	if err != nil {
+		return "", false
+	}
+	text = strings.TrimSpace(text)
+	return text, text != ""
 }
 
 func labelsFromContext(ctx context.Context) map[string]string {

@@ -18,11 +18,16 @@ type Handler struct {
 	validator *specs.Validator
 	matcher   *fixture.Matcher
 	lorem     *response.LoremGenerator
+	generator textGenerator
 	mux       *chi.Mux
 }
 
-func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, lorem *response.LoremGenerator) *Handler {
-	h := &Handler{validator: validator, matcher: matcher, lorem: lorem}
+type textGenerator interface {
+	Generate(context.Context, string) (string, error)
+}
+
+func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, lorem *response.LoremGenerator, generator textGenerator) *Handler {
+	h := &Handler{validator: validator, matcher: matcher, lorem: lorem, generator: generator}
 	h.mux = chi.NewRouter()
 	h.mux.Post("/v1/messages", h.handleMessages)
 	return h
@@ -81,9 +86,30 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	inputTokens := estimateInputTokens(req)
+	if text, ok := h.generateText(r.Context(), promptFromRequest(req)); ok {
+		if req.Stream {
+			streamResponse(w, req.Model, tokenize(text), inputTokens)
+			return
+		}
+
+		resp := MessagesResponse{
+			ID:         "msg_zolem_ollama",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    []ContentBlock{{Type: "text", Text: text}},
+			Model:      req.Model,
+			StopReason: "end_turn",
+			Usage:      Usage{InputTokens: inputTokens, OutputTokens: len(strings.Fields(text))},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+
 	tokens := h.lorem.Generate(30)
 	if req.Stream {
-		streamResponse(w, req.Model, tokens, estimateInputTokens(req))
+		streamResponse(w, req.Model, tokens, inputTokens)
 		return
 	}
 
@@ -95,7 +121,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		Content:    []ContentBlock{{Type: "text", Text: text}},
 		Model:      req.Model,
 		StopReason: "end_turn",
-		Usage:      Usage{InputTokens: estimateInputTokens(req), OutputTokens: len(tokens)},
+		Usage:      Usage{InputTokens: inputTokens, OutputTokens: len(tokens)},
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -139,6 +165,33 @@ func estimateInputTokens(req MessagesRequest) int {
 		total += len(strings.Fields(m.Content.PlainText())) + 4
 	}
 	return total
+}
+
+func promptFromRequest(req MessagesRequest) string {
+	var lines []string
+	if req.System != "" {
+		lines = append(lines, "system: "+strings.TrimSpace(req.System))
+	}
+	for _, msg := range req.Messages {
+		line := strings.TrimSpace(msg.Role + ": " + msg.Content.PlainText())
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (h *Handler) generateText(ctx context.Context, prompt string) (string, bool) {
+	if h.generator == nil {
+		return "", false
+	}
+
+	text, err := h.generator.Generate(ctx, prompt)
+	if err != nil {
+		return "", false
+	}
+	text = strings.TrimSpace(text)
+	return text, text != ""
 }
 
 func labelsFromContext(ctx context.Context) map[string]string {

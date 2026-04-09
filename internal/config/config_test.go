@@ -19,6 +19,10 @@ specs:
 fixtures:
   dir: /tmp/fixtures
   watch: false
+ollama:
+  enabled: false
+  binary_path: /opt/ollama/bin/ollama
+  model: gemma4:e4b
 routes:
   - host: "*.api.anthropic.zolem.dev"
     provider: anthropic
@@ -49,6 +53,15 @@ routes:
 	}
 	if cfg.Routes[1].Labels["env"] != "{1}" {
 		t.Errorf("label env: got %q, want {1}", cfg.Routes[1].Labels["env"])
+	}
+	if cfg.Ollama.IsEnabled() {
+		t.Error("expected ollama support to be disabled by config")
+	}
+	if cfg.Ollama.BinaryPath != "/opt/ollama/bin/ollama" {
+		t.Errorf("binary path: got %q", cfg.Ollama.BinaryPath)
+	}
+	if cfg.Ollama.Model != "gemma4:e4b" {
+		t.Errorf("model: got %q", cfg.Ollama.Model)
 	}
 }
 

@@ -27,9 +27,9 @@ func buildServer(t *testing.T, routes []config.RouteConfig) http.Handler {
 	lorem := response.NewLoremGenerator()
 	r := router.New(routes)
 
-	anthropicH := anthropic.NewHandler(validator, matcher, lorem)
-	openaiH := openai.NewHandler(validator, matcher, lorem)
-	geminiH := gemini.NewHandler(validator, matcher, lorem)
+	anthropicH := anthropic.NewHandler(validator, matcher, lorem, nil)
+	openaiH := openai.NewHandler(validator, matcher, lorem, nil)
+	geminiH := gemini.NewHandler(validator, matcher, lorem, nil)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		routeCtx, ok := r.Match(req.Host)

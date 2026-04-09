@@ -20,11 +20,16 @@ type Handler struct {
 	validator *specs.Validator
 	matcher   *fixture.Matcher
 	lorem     *response.LoremGenerator
+	generator textGenerator
 	mux       *chi.Mux
 }
 
-func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, lorem *response.LoremGenerator) *Handler {
-	h := &Handler{validator: validator, matcher: matcher, lorem: lorem}
+type textGenerator interface {
+	Generate(context.Context, string) (string, error)
+}
+
+func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, lorem *response.LoremGenerator, generator textGenerator) *Handler {
+	h := &Handler{validator: validator, matcher: matcher, lorem: lorem, generator: generator}
 	h.mux = chi.NewRouter()
 	h.mux.Post("/v1/chat/completions", h.handleChatCompletions)
 	return h
@@ -73,8 +78,28 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	tokens := h.lorem.Generate(30)
 	promptTokens := estimatePromptTokens(req)
+	if text, ok := h.generateText(r.Context(), promptFromRequest(req)); ok {
+		completionTokens := len(strings.Fields(text))
+		if req.Stream {
+			streamResponse(w, req.Model, tokenize(text), promptTokens)
+			return
+		}
+
+		resp := ChatCompletionResponse{
+			ID:      fmt.Sprintf("chatcmpl-zolem%d", time.Now().UnixNano()),
+			Object:  "chat.completion",
+			Created: time.Now().Unix(),
+			Model:   req.Model,
+			Choices: []Choice{{Index: 0, Message: Message{Role: "assistant", Content: text}, FinishReason: "stop"}},
+			Usage:   Usage{PromptTokens: promptTokens, CompletionTokens: completionTokens, TotalTokens: promptTokens + completionTokens},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+
+	tokens := h.lorem.Generate(30)
 
 	if req.Stream {
 		streamResponse(w, req.Model, tokens, promptTokens)
@@ -131,6 +156,30 @@ func estimatePromptTokens(req ChatCompletionRequest) int {
 		total += len(strings.Fields(m.Content)) + 4
 	}
 	return total
+}
+
+func promptFromRequest(req ChatCompletionRequest) string {
+	var lines []string
+	for _, msg := range req.Messages {
+		line := strings.TrimSpace(msg.Role + ": " + msg.Content)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (h *Handler) generateText(ctx context.Context, prompt string) (string, bool) {
+	if h.generator == nil {
+		return "", false
+	}
+
+	text, err := h.generator.Generate(ctx, prompt)
+	if err != nil {
+		return "", false
+	}
+	text = strings.TrimSpace(text)
+	return text, text != ""
 }
 
 func labelsFromContext(ctx context.Context) map[string]string {

@@ -11,6 +11,7 @@ import (
 
 	"zolem.dev/zolem/internal/config"
 	"zolem.dev/zolem/internal/fixture"
+	"zolem.dev/zolem/internal/ollama"
 	"zolem.dev/zolem/internal/provider/anthropic"
 	"zolem.dev/zolem/internal/provider/gemini"
 	"zolem.dev/zolem/internal/provider/openai"
@@ -23,16 +24,21 @@ type specFetcher interface {
 	Get(provider, version string) ([]byte, error)
 }
 
+type textGenerator interface {
+	Generate(context.Context, string) (string, error)
+}
+
 type startupDeps struct {
-	loadConfig   func(string) (*config.Config, error)
-	newValidator func() *specs.Validator
-	newFetcher   func(cacheDir string, sources map[string]string) specFetcher
-	newRunner    func() *fixture.Runner
-	newLorem     func() *response.LoremGenerator
-	readFile     func(string) ([]byte, error)
-	listen       func(addr string, handler http.Handler) error
-	listenTLS    func(addr, certFile, keyFile string, handler http.Handler) error
-	logf         func(string, ...any)
+	loadConfig      func(string) (*config.Config, error)
+	newValidator    func() *specs.Validator
+	newFetcher      func(cacheDir string, sources map[string]string) specFetcher
+	newRunner       func() *fixture.Runner
+	newLorem        func() *response.LoremGenerator
+	newOllamaClient func(context.Context, config.OllamaConfig) (textGenerator, []string)
+	readFile        func(string) ([]byte, error)
+	listen          func(addr string, handler http.Handler) error
+	listenTLS       func(addr, certFile, keyFile string, handler http.Handler) error
+	logf            func(string, ...any)
 }
 
 type startupApp struct {
@@ -57,6 +63,17 @@ func (d startupDeps) withDefaults() startupDeps {
 	}
 	if d.newLorem == nil {
 		d.newLorem = response.NewLoremGenerator
+	}
+	if d.newOllamaClient == nil {
+		d.newOllamaClient = func(ctx context.Context, cfg config.OllamaConfig) (textGenerator, []string) {
+			if !cfg.IsEnabled() {
+				return nil, nil
+			}
+			return ollama.Detect(ctx, ollama.Config{
+				BinaryPath: cfg.BinaryPath,
+				Model:      cfg.Model,
+			})
+		}
 	}
 	if d.readFile == nil {
 		d.readFile = os.ReadFile
@@ -113,7 +130,9 @@ func buildStartupApp(cfg *config.Config, deps startupDeps) (*startupApp, []strin
 	}
 
 	matcher := fixture.NewMatcher(runner, fixtures)
-	handler := buildHandler(cfg.Routes, validator, matcher, deps.newLorem())
+	generator, generatorWarnings := deps.newOllamaClient(context.Background(), cfg.Ollama)
+	warnings = append(warnings, generatorWarnings...)
+	handler := buildHandler(cfg.Routes, validator, matcher, deps.newLorem(), generator)
 
 	return &startupApp{
 		handler: handler,
@@ -171,10 +190,10 @@ func loadFixtures(cfg *config.Config, runner *fixture.Runner, readFile func(stri
 	return fixtures, warnings, nil
 }
 
-func buildHandler(routes []config.RouteConfig, validator *specs.Validator, matcher *fixture.Matcher, lorem *response.LoremGenerator) http.Handler {
-	anthropicH := anthropic.NewHandler(validator, matcher, lorem)
-	openaiH := openai.NewHandler(validator, matcher, lorem)
-	geminiH := gemini.NewHandler(validator, matcher, lorem)
+func buildHandler(routes []config.RouteConfig, validator *specs.Validator, matcher *fixture.Matcher, lorem *response.LoremGenerator, generator textGenerator) http.Handler {
+	anthropicH := anthropic.NewHandler(validator, matcher, lorem, generator)
+	openaiH := openai.NewHandler(validator, matcher, lorem, generator)
+	geminiH := gemini.NewHandler(validator, matcher, lorem, generator)
 	r := router.New(routes)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
