@@ -7,7 +7,7 @@
 
 ## Overview
 
-Zolem is a Go service that faithfully mocks the APIs of major LLM providers (Anthropic Claude, OpenAI, Google Gemini). Clients point at Zolem by changing only a hostname; all paths, parameters, request/response shapes, error formats, and streaming protocols are replicated exactly. The MVP supports two response modes: lorem ipsum and fixture-based responses.
+Zolem is a Go service that faithfully mocks the APIs of major LLM providers (Anthropic Claude, OpenAI, Google Gemini). Clients point at Zolem by changing only a hostname; all paths, parameters, request/response shapes, error formats, and streaming protocols are replicated exactly. The service supports lorem, faker, and fixture-based response generation.
 
 ---
 
@@ -47,10 +47,11 @@ Two modes, selectable per-request via fixture matching or globally via config:
 
 | Mode | Description |
 |------|-------------|
-| `lorem` | Return valid, well-formed lorem ipsum responses. Default fallback when no fixture matches. |
-| `fixture` | Return a canned response defined in a fixture file, selected by WASM match scoring. |
+| `lorem` | Return valid, well-formed lorem ipsum responses. |
+| `faker` | Return deterministic fake business-style responses. |
+| `fixture` | Return a canned response defined in a fixture file, selected by WASM match scoring; unmatched requests fall back to the built-in generator path. |
 
-Future modes (not in MVP): faker-based (non-LLM content generation), local LLM passthrough.
+Future modes (not in MVP): local LLM passthrough.
 
 ---
 
@@ -136,7 +137,7 @@ Every fixture declares a WASM match function. The runtime is **wazero** (pure Go
 - All fixtures whose WASM function returns a non-negative score are candidates
 - Highest score wins
 - Ties: first fixture in filesystem order wins
-- No match: falls back to lorem ipsum mode
+- No match: falls back to the built-in synthetic generator path
 
 **Fixture loading:**
 - Loaded at startup from the configured fixture directory
@@ -259,7 +260,7 @@ server:
     cert: /etc/zolem/tls.crt
     key:  /etc/zolem/tls.key
 
-mode: lorem   # default mode: lorem | fixture
+mode: lorem   # default mode: lorem | faker | fixture
 
 specs:
   cache_dir: /var/zolem/specs

@@ -17,12 +17,12 @@ import (
 type Handler struct {
 	validator *specs.Validator
 	matcher   *fixture.Matcher
-	lorem     *response.LoremGenerator
+	generator response.Generator
 	mux       *chi.Mux
 }
 
-func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, lorem *response.LoremGenerator) *Handler {
-	h := &Handler{validator: validator, matcher: matcher, lorem: lorem}
+func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator) *Handler {
+	h := &Handler{validator: validator, matcher: matcher, generator: generator}
 	h.mux = chi.NewRouter()
 	h.mux.Post("/v1/messages", h.handleMessages)
 	return h
@@ -81,7 +81,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokens := h.lorem.Generate(30)
+	tokens := h.generator.Generate(30)
 	if req.Stream {
 		streamResponse(w, req.Model, tokens, estimateInputTokens(req))
 		return
@@ -89,7 +89,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 	text := strings.Join(tokens, "")
 	resp := MessagesResponse{
-		ID:         "msg_zolem_lorem",
+		ID:         "msg_zolem_generated",
 		Type:       "message",
 		Role:       "assistant",
 		Content:    []ContentBlock{{Type: "text", Text: text}},

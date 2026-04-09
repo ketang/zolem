@@ -94,3 +94,17 @@ func TestLoadInvalidMode(t *testing.T) {
 		t.Error("expected error for invalid mode")
 	}
 }
+
+func TestLoadFakerMode(t *testing.T) {
+	f, _ := os.CreateTemp(t.TempDir(), "*.yaml")
+	f.WriteString("mode: faker\n")
+	f.Close()
+
+	cfg, err := config.Load(f.Name())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Mode != "faker" {
+		t.Fatalf("mode: got %q, want faker", cfg.Mode)
+	}
+}
