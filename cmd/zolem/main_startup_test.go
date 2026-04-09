@@ -395,6 +395,35 @@ func TestBuildLocalHandler_StateResponse(t *testing.T) {
 	}
 }
 
+func TestBuildLocalHandler_HealthResponse(t *testing.T) {
+	runner := fixture.NewRunner()
+	t.Cleanup(runner.Close)
+
+	listenerRuntime := runtimecfg.ListenerRuntime{
+		Spec: runtimecfg.ListenerSpec{
+			Name:     "openai-demo",
+			Addr:     "127.0.0.1:12001",
+			Provider: "openai",
+			Profile:  "demo",
+		},
+		Profile: runtimecfg.RuntimeProfile{Name: "demo", Backend: "lorem"},
+	}
+	handler := buildLocalHandler(listenerRuntime, specs.NewValidator(), fixture.NewMatcher(runner, nil), response.NewLoremGenerator())
+	req := httptestRequest(http.MethodGet, "/_zolem/health", bytes.NewBuffer(nil))
+	resp := doRequest(t, handler, req)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", resp.StatusCode)
+	}
+
+	var payload map[string]any
+	decodeJSON(t, resp.Body, &payload)
+	if payload["status"] != "ok" {
+		t.Fatalf("status payload: got %#v, want ok", payload["status"])
+	}
+}
+
 func TestBuildLocalHandler_DispatchesConfiguredProvider(t *testing.T) {
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)

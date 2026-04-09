@@ -81,6 +81,12 @@ Inspect the listener:
 curl http://127.0.0.1:19001/_zolem/state
 ```
 
+Health check the listener:
+
+```bash
+curl http://127.0.0.1:19001/_zolem/health
+```
+
 Call a provider-compatible endpoint:
 
 ```bash

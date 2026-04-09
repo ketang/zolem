@@ -138,6 +138,10 @@ LISTENER_BASE_URL="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ba
 echo "Listener base URL: $LISTENER_BASE_URL"
 
 echo
+echo "==> Verifying listener health"
+curl "${CURL_ARGS[@]}" "$LISTENER_BASE_URL/_zolem/health" >/dev/null
+
+echo
 echo "==> Verifying listener state"
 state_json="$(curl "${CURL_ARGS[@]}" "$LISTENER_BASE_URL/_zolem/state")"
 python3 -c '

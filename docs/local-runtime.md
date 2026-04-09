@@ -22,6 +22,7 @@ There are two resources:
 Each listener exposes:
 
 - provider-compatible endpoints such as `/v1/chat/completions` or `/v1/messages`
+- a local health endpoint at `/_zolem/health`
 - a local introspection endpoint at `/_zolem/state`
 
 Profile fields you can use today:
@@ -310,6 +311,18 @@ curl -X POST \
 
 ## Introspection
 
+Listener health:
+
+```bash
+curl http://127.0.0.1:19001/_zolem/health
+```
+
+Expected response:
+
+```json
+{"status":"ok"}
+```
+
 Each listener exposes:
 
 ```bash
@@ -350,6 +363,7 @@ This script:
 - starts the local admin server
 - creates a demo profile
 - creates either an OpenAI or Anthropic listener depending on backend
+- verifies `/_zolem/health`
 - verifies `/_zolem/state`
 - calls a provider-compatible endpoint
 - deletes the listener and profile

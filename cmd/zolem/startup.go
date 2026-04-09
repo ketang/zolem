@@ -315,6 +315,10 @@ func buildLocalHandler(listenerRuntime runtimecfg.ListenerRuntime, validator *sp
 	geminiH := gemini.NewHandler(validator, matcher, generator)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet && req.URL.Path == "/_zolem/health" {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+			return
+		}
 		if req.Method == http.MethodGet && req.URL.Path == "/_zolem/state" {
 			writeLocalState(w, listenerRuntime)
 			return
