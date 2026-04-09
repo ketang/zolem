@@ -3,7 +3,9 @@ package runtimecfg
 import (
 	"errors"
 	"net"
+	"path"
 	"slices"
+	"strings"
 	"sync"
 )
 
@@ -151,6 +153,9 @@ func ValidateProfile(profile RuntimeProfile) error {
 	if profile.Name == "" {
 		return errors.New("profile name is required")
 	}
+	if err := validateFixtureNamespace(profile.FixtureNamespace); err != nil {
+		return err
+	}
 	switch profile.Backend {
 	case "", "lorem", "faker", "fixture":
 		return nil
@@ -173,4 +178,26 @@ func ValidateListenerSpec(spec ListenerSpec) error {
 		return err
 	}
 	return nil
+}
+
+func validateFixtureNamespace(namespace string) error {
+	if namespace == "" {
+		return nil
+	}
+	if strings.Contains(namespace, "\\") {
+		return errors.New("fixture namespace must use forward slashes")
+	}
+	clean := path.Clean(namespace)
+	switch {
+	case strings.HasPrefix(namespace, "/"):
+		return errors.New("fixture namespace must be relative")
+	case clean == "." || clean == "..":
+		return errors.New("fixture namespace must be a relative subdirectory")
+	case strings.HasPrefix(clean, "../"):
+		return errors.New("fixture namespace must not escape the fixtures root")
+	case clean != namespace:
+		return errors.New("fixture namespace must be normalized")
+	default:
+		return nil
+	}
 }

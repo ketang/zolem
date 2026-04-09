@@ -15,6 +15,7 @@ import (
 	"zolem.dev/zolem/internal/config"
 	"zolem.dev/zolem/internal/fixture"
 	"zolem.dev/zolem/internal/response"
+	runtimecfg "zolem.dev/zolem/internal/runtime"
 	"zolem.dev/zolem/internal/specs"
 )
 
@@ -482,6 +483,52 @@ func TestBuildLocalStartupApp_FixtureBackendServesFixture(t *testing.T) {
 	decodeJSON(t, resp.Body, &payload)
 	if payload["id"] != "fixture-msg" {
 		t.Fatalf("id: got %#v, want fixture-msg", payload["id"])
+	}
+}
+
+func TestBuildLocalStartupApp_FixtureNamespaceScopesFixtures(t *testing.T) {
+	fixturesDir := t.TempDir()
+	writeLocalFixture(t, filepath.Join(fixturesDir, "team-a"), "anthropic-team-a", "anthropic", "v1", []byte(`{"id":"fixture-team-a","type":"message","role":"assistant","content":[{"type":"text","text":"fixture team a"}],"model":"claude-3-5-sonnet-20241022","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2}}`), localAlwaysMatchWASM)
+	writeLocalFixture(t, filepath.Join(fixturesDir, "team-b"), "anthropic-team-b", "anthropic", "v1", []byte(`{"id":"fixture-team-b","type":"message","role":"assistant","content":[{"type":"text","text":"fixture team b"}],"model":"claude-3-5-sonnet-20241022","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2}}`), localAlwaysMatchWASM)
+
+	app, _, err := buildLocalStartupAppForRuntime(runtimecfg.ListenerRuntime{
+		Spec: runtimecfg.ListenerSpec{
+			Name:     "anthropic-team-a",
+			Addr:     "127.0.0.1:12001",
+			Provider: "anthropic",
+			Profile:  "demo",
+		},
+		Profile: runtimecfg.RuntimeProfile{
+			Name:             "demo",
+			Backend:          runtimecfg.BackendFixture,
+			FixtureNamespace: "team-a",
+		},
+	}, fixturesDir, startupDeps{
+		newFetcher: func(string, map[string]string) specFetcher {
+			return fakeFetcher{
+				"anthropic:v1":  {err: errors.New("fetch failed")},
+				"openai:v1":     {err: errors.New("fetch failed")},
+				"gemini:v1":     {err: errors.New("fetch failed")},
+				"gemini:v1beta": {err: errors.New("fetch failed")},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildLocalStartupAppForRuntime: %v", err)
+	}
+	defer app.close()
+
+	req := httptestRequest(http.MethodPost, "/v1/messages", bytes.NewBufferString(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("x-api-key", "test-key")
+	resp := doRequest(t, app.handler, req)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", resp.StatusCode)
+	}
+	var payload map[string]any
+	decodeJSON(t, resp.Body, &payload)
+	if payload["id"] != "fixture-team-a" {
+		t.Fatalf("id: got %#v, want fixture-team-a", payload["id"])
 	}
 }
 

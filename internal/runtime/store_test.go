@@ -82,3 +82,14 @@ func TestValidateProfileAcceptsFixtureBackend(t *testing.T) {
 		t.Fatalf("expected fixture backend to be valid, got %v", err)
 	}
 }
+
+func TestValidateProfileRejectsInvalidFixtureNamespace(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:             "demo",
+		Backend:          "fixture",
+		FixtureNamespace: "../escape",
+	})
+	if err == nil {
+		t.Fatal("expected invalid fixture namespace to fail validation")
+	}
+}

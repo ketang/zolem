@@ -98,6 +98,7 @@ Current local runtime limitations:
 - no auth or TTLs yet
 - currently supported local runtime backends: `lorem`, `faker`, `fixture`
 - `fixture` listeners require `-local-fixtures-dir` on the admin server or fixed listener
+- `fixture_namespace` can scope a profile to a relative subdirectory under that fixtures root
 
 Optional local runtime TLS:
 

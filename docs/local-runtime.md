@@ -107,6 +107,7 @@ Notes:
 - a profile cannot be deleted while a listener is still using it
 - unsupported backends are rejected at profile creation time
 - `fixture` profiles only become usable when the admin server or fixed listener was started with `-local-fixtures-dir`
+- `fixture_namespace` must be a normalized relative subdirectory such as `team-a` or `team-a/smoke`
 
 ## Manage Listeners
 
@@ -202,13 +203,19 @@ Example fixture listener flow:
 ```bash
 curl -X PUT \
   -H 'Content-Type: application/json' \
-  -d '{"backend":"fixture"}' \
+  -d '{"backend":"fixture","fixture_namespace":"team-a"}' \
   http://127.0.0.1:18090/_zolem/profiles/fixture-demo
 
 curl -X PUT \
   -H 'Content-Type: application/json' \
   -d '{"addr":"127.0.0.1:0","provider":"anthropic","profile":"fixture-demo"}' \
   http://127.0.0.1:18090/_zolem/listeners/anthropic-fixture
+```
+
+With that profile, Zolem loads fixtures from:
+
+```text
+<local-fixtures-dir>/team-a
 ```
 
 Then call the normal provider endpoint on the returned `base_url`:

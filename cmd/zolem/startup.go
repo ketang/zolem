@@ -188,7 +188,7 @@ func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, 
 	warnings := loadSpecs(validator, deps.newFetcher(filepath.Join(os.TempDir(), "zolem-specs"), map[string]string{}))
 
 	runner := deps.newRunner()
-	fixtures, fixtureWarnings, err := loadLocalFixtures(listenerRuntime.Profile.Backend, fixturesDir, runner, deps.readFile)
+	fixtures, fixtureWarnings, err := loadLocalFixtures(listenerRuntime.Profile.Backend, fixturesDir, listenerRuntime.Profile.FixtureNamespace, runner, deps.readFile)
 	warnings = append(warnings, fixtureWarnings...)
 	if err != nil {
 		runner.Close()
@@ -209,12 +209,15 @@ func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, 
 	}, warnings, nil
 }
 
-func loadLocalFixtures(backend, fixturesDir string, runner *fixture.Runner, readFile func(string) ([]byte, error)) ([]fixture.Fixture, []string, error) {
+func loadLocalFixtures(backend, fixturesDir, fixtureNamespace string, runner *fixture.Runner, readFile func(string) ([]byte, error)) ([]fixture.Fixture, []string, error) {
 	if backend != runtimecfg.BackendFixture {
 		return nil, nil, nil
 	}
 	if fixturesDir == "" {
 		return nil, nil, fmt.Errorf("local fixture backend requires -local-fixtures-dir")
+	}
+	if fixtureNamespace != "" {
+		fixturesDir = filepath.Join(fixturesDir, filepath.FromSlash(fixtureNamespace))
 	}
 	cfg := &config.Config{
 		Mode:     "fixture",

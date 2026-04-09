@@ -170,6 +170,19 @@ func TestLocalAdminHandler_FixtureProfileRequiresFixturesDirAtListenerCreate(t *
 	}
 }
 
+func TestLocalAdminHandler_ProfileRejectsInvalidFixtureNamespace(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	handler := buildLocalAdminHandler(control)
+
+	req := httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"fixture","fixture_namespace":"../escape"}`))
+	resp := doRequest(t, handler, req)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400", resp.StatusCode)
+	}
+}
+
 func TestRunLocalAdmin_RejectsNonLoopbackAddr(t *testing.T) {
 	var listenCalled bool
 	err := runLocalAdmin(localAdminOptions{Addr: "0.0.0.0:8090"}, startupDeps{
