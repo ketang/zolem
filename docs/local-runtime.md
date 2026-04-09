@@ -24,6 +24,14 @@ Each listener exposes:
 - provider-compatible endpoints such as `/v1/chat/completions` or `/v1/messages`
 - a local introspection endpoint at `/_zolem/state`
 
+Profile fields you can use today:
+
+- `backend`: `lorem`, `faker`, or `fixture`
+- `fixture_namespace`: optional relative subdirectory under `-local-fixtures-dir`
+- `response_model_policy`: `echo_request`, `force_literal`, or `force_backend`
+- `response_model`: required when `response_model_policy` is `force_literal`
+- `backend_model`: used when `response_model_policy` is `force_backend`
+
 ## Start The Admin Server
 
 Run:
@@ -90,6 +98,15 @@ curl -X PUT \
   http://127.0.0.1:18090/_zolem/profiles/fixture-demo
 ```
 
+Create a profile that forces the returned `model` field:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"backend":"lorem","response_model_policy":"force_literal","response_model":"mock-openai-model"}' \
+  http://127.0.0.1:18090/_zolem/profiles/openai-shaped
+```
+
 List profiles:
 
 ```bash
@@ -108,6 +125,8 @@ Notes:
 - unsupported backends are rejected at profile creation time
 - `fixture` profiles only become usable when the admin server or fixed listener was started with `-local-fixtures-dir`
 - `fixture_namespace` must be a normalized relative subdirectory such as `team-a` or `team-a/smoke`
+- `response_model_policy=force_literal` requires `response_model`
+- `response_model_policy=force_backend` uses `backend_model` when present and otherwise falls back to the request model
 
 ## Manage Listeners
 
@@ -230,6 +249,29 @@ curl -X POST \
 
 If the request matches a fixture, Zolem returns `response.json`. If no fixture
 matches, provider behavior falls back to generated output.
+
+## Response Model Policy
+
+Local runtime listeners can shape the provider-visible `model` field without
+changing the incoming request.
+
+Policies:
+
+- `echo_request`: return the same model the client requested
+- `force_literal`: always return `response_model`
+- `force_backend`: return `backend_model` when set
+
+Example:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"backend":"lorem","response_model_policy":"force_backend","backend_model":"gpt-4.1-mini"}' \
+  http://127.0.0.1:18090/_zolem/profiles/openai-backend-shaped
+```
+
+That profile still serves generated output locally, but its responses will say
+`"model": "gpt-4.1-mini"` instead of echoing the incoming request model.
 
 ## Use A Listener
 

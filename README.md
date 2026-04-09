@@ -99,6 +99,7 @@ Current local runtime limitations:
 - currently supported local runtime backends: `lorem`, `faker`, `fixture`
 - `fixture` listeners require `-local-fixtures-dir` on the admin server or fixed listener
 - `fixture_namespace` can scope a profile to a relative subdirectory under that fixtures root
+- `response_model_policy` controls the provider-visible `model` field for local runtime listeners
 
 Optional local runtime TLS:
 

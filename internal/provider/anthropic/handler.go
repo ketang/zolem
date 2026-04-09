@@ -79,14 +79,15 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		matched, _ := h.matcher.Match(r.Context(), matchReq)
 
 		if matched != nil {
-			serveFixture(w, matched, req.Stream)
+			serveFixture(w, r.Context(), matched, req)
 			return
 		}
 	}
 
 	tokens := h.generator.Generate(30)
+	responseModel := runtimecfg.ResponseModelForRequest(r.Context(), req.Model)
 	if req.Stream {
-		streamResponse(w, req.Model, tokens, estimateInputTokens(req))
+		streamResponse(w, responseModel, tokens, estimateInputTokens(req))
 		return
 	}
 
@@ -96,7 +97,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		Type:       "message",
 		Role:       "assistant",
 		Content:    []ContentBlock{{Type: "text", Text: text}},
-		Model:      req.Model,
+		Model:      responseModel,
 		StopReason: "end_turn",
 		Usage:      Usage{InputTokens: estimateInputTokens(req), OutputTokens: len(tokens)},
 	}
@@ -104,8 +105,19 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-func serveFixture(w http.ResponseWriter, f *fixture.Fixture, stream bool) {
-	if !stream {
+func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture, req MessagesRequest) {
+	responseModel := runtimecfg.ResponseModelForRequest(ctx, req.Model)
+	if !req.Stream {
+		if _, ok := runtimecfg.ListenerRuntimeFromContext(ctx); ok {
+			var msg MessagesResponse
+			if err := json.Unmarshal(f.ResponseBody, &msg); err == nil {
+				msg.Model = responseModel
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(f.Status)
+				_ = json.NewEncoder(w).Encode(msg)
+				return
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(f.Status)
 		w.Write(f.ResponseBody)
@@ -120,7 +132,7 @@ func serveFixture(w http.ResponseWriter, f *fixture.Fixture, stream bool) {
 	}
 	text := msg.Content[0].Text
 	tokens := tokenize(text)
-	streamResponse(w, msg.Model, tokens, msg.Usage.InputTokens)
+	streamResponse(w, responseModel, tokens, msg.Usage.InputTokens)
 }
 
 func tokenize(text string) []string {

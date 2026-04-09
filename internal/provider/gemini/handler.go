@@ -108,16 +108,17 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 		}
 		matched, _ := h.matcher.Match(r.Context(), matchReq)
 		if matched != nil {
-			serveFixture(w, matched, stream, model)
+			serveFixture(w, r.Context(), matched, stream, model)
 			return
 		}
 	}
 
 	tokens := h.generator.Generate(30)
 	promptTokens := estimatePromptTokens(req)
+	responseModel := runtimecfg.ResponseModelForRequest(r.Context(), model)
 
 	if stream {
-		streamResponse(w, model, tokens, promptTokens)
+		streamResponse(w, responseModel, tokens, promptTokens)
 		return
 	}
 
@@ -133,14 +134,25 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 			CandidatesTokenCount: len(tokens),
 			TotalTokenCount:      promptTokens + len(tokens),
 		},
-		ModelVersion: model,
+		ModelVersion: responseModel,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
 
-func serveFixture(w http.ResponseWriter, f *fixture.Fixture, stream bool, model string) {
+func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture, stream bool, model string) {
+	responseModel := runtimecfg.ResponseModelForRequest(ctx, model)
 	if !stream {
+		if _, ok := runtimecfg.ListenerRuntimeFromContext(ctx); ok {
+			var resp GenerateContentResponse
+			if err := json.Unmarshal(f.ResponseBody, &resp); err == nil {
+				resp.ModelVersion = responseModel
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(f.Status)
+				_ = json.NewEncoder(w).Encode(resp)
+				return
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(f.Status)
 		w.Write(f.ResponseBody)
@@ -158,7 +170,7 @@ func serveFixture(w http.ResponseWriter, f *fixture.Fixture, stream bool, model 
 		text = resp.Candidates[0].Content.Parts[0].Text
 	}
 	tokens := tokenize(text)
-	streamResponse(w, model, tokens, resp.UsageMetadata.PromptTokenCount)
+	streamResponse(w, responseModel, tokens, resp.UsageMetadata.PromptTokenCount)
 }
 
 func tokenize(text string) []string {

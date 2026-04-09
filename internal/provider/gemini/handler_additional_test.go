@@ -12,6 +12,7 @@ import (
 	"zolem.dev/zolem/internal/provider/gemini"
 	"zolem.dev/zolem/internal/response"
 	"zolem.dev/zolem/internal/router"
+	runtimecfg "zolem.dev/zolem/internal/runtime"
 	"zolem.dev/zolem/internal/specs"
 )
 
@@ -339,6 +340,41 @@ func TestGenerateContent_FixtureResponse(t *testing.T) {
 	}
 	if resp.UsageMetadata.TotalTokenCount != 9 {
 		t.Fatalf("totalTokenCount: got %d, want 9", resp.UsageMetadata.TotalTokenCount)
+	}
+}
+
+func TestGenerateContent_LocalRuntimeFixtureResponseModelForceLiteral(t *testing.T) {
+	runner := fixture.NewRunner()
+	t.Cleanup(runner.Close)
+
+	fixtureBody := fixtureGenerateContentBody(t, "fixture text", 7, "fixture-model")
+	fixtures := []fixture.Fixture{
+		compileGeminiFixture(t, runner, "generate-match", "v1", http.StatusOK, fixtureBody, 0),
+	}
+	h := newGeminiAdditionalHandler(t, runner, fixtures, nil)
+
+	req := httptest.NewRequest(http.MethodPost, geminiGeneratePath, strings.NewReader(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generationConfig":{"maxOutputTokens":4}}`))
+	req = req.WithContext(runtimecfg.WithListenerRuntime(req.Context(), runtimecfg.ListenerRuntime{
+		Profile: runtimecfg.RuntimeProfile{
+			ResponseModelPolicy: runtimecfg.ResponseModelForceLiteral,
+			ResponseModel:       "gemini-local-model",
+		},
+	}))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", "test-key")
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", rr.Code)
+	}
+	var resp gemini.GenerateContentResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.ModelVersion != "gemini-local-model" {
+		t.Fatalf("modelVersion: got %q, want gemini-local-model", resp.ModelVersion)
 	}
 }
 

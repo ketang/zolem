@@ -93,3 +93,25 @@ func TestValidateProfileRejectsInvalidFixtureNamespace(t *testing.T) {
 		t.Fatal("expected invalid fixture namespace to fail validation")
 	}
 }
+
+func TestValidateProfileRejectsInvalidResponseModelPolicy(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:                "demo",
+		Backend:             "lorem",
+		ResponseModelPolicy: "bogus",
+	})
+	if err == nil {
+		t.Fatal("expected invalid response_model_policy to fail validation")
+	}
+}
+
+func TestValidateProfileRejectsForceLiteralWithoutResponseModel(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:                "demo",
+		Backend:             "lorem",
+		ResponseModelPolicy: runtimecfg.ResponseModelForceLiteral,
+	})
+	if err == nil {
+		t.Fatal("expected missing response model to fail validation")
+	}
+}

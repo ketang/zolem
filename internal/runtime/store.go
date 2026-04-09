@@ -156,6 +156,9 @@ func ValidateProfile(profile RuntimeProfile) error {
 	if err := validateFixtureNamespace(profile.FixtureNamespace); err != nil {
 		return err
 	}
+	if err := validateResponseModelPolicy(profile); err != nil {
+		return err
+	}
 	switch profile.Backend {
 	case "", "lorem", "faker", "fixture":
 		return nil
@@ -199,5 +202,17 @@ func validateFixtureNamespace(namespace string) error {
 		return errors.New("fixture namespace must be normalized")
 	default:
 		return nil
+	}
+}
+
+func validateResponseModelPolicy(profile RuntimeProfile) error {
+	switch profile.ResponseModelPolicy {
+	case "", ResponseModelEchoRequest, ResponseModelForceLiteral, ResponseModelForceBackend:
+		if profile.ResponseModelPolicy == ResponseModelForceLiteral && profile.ResponseModel == "" {
+			return errors.New("response model is required when response_model_policy is force_literal")
+		}
+		return nil
+	default:
+		return errors.New("response_model_policy must be echo_request, force_literal, or force_backend")
 	}
 }
