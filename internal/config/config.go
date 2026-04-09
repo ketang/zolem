@@ -13,6 +13,7 @@ type Config struct {
 	Mode     string         `yaml:"mode"`
 	Specs    SpecsConfig    `yaml:"specs"`
 	Fixtures FixturesConfig `yaml:"fixtures"`
+	Ollama   OllamaConfig   `yaml:"ollama"`
 	Routes   []RouteConfig  `yaml:"routes"`
 }
 
@@ -34,6 +35,19 @@ type SpecsConfig struct {
 type FixturesConfig struct {
 	Dir   string `yaml:"dir"`
 	Watch bool   `yaml:"watch"`
+}
+
+type OllamaConfig struct {
+	Enabled    *bool  `yaml:"enabled"`
+	BinaryPath string `yaml:"binary_path"`
+	Model      string `yaml:"model"`
+}
+
+func (c OllamaConfig) IsEnabled() bool {
+	if c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
 }
 
 type RouteConfig struct {

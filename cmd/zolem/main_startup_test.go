@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -30,6 +31,10 @@ func (f fakeFetcher) Get(provider, version string) ([]byte, error) {
 		return result.data, result.err
 	}
 	return nil, errors.New("unexpected spec request")
+}
+
+func disabledOllamaClient(context.Context, config.OllamaConfig) (textGenerator, []string) {
+	return nil, nil
 }
 
 func TestRun_ConfigLoadFailure(t *testing.T) {
@@ -74,9 +79,10 @@ func TestBuildStartupApp_SpecWarnings(t *testing.T) {
 		newValidator: func() *specs.Validator {
 			return validator
 		},
-		newRunner: fixture.NewRunner,
-		newLorem:  response.NewLoremGenerator,
-		readFile:  os.ReadFile,
+		newRunner:       fixture.NewRunner,
+		newLorem:        response.NewLoremGenerator,
+		newOllamaClient: disabledOllamaClient,
+		readFile:        os.ReadFile,
 	})
 	if app != nil {
 		defer app.close()
@@ -116,9 +122,10 @@ func TestBuildStartupApp_LoadsGeminiDiscoverySchemas(t *testing.T) {
 		newValidator: func() *specs.Validator {
 			return validator
 		},
-		newRunner: fixture.NewRunner,
-		newLorem:  response.NewLoremGenerator,
-		readFile:  os.ReadFile,
+		newRunner:       fixture.NewRunner,
+		newLorem:        response.NewLoremGenerator,
+		newOllamaClient: disabledOllamaClient,
+		readFile:        os.ReadFile,
 	})
 	if app != nil {
 		defer app.close()
@@ -157,9 +164,10 @@ func TestBuildStartupApp_LoadsVendoredAnthropicSnapshot(t *testing.T) {
 		newValidator: func() *specs.Validator {
 			return validator
 		},
-		newRunner: fixture.NewRunner,
-		newLorem:  response.NewLoremGenerator,
-		readFile:  os.ReadFile,
+		newRunner:       fixture.NewRunner,
+		newLorem:        response.NewLoremGenerator,
+		newOllamaClient: disabledOllamaClient,
+		readFile:        os.ReadFile,
 	})
 	if app != nil {
 		defer app.close()
@@ -216,9 +224,10 @@ func TestBuildStartupApp_FixtureDirLoadFailure(t *testing.T) {
 				"gemini:v1beta": {err: errors.New("fetch failed")},
 			}
 		},
-		newRunner: fixture.NewRunner,
-		newLorem:  response.NewLoremGenerator,
-		readFile:  os.ReadFile,
+		newRunner:       fixture.NewRunner,
+		newLorem:        response.NewLoremGenerator,
+		newOllamaClient: disabledOllamaClient,
+		readFile:        os.ReadFile,
 	})
 
 	if err == nil || !strings.Contains(err.Error(), "read fixture dir") {
@@ -244,8 +253,9 @@ func TestBuildStartupApp_WASMReadFailure(t *testing.T) {
 				"gemini:v1beta": {err: errors.New("fetch failed")},
 			}
 		},
-		newRunner: fixture.NewRunner,
-		newLorem:  response.NewLoremGenerator,
+		newRunner:       fixture.NewRunner,
+		newLorem:        response.NewLoremGenerator,
+		newOllamaClient: disabledOllamaClient,
 		readFile: func(string) ([]byte, error) {
 			return nil, errors.New("read denied")
 		},
@@ -274,9 +284,10 @@ func TestBuildStartupApp_WASMCompileFailure(t *testing.T) {
 				"gemini:v1beta": {err: errors.New("fetch failed")},
 			}
 		},
-		newRunner: fixture.NewRunner,
-		newLorem:  response.NewLoremGenerator,
-		readFile:  os.ReadFile,
+		newRunner:       fixture.NewRunner,
+		newLorem:        response.NewLoremGenerator,
+		newOllamaClient: disabledOllamaClient,
+		readFile:        os.ReadFile,
 	})
 
 	if err == nil || !strings.Contains(err.Error(), "compile wasm for fixture \"broken-compile\"") {
@@ -289,7 +300,7 @@ func TestBuildHandler_ZolemErrorResponses(t *testing.T) {
 	t.Cleanup(runner.Close)
 	handler := buildHandler([]config.RouteConfig{
 		{Host: "*.api.example.dev", Provider: "bogus", Labels: map[string]string{"tenant": "{1}"}},
-	}, specs.NewValidator(), fixture.NewMatcher(runner, nil), response.NewLoremGenerator())
+	}, specs.NewValidator(), fixture.NewMatcher(runner, nil), response.NewLoremGenerator(), nil)
 
 	t.Run("unmatched host", func(t *testing.T) {
 		req := httptestRequest(http.MethodPost, "/anything", bytes.NewBufferString("{}"))
@@ -347,9 +358,10 @@ func TestRun_UsesTLSWhenConfigured(t *testing.T) {
 				"gemini:v1beta": {err: errors.New("fetch failed")},
 			}
 		},
-		newRunner: fixture.NewRunner,
-		newLorem:  response.NewLoremGenerator,
-		readFile:  os.ReadFile,
+		newRunner:       fixture.NewRunner,
+		newLorem:        response.NewLoremGenerator,
+		newOllamaClient: disabledOllamaClient,
+		readFile:        os.ReadFile,
 		listen: func(string, http.Handler) error {
 			plainCalled = true
 			return nil
@@ -403,9 +415,10 @@ func TestRun_UsesPlainHTTPWhenTLSMissing(t *testing.T) {
 				"gemini:v1beta": {err: errors.New("fetch failed")},
 			}
 		},
-		newRunner: fixture.NewRunner,
-		newLorem:  response.NewLoremGenerator,
-		readFile:  os.ReadFile,
+		newRunner:       fixture.NewRunner,
+		newLorem:        response.NewLoremGenerator,
+		newOllamaClient: disabledOllamaClient,
+		readFile:        os.ReadFile,
 		listen: func(string, http.Handler) error {
 			plainCalled = true
 			return nil

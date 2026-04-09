@@ -2,6 +2,7 @@ package gemini_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,11 +15,27 @@ import (
 	"zolem.dev/zolem/internal/specs"
 )
 
+type stubGenerator struct {
+	text string
+}
+
+func (g stubGenerator) Generate(context.Context, string) (string, error) {
+	return g.text, nil
+}
+
+type testGenerator interface {
+	Generate(context.Context, string) (string, error)
+}
+
 func newHandler(t *testing.T) *gemini.Handler {
+	return newHandlerWithGenerator(t, nil)
+}
+
+func newHandlerWithGenerator(t *testing.T, generator testGenerator) *gemini.Handler {
 	t.Helper()
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)
-	return gemini.NewHandler(specs.NewValidator(), fixture.NewMatcher(runner, nil), response.NewLoremGenerator())
+	return gemini.NewHandler(specs.NewValidator(), fixture.NewMatcher(runner, nil), response.NewLoremGenerator(), generator)
 }
 
 func TestGenerateContent_MissingAuth(t *testing.T) {
@@ -76,5 +93,27 @@ func TestStreamGenerateContent_SSE(t *testing.T) {
 	}
 	if !strings.Contains(responseBody, `"finishReason":"STOP"`) {
 		t.Errorf("expected STOP in final chunk, got:\n%s", responseBody)
+	}
+}
+
+func TestGenerateContent_OllamaFallback_NonStreaming(t *testing.T) {
+	h := newHandlerWithGenerator(t, stubGenerator{text: "hello from ollama"})
+	body := `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/models/gemini-2.0-flash:generateContent", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", "test-key")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", rr.Code)
+	}
+
+	var resp gemini.GenerateContentResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Candidates) != 1 || len(resp.Candidates[0].Content.Parts) != 1 || resp.Candidates[0].Content.Parts[0].Text != "hello from ollama" {
+		t.Fatalf("response: %#v", resp)
 	}
 }

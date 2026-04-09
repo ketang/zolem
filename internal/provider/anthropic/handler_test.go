@@ -2,6 +2,7 @@ package anthropic_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,14 +15,30 @@ import (
 	"zolem.dev/zolem/internal/specs"
 )
 
+type stubGenerator struct {
+	text string
+}
+
+func (g stubGenerator) Generate(context.Context, string) (string, error) {
+	return g.text, nil
+}
+
+type testGenerator interface {
+	Generate(context.Context, string) (string, error)
+}
+
 func newHandler(t *testing.T) *anthropic.Handler {
+	return newHandlerWithGenerator(t, nil)
+}
+
+func newHandlerWithGenerator(t *testing.T, generator testGenerator) *anthropic.Handler {
 	t.Helper()
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)
 	matcher := fixture.NewMatcher(runner, nil)
 	lorem := response.NewLoremGenerator()
 	validator := specs.NewValidator()
-	return anthropic.NewHandler(validator, matcher, lorem)
+	return anthropic.NewHandler(validator, matcher, lorem, generator)
 }
 
 func TestMessages_MissingAuthHeader(t *testing.T) {
@@ -88,5 +105,27 @@ func TestMessages_LoremResponse_Streaming(t *testing.T) {
 	}
 	if !strings.Contains(responseBody, "event: content_block_delta") {
 		t.Errorf("missing content_block_delta, got:\n%s", responseBody)
+	}
+}
+
+func TestMessages_OllamaFallback_NonStreaming(t *testing.T) {
+	h := newHandlerWithGenerator(t, stubGenerator{text: "hello from ollama"})
+	body := `{"model":"claude-3-5-sonnet-20241022","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", "sk-any-key")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", rr.Code)
+	}
+
+	var resp anthropic.MessagesResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Content) != 1 || resp.Content[0].Text != "hello from ollama" {
+		t.Fatalf("content: got %#v", resp.Content)
 	}
 }
