@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"zolem.dev/zolem/internal/config"
@@ -16,6 +17,7 @@ import (
 	"zolem.dev/zolem/internal/provider/openai"
 	"zolem.dev/zolem/internal/response"
 	"zolem.dev/zolem/internal/router"
+	runtimecfg "zolem.dev/zolem/internal/runtime"
 	"zolem.dev/zolem/internal/specs"
 )
 
@@ -39,6 +41,13 @@ type startupDeps struct {
 type startupApp struct {
 	handler http.Handler
 	close   func()
+}
+
+type localOptions struct {
+	Addr     string
+	Provider string
+	Profile  string
+	Backend  string
 }
 
 func (d startupDeps) withDefaults() startupDeps {
@@ -102,6 +111,28 @@ func run(cfgPath string, deps startupDeps) error {
 	return deps.listen(cfg.Server.Addr, app.handler)
 }
 
+func runLocal(opts localOptions, deps startupDeps) error {
+	deps = deps.withDefaults()
+
+	listenerRuntime, err := opts.runtime()
+	if err != nil {
+		return err
+	}
+
+	app, warnings, err := buildLocalStartupApp(opts, deps)
+	if err != nil {
+		return err
+	}
+	defer app.close()
+
+	for _, warning := range warnings {
+		deps.logf("warn: %s", warning)
+	}
+
+	deps.logf("zolem local listener on %s for %s/%s", listenerRuntime.Spec.Addr, listenerRuntime.Spec.Provider, listenerRuntime.Spec.Profile)
+	return deps.listen(listenerRuntime.Spec.Addr, app.handler)
+}
+
 func buildStartupApp(cfg *config.Config, deps startupDeps) (*startupApp, []string, error) {
 	deps = deps.withDefaults()
 
@@ -119,6 +150,38 @@ func buildStartupApp(cfg *config.Config, deps startupDeps) (*startupApp, []strin
 	matcher := fixture.NewMatcher(runner, fixtures)
 	handler := buildHandler(cfg.Routes, validator, matcher, selectGenerator(cfg.Mode, deps))
 
+	return &startupApp{
+		handler: handler,
+		close:   runner.Close,
+	}, warnings, nil
+}
+
+func buildLocalStartupApp(opts localOptions, deps startupDeps) (*startupApp, []string, error) {
+	deps = deps.withDefaults()
+
+	listenerRuntime, err := opts.runtime()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return buildLocalStartupAppForRuntime(listenerRuntime, deps)
+}
+
+func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, deps startupDeps) (*startupApp, []string, error) {
+	deps = deps.withDefaults()
+
+	validator := deps.newValidator()
+	warnings := loadSpecs(validator, deps.newFetcher(filepath.Join(os.TempDir(), "zolem-specs"), map[string]string{}))
+
+	runner := deps.newRunner()
+	matcher := fixture.NewMatcher(runner, nil)
+	generator, err := generatorForBackend(listenerRuntime.Profile.Backend, deps)
+	if err != nil {
+		runner.Close()
+		return nil, warnings, err
+	}
+
+	handler := buildLocalHandler(listenerRuntime, validator, matcher, generator)
 	return &startupApp{
 		handler: handler,
 		close:   runner.Close,
@@ -208,12 +271,48 @@ func buildHandler(routes []config.RouteConfig, validator *specs.Validator, match
 	})
 }
 
+func buildLocalHandler(listenerRuntime runtimecfg.ListenerRuntime, validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator) http.Handler {
+	anthropicH := anthropic.NewHandler(validator, matcher, generator)
+	openaiH := openai.NewHandler(validator, matcher, generator)
+	geminiH := gemini.NewHandler(validator, matcher, generator)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet && req.URL.Path == "/_zolem/state" {
+			writeLocalState(w, listenerRuntime)
+			return
+		}
+
+		req = req.WithContext(runtimecfg.WithListenerRuntime(req.Context(), listenerRuntime))
+
+		switch listenerRuntime.Spec.Provider {
+		case "anthropic":
+			anthropicH.ServeHTTP(w, req)
+		case "openai":
+			openaiH.ServeHTTP(w, req)
+		case "gemini":
+			geminiH.ServeHTTP(w, req)
+		default:
+			writeZolemError(w, "unknown provider: "+listenerRuntime.Spec.Provider)
+		}
+	})
+}
+
 func selectGenerator(mode string, deps startupDeps) response.Generator {
-	switch mode {
-	case "faker":
-		return deps.newFaker()
-	default:
+	generator, err := generatorForBackend(mode, deps)
+	if err != nil {
 		return deps.newLorem()
+	}
+	return generator
+}
+
+func generatorForBackend(backend string, deps startupDeps) (response.Generator, error) {
+	switch backend {
+	case "", "lorem":
+		return deps.newLorem(), nil
+	case "faker":
+		return deps.newFaker(), nil
+	default:
+		return nil, fmt.Errorf("unsupported local backend %q", backend)
 	}
 }
 
@@ -241,4 +340,50 @@ func specSourceMap() map[string]string {
 
 func specKeys() []string {
 	return []string{"anthropic:v1", "openai:v1", "openrouter:v1", "gemini:v1", "gemini:v1beta"}
+}
+
+func (o localOptions) runtime() (runtimecfg.ListenerRuntime, error) {
+	if o.Provider != "anthropic" && o.Provider != "openai" && o.Provider != "gemini" {
+		return runtimecfg.ListenerRuntime{}, fmt.Errorf("invalid local provider %q: must be anthropic, openai, or gemini", o.Provider)
+	}
+
+	addr := o.Addr
+	if addr == "" {
+		addr = "127.0.0.1:8080"
+	}
+	profile := o.Profile
+	if profile == "" {
+		profile = "default"
+	}
+	backend := o.Backend
+	if backend == "" {
+		backend = "lorem"
+	}
+
+	return runtimecfg.ListenerRuntime{
+		Spec: runtimecfg.ListenerSpec{
+			Name:     providerListenerName(o.Provider, profile),
+			Addr:     addr,
+			Provider: o.Provider,
+			Profile:  profile,
+		},
+		Profile: runtimecfg.RuntimeProfile{
+			Name:    profile,
+			Backend: backend,
+		},
+	}, nil
+}
+
+func providerListenerName(provider, profile string) string {
+	return provider + "-" + profile
+}
+
+func writeLocalState(w http.ResponseWriter, listenerRuntime runtimecfg.ListenerRuntime) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"provider": listenerRuntime.Spec.Provider,
+		"profile":  listenerRuntime.Spec.Profile,
+		"backend":  listenerRuntime.Profile.Backend,
+		"listener": listenerRuntime.Spec.Addr,
+	})
 }

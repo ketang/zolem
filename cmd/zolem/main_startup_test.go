@@ -342,6 +342,85 @@ func TestBuildHandler_ZolemErrorResponses(t *testing.T) {
 	})
 }
 
+func TestBuildLocalHandler_StateResponse(t *testing.T) {
+	runner := fixture.NewRunner()
+	t.Cleanup(runner.Close)
+
+	listenerRuntime, err := (localOptions{
+		Addr:     "127.0.0.1:12001",
+		Provider: "openai",
+		Profile:  "demo",
+		Backend:  "lorem",
+	}).runtime()
+	if err != nil {
+		t.Fatalf("runtime: %v", err)
+	}
+
+	handler := buildLocalHandler(listenerRuntime, specs.NewValidator(), fixture.NewMatcher(runner, nil), response.NewLoremGenerator())
+	req := httptestRequest(http.MethodGet, "/_zolem/state", bytes.NewBuffer(nil))
+	resp := doRequest(t, handler, req)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", resp.StatusCode)
+	}
+
+	var payload map[string]any
+	decodeJSON(t, resp.Body, &payload)
+	if payload["provider"] != "openai" {
+		t.Fatalf("provider: got %#v, want openai", payload["provider"])
+	}
+	if payload["profile"] != "demo" {
+		t.Fatalf("profile: got %#v, want demo", payload["profile"])
+	}
+	if payload["backend"] != "lorem" {
+		t.Fatalf("backend: got %#v, want lorem", payload["backend"])
+	}
+	if payload["listener"] != "127.0.0.1:12001" {
+		t.Fatalf("listener: got %#v, want 127.0.0.1:12001", payload["listener"])
+	}
+}
+
+func TestBuildLocalHandler_DispatchesConfiguredProvider(t *testing.T) {
+	runner := fixture.NewRunner()
+	t.Cleanup(runner.Close)
+
+	listenerRuntime, err := (localOptions{
+		Addr:     "127.0.0.1:12001",
+		Provider: "openai",
+		Profile:  "demo",
+		Backend:  "lorem",
+	}).runtime()
+	if err != nil {
+		t.Fatalf("runtime: %v", err)
+	}
+
+	handler := buildLocalHandler(listenerRuntime, specs.NewValidator(), fixture.NewMatcher(runner, nil), response.NewLoremGenerator())
+	req := httptestRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer sk-test")
+	resp := doRequest(t, handler, req)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", resp.StatusCode)
+	}
+	if resp.Header.Get("X-Zolem-Error") == "true" {
+		t.Fatal("did not expect zolem error header")
+	}
+}
+
+func TestBuildLocalStartupApp_RejectsUnknownProvider(t *testing.T) {
+	_, _, err := buildLocalStartupApp(localOptions{
+		Addr:     "127.0.0.1:12001",
+		Provider: "bogus",
+		Profile:  "demo",
+		Backend:  "lorem",
+	}, startupDeps{})
+	if err == nil || !strings.Contains(err.Error(), "invalid local provider") {
+		t.Fatalf("expected invalid local provider error, got %v", err)
+	}
+}
+
 func TestLoadFixtures_SkipsOutsideFixtureMode(t *testing.T) {
 	fixturesDir := t.TempDir()
 	writeFixtureDir(t, fixturesDir, "ignored", []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00})
