@@ -96,8 +96,22 @@ Current local runtime limitations:
 - local-only, loopback addresses only
 - in-memory only; profiles and listeners disappear on restart
 - no auth or TTLs yet
-- currently supported local runtime backends: `lorem`, `faker`
-- local runtime listeners are HTTP-only for now; TLS is planned next
+- currently supported local runtime backends: `lorem`, `faker`, `fixture`
+- `fixture` listeners require `-local-fixtures-dir` on the admin server or fixed listener
+
+Optional local runtime TLS:
+
+```bash
+./scripts/generate-certs.sh
+
+go run ./cmd/zolem \
+  -local-admin-addr 127.0.0.1:18443 \
+  -local-tls-cert certs/localhost.pem \
+  -local-tls-key certs/localhost-key.pem
+```
+
+When the admin server is started with local TLS certs, you can request HTTPS
+data-plane listeners by including `"tls": true` in the listener payload.
 
 Full guide: [docs/local-runtime.md](/home/ketan/.codex/memories/worktrees/zolem-local-runtime-config-design/docs/local-runtime.md)
 
@@ -106,6 +120,31 @@ Full guide: [docs/local-runtime.md](/home/ketan/.codex/memories/worktrees/zolem-
 Run the end-to-end local runtime check:
 
 ```bash
+./scripts/test-local-runtime.sh
+```
+
+To verify fixture mode as well:
+
+```bash
+PROFILE_BACKEND=fixture ./scripts/test-local-runtime.sh
+```
+
+To verify the HTTPS path as well:
+
+```bash
+LOCAL_TLS_CERT=certs/localhost.pem \
+LOCAL_TLS_KEY=certs/localhost-key.pem \
+LISTENER_TLS=1 \
+./scripts/test-local-runtime.sh
+```
+
+To verify fixture mode over HTTPS:
+
+```bash
+LOCAL_TLS_CERT=certs/localhost.pem \
+LOCAL_TLS_KEY=certs/localhost-key.pem \
+LISTENER_TLS=1 \
+PROFILE_BACKEND=fixture \
 ./scripts/test-local-runtime.sh
 ```
 
@@ -139,7 +178,7 @@ You can override the output directory with `CERT_DIR`:
 CERT_DIR=~/.local/share/zolem/certs ./scripts/generate-certs.sh
 ```
 
-Note:
+The same certificate pair can now be used for local runtime mode:
 
-- the certificate generation flow exists today
-- the new local runtime admin/data-plane flow is still HTTP-only in the current branch and will pick up TLS in the next slice
+- `-local-admin-addr ... -local-tls-cert ... -local-tls-key ...`
+- `-local-addr ... -local-provider ... -local-tls-cert ... -local-tls-key ...`

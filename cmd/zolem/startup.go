@@ -43,11 +43,18 @@ type startupApp struct {
 	close   func()
 }
 
+type localTLSConfig struct {
+	CertFile string
+	KeyFile  string
+}
+
 type localOptions struct {
-	Addr     string
-	Provider string
-	Profile  string
-	Backend  string
+	Addr        string
+	Provider    string
+	Profile     string
+	Backend     string
+	FixturesDir string
+	TLS         localTLSConfig
 }
 
 func (d startupDeps) withDefaults() startupDeps {
@@ -114,6 +121,10 @@ func run(cfgPath string, deps startupDeps) error {
 func runLocal(opts localOptions, deps startupDeps) error {
 	deps = deps.withDefaults()
 
+	if err := opts.TLS.validate(); err != nil {
+		return err
+	}
+
 	listenerRuntime, err := opts.runtime()
 	if err != nil {
 		return err
@@ -130,6 +141,9 @@ func runLocal(opts localOptions, deps startupDeps) error {
 	}
 
 	deps.logf("zolem local listener on %s for %s/%s", listenerRuntime.Spec.Addr, listenerRuntime.Spec.Provider, listenerRuntime.Spec.Profile)
+	if opts.TLS.enabled() {
+		return deps.listenTLS(listenerRuntime.Spec.Addr, opts.TLS.CertFile, opts.TLS.KeyFile, app.handler)
+	}
 	return deps.listen(listenerRuntime.Spec.Addr, app.handler)
 }
 
@@ -164,17 +178,24 @@ func buildLocalStartupApp(opts localOptions, deps startupDeps) (*startupApp, []s
 		return nil, nil, err
 	}
 
-	return buildLocalStartupAppForRuntime(listenerRuntime, deps)
+	return buildLocalStartupAppForRuntime(listenerRuntime, opts.FixturesDir, deps)
 }
 
-func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, deps startupDeps) (*startupApp, []string, error) {
+func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, fixturesDir string, deps startupDeps) (*startupApp, []string, error) {
 	deps = deps.withDefaults()
 
 	validator := deps.newValidator()
 	warnings := loadSpecs(validator, deps.newFetcher(filepath.Join(os.TempDir(), "zolem-specs"), map[string]string{}))
 
 	runner := deps.newRunner()
-	matcher := fixture.NewMatcher(runner, nil)
+	fixtures, fixtureWarnings, err := loadLocalFixtures(listenerRuntime.Profile.Backend, fixturesDir, runner, deps.readFile)
+	warnings = append(warnings, fixtureWarnings...)
+	if err != nil {
+		runner.Close()
+		return nil, warnings, err
+	}
+
+	matcher := fixture.NewMatcher(runner, fixtures)
 	generator, err := generatorForBackend(listenerRuntime.Profile.Backend, deps)
 	if err != nil {
 		runner.Close()
@@ -186,6 +207,20 @@ func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, 
 		handler: handler,
 		close:   runner.Close,
 	}, warnings, nil
+}
+
+func loadLocalFixtures(backend, fixturesDir string, runner *fixture.Runner, readFile func(string) ([]byte, error)) ([]fixture.Fixture, []string, error) {
+	if backend != runtimecfg.BackendFixture {
+		return nil, nil, nil
+	}
+	if fixturesDir == "" {
+		return nil, nil, fmt.Errorf("local fixture backend requires -local-fixtures-dir")
+	}
+	cfg := &config.Config{
+		Mode:     "fixture",
+		Fixtures: config.FixturesConfig{Dir: fixturesDir},
+	}
+	return loadFixtures(cfg, runner, readFile)
 }
 
 func loadSpecs(validator *specs.Validator, fetcher specFetcher) []string {
@@ -311,6 +346,8 @@ func generatorForBackend(backend string, deps startupDeps) (response.Generator, 
 		return deps.newLorem(), nil
 	case "faker":
 		return deps.newFaker(), nil
+	case runtimecfg.BackendFixture:
+		return deps.newLorem(), nil
 	default:
 		return nil, fmt.Errorf("unsupported local backend %q", backend)
 	}
@@ -343,6 +380,9 @@ func specKeys() []string {
 }
 
 func (o localOptions) runtime() (runtimecfg.ListenerRuntime, error) {
+	if err := o.TLS.validate(); err != nil {
+		return runtimecfg.ListenerRuntime{}, err
+	}
 	if o.Provider != "anthropic" && o.Provider != "openai" && o.Provider != "gemini" {
 		return runtimecfg.ListenerRuntime{}, fmt.Errorf("invalid local provider %q: must be anthropic, openai, or gemini", o.Provider)
 	}
@@ -366,6 +406,7 @@ func (o localOptions) runtime() (runtimecfg.ListenerRuntime, error) {
 			Addr:     addr,
 			Provider: o.Provider,
 			Profile:  profile,
+			TLS:      o.TLS.enabled(),
 		},
 		Profile: runtimecfg.RuntimeProfile{
 			Name:    profile,
@@ -385,5 +426,20 @@ func writeLocalState(w http.ResponseWriter, listenerRuntime runtimecfg.ListenerR
 		"profile":  listenerRuntime.Spec.Profile,
 		"backend":  listenerRuntime.Profile.Backend,
 		"listener": listenerRuntime.Spec.Addr,
+		"tls":      listenerRuntime.Spec.TLS,
 	})
+}
+
+func (c localTLSConfig) enabled() bool {
+	return c.CertFile != "" || c.KeyFile != ""
+}
+
+func (c localTLSConfig) validate() error {
+	if c.CertFile == "" && c.KeyFile == "" {
+		return nil
+	}
+	if c.CertFile == "" || c.KeyFile == "" {
+		return fmt.Errorf("local TLS requires both cert and key")
+	}
+	return nil
 }

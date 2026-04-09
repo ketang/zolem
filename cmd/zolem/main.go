@@ -12,10 +12,20 @@ func main() {
 	localProvider := flag.String("local-provider", "", "provider for local fixed-listener mode")
 	localProfile := flag.String("local-profile", "default", "profile name for local fixed-listener mode")
 	localBackend := flag.String("local-backend", "lorem", "backend for local fixed-listener mode")
+	localFixturesDir := flag.String("local-fixtures-dir", "", "fixtures directory for local runtime fixture backend")
+	localTLSCert := flag.String("local-tls-cert", "", "certificate file for local admin or fixed-listener TLS")
+	localTLSKey := flag.String("local-tls-key", "", "key file for local admin or fixed-listener TLS")
 	flag.Parse()
 
 	if *localAdminAddr != "" {
-		if err := runLocalAdmin(localAdminOptions{Addr: *localAdminAddr}, startupDeps{}); err != nil {
+		if err := runLocalAdmin(localAdminOptions{
+			Addr:        *localAdminAddr,
+			FixturesDir: *localFixturesDir,
+			TLS: localTLSConfig{
+				CertFile: *localTLSCert,
+				KeyFile:  *localTLSKey,
+			},
+		}, startupDeps{}); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -23,10 +33,15 @@ func main() {
 
 	if *localProvider != "" {
 		if err := runLocal(localOptions{
-			Addr:     *localAddr,
-			Provider: *localProvider,
-			Profile:  *localProfile,
-			Backend:  *localBackend,
+			Addr:        *localAddr,
+			Provider:    *localProvider,
+			Profile:     *localProfile,
+			Backend:     *localBackend,
+			FixturesDir: *localFixturesDir,
+			TLS: localTLSConfig{
+				CertFile: *localTLSCert,
+				KeyFile:  *localTLSKey,
+			},
 		}, startupDeps{}); err != nil {
 			log.Fatal(err)
 		}

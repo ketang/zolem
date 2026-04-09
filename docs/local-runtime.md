@@ -9,8 +9,8 @@ This mode is designed for local development only right now:
 - listeners are stored in memory
 - all addresses must bind to loopback
 - there is no auth or TTL enforcement yet
-- the current local runtime backends are `lorem` and `faker`
-- the current local runtime listeners are HTTP-only
+- the current local runtime backends are `lorem`, `faker`, and `fixture`
+- TLS is available when you provide local cert and key files
 
 ## Concepts
 
@@ -32,10 +32,27 @@ Run:
 go run ./cmd/zolem -local-admin-addr 127.0.0.1:18090
 ```
 
+To run the admin server over HTTPS:
+
+```bash
+./scripts/generate-certs.sh
+
+go run ./cmd/zolem \
+  -local-admin-addr 127.0.0.1:18443 \
+  -local-tls-cert certs/localhost.pem \
+  -local-tls-key certs/localhost-key.pem
+```
+
 Health check:
 
 ```bash
 curl http://127.0.0.1:18090/_zolem/health
+```
+
+HTTPS health check:
+
+```bash
+curl https://127.0.0.1:18443/_zolem/health
 ```
 
 Expected response:
@@ -64,6 +81,15 @@ curl -X PUT \
   http://127.0.0.1:18090/_zolem/profiles/faker-demo
 ```
 
+Create a `fixture` profile:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"backend":"fixture"}' \
+  http://127.0.0.1:18090/_zolem/profiles/fixture-demo
+```
+
 List profiles:
 
 ```bash
@@ -80,6 +106,7 @@ Notes:
 
 - a profile cannot be deleted while a listener is still using it
 - unsupported backends are rejected at profile creation time
+- `fixture` profiles only become usable when the admin server or fixed listener was started with `-local-fixtures-dir`
 
 ## Manage Listeners
 
@@ -105,6 +132,15 @@ Example response:
 }
 ```
 
+Create an HTTPS listener when the admin server was started with local TLS certs:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"addr":"127.0.0.1:0","provider":"openai","profile":"demo","tls":true}' \
+  https://127.0.0.1:18443/_zolem/listeners/openai-demo
+```
+
 List listeners:
 
 ```bash
@@ -122,6 +158,71 @@ Listener rules:
 - the address must be loopback-only
 - the provider must currently be `openai`, `anthropic`, or `gemini`
 - the referenced profile must already exist
+- `tls: true` requires the admin server to have been started with `-local-tls-cert` and `-local-tls-key`
+- `fixture` listeners require the admin server to have been started with `-local-fixtures-dir`
+
+## Fixture Backend
+
+The `fixture` backend uses the existing fixture loader and matcher. Start the
+admin server with a fixture root:
+
+```bash
+go run ./cmd/zolem \
+  -local-admin-addr 127.0.0.1:18090 \
+  -local-fixtures-dir ./testdata/fixtures
+```
+
+Each fixture still needs the normal files under a subdirectory:
+
+- `meta.yaml`
+- `response.json`
+- `match.wasm`
+
+Minimal example:
+
+```text
+my-fixtures/
+└── anthropic-demo/
+    ├── meta.yaml
+    ├── response.json
+    └── match.wasm
+```
+
+Example `meta.yaml`:
+
+```yaml
+id: anthropic-demo
+provider: anthropic
+version: v1
+status: 200
+```
+
+Example fixture listener flow:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"backend":"fixture"}' \
+  http://127.0.0.1:18090/_zolem/profiles/fixture-demo
+
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"addr":"127.0.0.1:0","provider":"anthropic","profile":"fixture-demo"}' \
+  http://127.0.0.1:18090/_zolem/listeners/anthropic-fixture
+```
+
+Then call the normal provider endpoint on the returned `base_url`:
+
+```bash
+curl -X POST \
+  -H 'x-api-key: test-key' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"user","content":"hi"}]}' \
+  http://127.0.0.1:19101/v1/messages
+```
+
+If the request matches a fixture, Zolem returns `response.json`. If no fixture
+matches, provider behavior falls back to generated output.
 
 ## Use A Listener
 
@@ -136,6 +237,16 @@ curl -X POST \
   -H 'Content-Type: application/json' \
   -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}' \
   http://127.0.0.1:19001/v1/chat/completions
+```
+
+OpenAI HTTPS example:
+
+```bash
+curl -X POST \
+  -H 'Authorization: Bearer sk-test' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}' \
+  https://127.0.0.1:19443/v1/chat/completions
 ```
 
 Anthropic example:
@@ -175,18 +286,42 @@ Run the repo script:
 ./scripts/test-local-runtime.sh
 ```
 
+Run the same flow over HTTPS:
+
+```bash
+LOCAL_TLS_CERT=certs/localhost.pem \
+LOCAL_TLS_KEY=certs/localhost-key.pem \
+LISTENER_TLS=1 \
+./scripts/test-local-runtime.sh
+```
+
 This script:
 
 - runs the package tests
 - starts the local admin server
 - creates a demo profile
-- creates an OpenAI listener
+- creates either an OpenAI or Anthropic listener depending on backend
 - verifies `/_zolem/state`
-- calls `/v1/chat/completions`
+- calls a provider-compatible endpoint
 - deletes the listener and profile
 
-## TLS Status
+To verify fixture mode:
 
-Local runtime TLS is not wired up yet in the current branch.
+```bash
+PROFILE_BACKEND=fixture ./scripts/test-local-runtime.sh
+```
 
-The repo already includes [scripts/generate-certs.sh](/home/ketan/.codex/memories/worktrees/zolem-local-runtime-config-design/scripts/generate-certs.sh) for generating local certificates with `mkcert`, and that flow will be used when the next slice adds TLS to the local admin and data-plane listeners.
+## Certificates
+
+Use [scripts/generate-certs.sh](/home/ketan/.codex/memories/worktrees/zolem-local-runtime-config-design/scripts/generate-certs.sh) to generate local certificates with `mkcert`.
+
+It creates:
+
+- `certs/localhost.pem`
+- `certs/localhost-key.pem`
+
+Those files can be used for:
+
+- the local admin server
+- fixed local listener mode
+- dynamic local runtime listeners created with `"tls": true`

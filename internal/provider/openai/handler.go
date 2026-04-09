@@ -13,6 +13,7 @@ import (
 	"zolem.dev/zolem/internal/fixture"
 	"zolem.dev/zolem/internal/response"
 	"zolem.dev/zolem/internal/router"
+	runtimecfg "zolem.dev/zolem/internal/runtime"
 	"zolem.dev/zolem/internal/specs"
 )
 
@@ -62,15 +63,17 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	matchReq := fixture.MatchRequest{
-		Provider: "openai", Version: "v1",
-		Labels: labelsFromContext(r.Context()),
-		Body:   json.RawMessage(body),
-	}
-	matched, _ := h.matcher.Match(r.Context(), matchReq)
-	if matched != nil {
-		serveFixture(w, matched, req)
-		return
+	if runtimecfg.UsesFixtures(r.Context()) {
+		matchReq := fixture.MatchRequest{
+			Provider: "openai", Version: "v1",
+			Labels: labelsFromContext(r.Context()),
+			Body:   json.RawMessage(body),
+		}
+		matched, _ := h.matcher.Match(r.Context(), matchReq)
+		if matched != nil {
+			serveFixture(w, matched, req)
+			return
+		}
 	}
 
 	tokens := h.generator.Generate(30)

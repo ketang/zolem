@@ -17,7 +17,9 @@ import (
 )
 
 type localAdminOptions struct {
-	Addr string
+	Addr        string
+	FixturesDir string
+	TLS         localTLSConfig
 }
 
 type localProfilePayload struct {
@@ -33,6 +35,7 @@ type localListenerPayload struct {
 	Addr     string `json:"addr"`
 	Provider string `json:"provider"`
 	Profile  string `json:"profile"`
+	TLS      bool   `json:"tls,omitempty"`
 }
 
 type localListenerView struct {
@@ -41,6 +44,7 @@ type localListenerView struct {
 	Provider string `json:"provider"`
 	Profile  string `json:"profile"`
 	Backend  string `json:"backend"`
+	TLS      bool   `json:"tls,omitempty"`
 	BaseURL  string `json:"base_url"`
 }
 
@@ -59,7 +63,9 @@ type managedLocalListener struct {
 type localControlPlane struct {
 	deps        startupDeps
 	store       *runtimecfg.Store
-	startServer func(string, http.Handler) (localServer, error)
+	fixturesDir string
+	tls         localTLSConfig
+	startServer func(runtimecfg.ListenerSpec, localTLSConfig, http.Handler) (localServer, error)
 
 	mu        sync.Mutex
 	listeners map[string]*managedLocalListener
@@ -75,19 +81,27 @@ func runLocalAdmin(opts localAdminOptions, deps startupDeps) error {
 	if err := runtimecfg.ValidateLoopbackAddr(addr); err != nil {
 		return fmt.Errorf("invalid local admin addr %q: %w", addr, err)
 	}
+	if err := opts.TLS.validate(); err != nil {
+		return err
+	}
 
-	control := newLocalControlPlane(deps)
+	control := newLocalControlPlane(opts, deps)
 	defer control.Close()
 
 	deps.logf("zolem local admin on %s", addr)
+	if opts.TLS.enabled() {
+		return deps.listenTLS(addr, opts.TLS.CertFile, opts.TLS.KeyFile, buildLocalAdminHandler(control))
+	}
 	return deps.listen(addr, buildLocalAdminHandler(control))
 }
 
-func newLocalControlPlane(deps startupDeps) *localControlPlane {
+func newLocalControlPlane(opts localAdminOptions, deps startupDeps) *localControlPlane {
 	return &localControlPlane{
 		deps:        deps.withDefaults(),
 		store:       runtimecfg.NewStore(),
-		startServer: startLocalHTTPServer,
+		fixturesDir: opts.FixturesDir,
+		tls:         opts.TLS,
+		startServer: startLocalServer,
 		listeners:   make(map[string]*managedLocalListener),
 	}
 }
@@ -142,6 +156,7 @@ func (c *localControlPlane) UpsertListener(name string, payload localListenerPay
 		Addr:     payload.Addr,
 		Provider: payload.Provider,
 		Profile:  payload.Profile,
+		TLS:      payload.TLS,
 	}
 	if err := runtimecfg.ValidateListenerSpec(spec); err != nil {
 		return localListenerView{}, nil, err
@@ -153,7 +168,7 @@ func (c *localControlPlane) UpsertListener(name string, payload localListenerPay
 		Profile: profile,
 	}
 
-	app, warnings, err := buildLocalStartupAppForRuntime(runtime, c.deps)
+	app, warnings, err := buildLocalStartupAppForRuntime(runtime, c.fixturesDir, c.deps)
 	if err != nil {
 		return localListenerView{}, warnings, err
 	}
@@ -167,7 +182,7 @@ func (c *localControlPlane) UpsertListener(name string, payload localListenerPay
 	}
 	c.mu.Unlock()
 
-	server, err := c.startServer(spec.Addr, app.handler)
+	server, err := c.startServer(spec, c.tls, app.handler)
 	if err != nil {
 		app.close()
 		return localListenerView{}, warnings, err
@@ -186,7 +201,8 @@ func (c *localControlPlane) UpsertListener(name string, payload localListenerPay
 		Provider: actualSpec.Provider,
 		Profile:  actualSpec.Profile,
 		Backend:  profile.Backend,
-		BaseURL:  "http://" + actualSpec.Addr,
+		TLS:      actualSpec.TLS,
+		BaseURL:  localBaseURL(actualSpec),
 	}
 
 	c.mu.Lock()
@@ -221,6 +237,7 @@ func (c *localControlPlane) ListListeners() []localListenerView {
 			Provider: spec.Provider,
 			Profile:  spec.Profile,
 			Backend:  entry.runtime.Profile.Backend,
+			TLS:      spec.TLS,
 			BaseURL:  entry.baseURL,
 		})
 	}
@@ -391,6 +408,16 @@ type httpLocalServer struct {
 	server   *http.Server
 }
 
+func startLocalServer(spec runtimecfg.ListenerSpec, tlsConfig localTLSConfig, handler http.Handler) (localServer, error) {
+	if spec.TLS {
+		if !tlsConfig.enabled() {
+			return nil, fmt.Errorf("TLS listener %q requires local TLS cert and key", spec.Name)
+		}
+		return startLocalTLSServer(spec.Addr, handler, tlsConfig)
+	}
+	return startLocalHTTPServer(spec.Addr, handler)
+}
+
 func startLocalHTTPServer(addr string, handler http.Handler) (localServer, error) {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -408,6 +435,23 @@ func startLocalHTTPServer(addr string, handler http.Handler) (localServer, error
 	}, nil
 }
 
+func startLocalTLSServer(addr string, handler http.Handler, tlsConfig localTLSConfig) (localServer, error) {
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+
+	server := &http.Server{Handler: handler}
+	go func() {
+		_ = server.ServeTLS(listener, tlsConfig.CertFile, tlsConfig.KeyFile)
+	}()
+
+	return &httpLocalServer{
+		listener: listener,
+		server:   server,
+	}, nil
+}
+
 func (s *httpLocalServer) Addr() string {
 	return s.listener.Addr().String()
 }
@@ -416,4 +460,12 @@ func (s *httpLocalServer) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	return s.server.Shutdown(ctx)
+}
+
+func localBaseURL(spec runtimecfg.ListenerSpec) string {
+	scheme := "http"
+	if spec.TLS {
+		scheme = "https"
+	}
+	return scheme + "://" + spec.Addr
 }

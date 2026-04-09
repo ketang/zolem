@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+
+	runtimecfg "zolem.dev/zolem/internal/runtime"
 )
 
 type fakeLocalServer struct {
@@ -21,10 +23,10 @@ func (s *fakeLocalServer) Close() error {
 	return nil
 }
 
-func newTestLocalControlPlane(t *testing.T) *localControlPlane {
+func newTestLocalControlPlane(t *testing.T, opts localAdminOptions) *localControlPlane {
 	t.Helper()
 
-	control := newLocalControlPlane(startupDeps{
+	control := newLocalControlPlane(opts, startupDeps{
 		newFetcher: func(string, map[string]string) specFetcher {
 			return fakeFetcher{
 				"anthropic:v1":  {err: errFetchDisabled()},
@@ -35,9 +37,13 @@ func newTestLocalControlPlane(t *testing.T) *localControlPlane {
 		},
 		logf: func(string, ...any) {},
 	})
-	control.startServer = func(addr string, handler http.Handler) (localServer, error) {
+	control.startServer = func(spec runtimecfg.ListenerSpec, tls localTLSConfig, handler http.Handler) (localServer, error) {
+		addr := spec.Addr
 		if addr == "127.0.0.1:0" {
 			addr = "127.0.0.1:19001"
+		}
+		if spec.TLS && !tls.enabled() {
+			return nil, errors.New("missing TLS config")
 		}
 		return &fakeLocalServer{addr: addr}, nil
 	}
@@ -52,7 +58,7 @@ func errFetchDisabled() error {
 }
 
 func TestLocalAdminHandler_ProfileCRUD(t *testing.T) {
-	control := newTestLocalControlPlane(t)
+	control := newTestLocalControlPlane(t, localAdminOptions{})
 	handler := buildLocalAdminHandler(control)
 
 	putReq := httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"lorem"}`))
@@ -83,7 +89,7 @@ func TestLocalAdminHandler_ProfileCRUD(t *testing.T) {
 }
 
 func TestLocalAdminHandler_ListenerCRUD(t *testing.T) {
-	control := newTestLocalControlPlane(t)
+	control := newTestLocalControlPlane(t, localAdminOptions{})
 	handler := buildLocalAdminHandler(control)
 
 	profileReq := httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"lorem"}`))
@@ -133,15 +139,34 @@ func TestLocalAdminHandler_ListenerCRUD(t *testing.T) {
 }
 
 func TestLocalAdminHandler_ProfileRejectsUnsupportedBackend(t *testing.T) {
-	control := newTestLocalControlPlane(t)
+	control := newTestLocalControlPlane(t, localAdminOptions{})
 	handler := buildLocalAdminHandler(control)
 
-	req := httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"fixture"}`))
+	req := httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"bogus"}`))
 	resp := doRequest(t, handler, req)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status: got %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestLocalAdminHandler_FixtureProfileRequiresFixturesDirAtListenerCreate(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	handler := buildLocalAdminHandler(control)
+
+	profileReq := httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"fixture"}`))
+	profileResp := doRequest(t, handler, profileReq)
+	defer profileResp.Body.Close()
+	if profileResp.StatusCode != http.StatusOK {
+		t.Fatalf("profile put status: got %d, want 200", profileResp.StatusCode)
+	}
+
+	listenerReq := httptestRequest(http.MethodPut, "/_zolem/listeners/openai-demo", bytes.NewBufferString(`{"addr":"127.0.0.1:0","provider":"openai","profile":"demo"}`))
+	listenerResp := doRequest(t, handler, listenerReq)
+	defer listenerResp.Body.Close()
+	if listenerResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("listener put status: got %d, want 400", listenerResp.StatusCode)
 	}
 }
 
@@ -158,5 +183,86 @@ func TestRunLocalAdmin_RejectsNonLoopbackAddr(t *testing.T) {
 	}
 	if listenCalled {
 		t.Fatal("listen should not be called for invalid local admin addr")
+	}
+}
+
+func TestRunLocalAdmin_UsesTLSWhenConfigured(t *testing.T) {
+	var plainCalled bool
+	var tlsCalled bool
+	err := runLocalAdmin(localAdminOptions{
+		Addr: "127.0.0.1:8090",
+		TLS: localTLSConfig{
+			CertFile: "cert.pem",
+			KeyFile:  "key.pem",
+		},
+	}, startupDeps{
+		listen: func(string, http.Handler) error {
+			plainCalled = true
+			return nil
+		},
+		listenTLS: func(string, string, string, http.Handler) error {
+			tlsCalled = true
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("runLocalAdmin: %v", err)
+	}
+	if plainCalled {
+		t.Fatal("plain listener should not be called when local admin TLS is configured")
+	}
+	if !tlsCalled {
+		t.Fatal("TLS listener should be called when local admin TLS is configured")
+	}
+}
+
+func TestLocalAdminHandler_TLSListenerUsesHTTPSBaseURL(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{
+		TLS: localTLSConfig{
+			CertFile: "cert.pem",
+			KeyFile:  "key.pem",
+		},
+	})
+	handler := buildLocalAdminHandler(control)
+
+	profileReq := httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"lorem"}`))
+	profileResp := doRequest(t, handler, profileReq)
+	defer profileResp.Body.Close()
+	if profileResp.StatusCode != http.StatusOK {
+		t.Fatalf("profile put status: got %d, want 200", profileResp.StatusCode)
+	}
+
+	listenerReq := httptestRequest(http.MethodPut, "/_zolem/listeners/openai-demo", bytes.NewBufferString(`{"addr":"127.0.0.1:0","provider":"openai","profile":"demo","tls":true}`))
+	listenerResp := doRequest(t, handler, listenerReq)
+	defer listenerResp.Body.Close()
+	if listenerResp.StatusCode != http.StatusOK {
+		t.Fatalf("listener put status: got %d, want 200", listenerResp.StatusCode)
+	}
+	var listener map[string]any
+	decodeJSON(t, listenerResp.Body, &listener)
+	if listener["base_url"] != "https://127.0.0.1:19001" {
+		t.Fatalf("base_url: got %#v, want https://127.0.0.1:19001", listener["base_url"])
+	}
+	if listener["tls"] != true {
+		t.Fatalf("tls: got %#v, want true", listener["tls"])
+	}
+}
+
+func TestLocalAdminHandler_TLSListenerRequiresTLSConfig(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	handler := buildLocalAdminHandler(control)
+
+	profileReq := httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"lorem"}`))
+	profileResp := doRequest(t, handler, profileReq)
+	defer profileResp.Body.Close()
+	if profileResp.StatusCode != http.StatusOK {
+		t.Fatalf("profile put status: got %d, want 200", profileResp.StatusCode)
+	}
+
+	listenerReq := httptestRequest(http.MethodPut, "/_zolem/listeners/openai-demo", bytes.NewBufferString(`{"addr":"127.0.0.1:0","provider":"openai","profile":"demo","tls":true}`))
+	listenerResp := doRequest(t, handler, listenerReq)
+	defer listenerResp.Body.Close()
+	if listenerResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("listener put status: got %d, want 400", listenerResp.StatusCode)
 	}
 }

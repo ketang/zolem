@@ -66,9 +66,19 @@ func TestValidateListenerSpecRejectsNonLoopbackAddr(t *testing.T) {
 func TestValidateProfileRejectsUnsupportedBackend(t *testing.T) {
 	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
 		Name:    "demo",
-		Backend: "fixture",
+		Backend: "bogus",
 	})
 	if err == nil {
 		t.Fatal("expected unsupported backend to fail validation")
+	}
+}
+
+func TestValidateProfileAcceptsFixtureBackend(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:    "demo",
+		Backend: "fixture",
+	})
+	if err != nil {
+		t.Fatalf("expected fixture backend to be valid, got %v", err)
 	}
 }

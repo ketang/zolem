@@ -40,6 +40,16 @@ type fetchResult struct {
 	err  error
 }
 
+var localAlwaysMatchWASM = []byte{
+	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+	0x01, 0x07, 0x01, 0x60, 0x02, 0x7f, 0x7f, 0x01,
+	0x7d, 0x03, 0x02, 0x01, 0x00, 0x05, 0x03, 0x01,
+	0x00, 0x01, 0x07, 0x12, 0x02, 0x06, 0x6d, 0x65,
+	0x6d, 0x6f, 0x72, 0x79, 0x02, 0x00, 0x05, 0x6d,
+	0x61, 0x74, 0x63, 0x68, 0x00, 0x00, 0x0a, 0x09,
+	0x01, 0x07, 0x00, 0x43, 0x00, 0x00, 0x80, 0x3f, 0x0b,
+}
+
 func (f fakeFetcher) Get(provider, version string) ([]byte, error) {
 	if result, ok := f[provider+":"+version]; ok {
 		return result.data, result.err
@@ -379,6 +389,9 @@ func TestBuildLocalHandler_StateResponse(t *testing.T) {
 	if payload["listener"] != "127.0.0.1:12001" {
 		t.Fatalf("listener: got %#v, want 127.0.0.1:12001", payload["listener"])
 	}
+	if payload["tls"] != false {
+		t.Fatalf("tls: got %#v, want false", payload["tls"])
+	}
 }
 
 func TestBuildLocalHandler_DispatchesConfiguredProvider(t *testing.T) {
@@ -418,6 +431,155 @@ func TestBuildLocalStartupApp_RejectsUnknownProvider(t *testing.T) {
 	}, startupDeps{})
 	if err == nil || !strings.Contains(err.Error(), "invalid local provider") {
 		t.Fatalf("expected invalid local provider error, got %v", err)
+	}
+}
+
+func TestBuildLocalStartupApp_FixtureBackendRequiresFixturesDir(t *testing.T) {
+	_, _, err := buildLocalStartupApp(localOptions{
+		Addr:     "127.0.0.1:12001",
+		Provider: "anthropic",
+		Profile:  "demo",
+		Backend:  "fixture",
+	}, startupDeps{})
+	if err == nil || !strings.Contains(err.Error(), "-local-fixtures-dir") {
+		t.Fatalf("expected missing fixtures dir error, got %v", err)
+	}
+}
+
+func TestBuildLocalStartupApp_FixtureBackendServesFixture(t *testing.T) {
+	fixturesDir := t.TempDir()
+	writeLocalFixture(t, fixturesDir, "anthropic-fixture", "anthropic", "v1", []byte(`{"id":"fixture-msg","type":"message","role":"assistant","content":[{"type":"text","text":"fixture text"}],"model":"claude-3-5-sonnet-20241022","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2}}`), localAlwaysMatchWASM)
+
+	app, _, err := buildLocalStartupApp(localOptions{
+		Addr:        "127.0.0.1:12001",
+		Provider:    "anthropic",
+		Profile:     "demo",
+		Backend:     "fixture",
+		FixturesDir: fixturesDir,
+	}, startupDeps{
+		newFetcher: func(string, map[string]string) specFetcher {
+			return fakeFetcher{
+				"anthropic:v1":  {err: errors.New("fetch failed")},
+				"openai:v1":     {err: errors.New("fetch failed")},
+				"gemini:v1":     {err: errors.New("fetch failed")},
+				"gemini:v1beta": {err: errors.New("fetch failed")},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildLocalStartupApp: %v", err)
+	}
+	defer app.close()
+
+	req := httptestRequest(http.MethodPost, "/v1/messages", bytes.NewBufferString(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("x-api-key", "test-key")
+	resp := doRequest(t, app.handler, req)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", resp.StatusCode)
+	}
+	var payload map[string]any
+	decodeJSON(t, resp.Body, &payload)
+	if payload["id"] != "fixture-msg" {
+		t.Fatalf("id: got %#v, want fixture-msg", payload["id"])
+	}
+}
+
+func TestBuildLocalStartupApp_LoremBackendIgnoresFixtures(t *testing.T) {
+	fixturesDir := t.TempDir()
+	writeLocalFixture(t, fixturesDir, "anthropic-fixture", "anthropic", "v1", []byte(`{"id":"fixture-msg","type":"message","role":"assistant","content":[{"type":"text","text":"fixture text"}],"model":"claude-3-5-sonnet-20241022","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2}}`), localAlwaysMatchWASM)
+
+	app, _, err := buildLocalStartupApp(localOptions{
+		Addr:        "127.0.0.1:12001",
+		Provider:    "anthropic",
+		Profile:     "demo",
+		Backend:     "lorem",
+		FixturesDir: fixturesDir,
+	}, startupDeps{
+		newFetcher: func(string, map[string]string) specFetcher {
+			return fakeFetcher{
+				"anthropic:v1":  {err: errors.New("fetch failed")},
+				"openai:v1":     {err: errors.New("fetch failed")},
+				"gemini:v1":     {err: errors.New("fetch failed")},
+				"gemini:v1beta": {err: errors.New("fetch failed")},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildLocalStartupApp: %v", err)
+	}
+	defer app.close()
+
+	req := httptestRequest(http.MethodPost, "/v1/messages", bytes.NewBufferString(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("x-api-key", "test-key")
+	resp := doRequest(t, app.handler, req)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", resp.StatusCode)
+	}
+	var payload map[string]any
+	decodeJSON(t, resp.Body, &payload)
+	if payload["id"] == "fixture-msg" {
+		t.Fatalf("expected lorem backend to ignore fixture match")
+	}
+}
+
+func TestRunLocal_UsesTLSWhenConfigured(t *testing.T) {
+	var plainCalled bool
+	var tlsCalled bool
+	err := runLocal(localOptions{
+		Addr:     "127.0.0.1:12001",
+		Provider: "openai",
+		Profile:  "demo",
+		Backend:  "lorem",
+		TLS: localTLSConfig{
+			CertFile: "cert.pem",
+			KeyFile:  "key.pem",
+		},
+	}, startupDeps{
+		newFetcher: func(string, map[string]string) specFetcher {
+			return fakeFetcher{
+				"anthropic:v1":  {err: errors.New("fetch failed")},
+				"openai:v1":     {err: errors.New("fetch failed")},
+				"gemini:v1":     {err: errors.New("fetch failed")},
+				"gemini:v1beta": {err: errors.New("fetch failed")},
+			}
+		},
+		newRunner: fixture.NewRunner,
+		newLorem:  response.NewLoremGenerator,
+		listen: func(string, http.Handler) error {
+			plainCalled = true
+			return nil
+		},
+		listenTLS: func(string, string, string, http.Handler) error {
+			tlsCalled = true
+			return nil
+		},
+		logf: func(string, ...any) {},
+	})
+	if err != nil {
+		t.Fatalf("runLocal: %v", err)
+	}
+	if plainCalled {
+		t.Fatal("plain listener should not be called when local TLS is configured")
+	}
+	if !tlsCalled {
+		t.Fatal("TLS listener should be called when local TLS is configured")
+	}
+}
+
+func TestRunLocal_RejectsPartialTLSConfig(t *testing.T) {
+	err := runLocal(localOptions{
+		Addr:     "127.0.0.1:12001",
+		Provider: "openai",
+		Profile:  "demo",
+		Backend:  "lorem",
+		TLS: localTLSConfig{
+			CertFile: "cert.pem",
+		},
+	}, startupDeps{})
+	if err == nil || !strings.Contains(err.Error(), "both cert and key") {
+		t.Fatalf("expected partial TLS config error, got %v", err)
 	}
 }
 
@@ -580,6 +742,26 @@ func writeFixtureDir(t *testing.T, root, id string, wasm []byte) {
 		t.Fatalf("write meta.yaml: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "response.json"), []byte(`{"content":[]}`), 0o644); err != nil {
+		t.Fatalf("write response.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "match.wasm"), wasm, 0o644); err != nil {
+		t.Fatalf("write match.wasm: %v", err)
+	}
+}
+
+func writeLocalFixture(t *testing.T, root, id, provider, version string, responseJSON, wasm []byte) {
+	t.Helper()
+
+	dir := filepath.Join(root, id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir fixture dir: %v", err)
+	}
+
+	meta := []byte("id: " + id + "\nprovider: " + provider + "\nversion: " + version + "\nstatus: 200\n")
+	if err := os.WriteFile(filepath.Join(dir, "meta.yaml"), meta, 0o644); err != nil {
+		t.Fatalf("write meta.yaml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "response.json"), responseJSON, 0o644); err != nil {
 		t.Fatalf("write response.json: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "match.wasm"), wasm, 0o644); err != nil {

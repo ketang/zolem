@@ -11,6 +11,7 @@ import (
 	"zolem.dev/zolem/internal/fixture"
 	"zolem.dev/zolem/internal/response"
 	"zolem.dev/zolem/internal/router"
+	runtimecfg "zolem.dev/zolem/internal/runtime"
 	"zolem.dev/zolem/internal/specs"
 )
 
@@ -99,15 +100,17 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 		return
 	}
 
-	matchReq := fixture.MatchRequest{
-		Provider: "gemini", Version: version,
-		Labels: labelsFromContext(r.Context()),
-		Body:   json.RawMessage(body),
-	}
-	matched, _ := h.matcher.Match(r.Context(), matchReq)
-	if matched != nil {
-		serveFixture(w, matched, stream, model)
-		return
+	if runtimecfg.UsesFixtures(r.Context()) {
+		matchReq := fixture.MatchRequest{
+			Provider: "gemini", Version: version,
+			Labels: labelsFromContext(r.Context()),
+			Body:   json.RawMessage(body),
+		}
+		matched, _ := h.matcher.Match(r.Context(), matchReq)
+		if matched != nil {
+			serveFixture(w, matched, stream, model)
+			return
+		}
 	}
 
 	tokens := h.generator.Generate(30)
