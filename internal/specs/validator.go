@@ -29,6 +29,10 @@ func NewValidator() *Validator {
 	return &Validator{schemas: make(map[string]*jsonschema.Schema)}
 }
 
+func (v *Validator) LoadNormalized(provider, version string, schema NormalizedSchema) error {
+	return v.LoadRaw(provider, version, schema.Bytes)
+}
+
 // LoadRaw compiles and stores a schema from raw JSON bytes.
 func (v *Validator) LoadRaw(provider, version string, data []byte) error {
 	// v6 AddResource takes a parsed any, not an io.Reader

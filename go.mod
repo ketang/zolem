@@ -4,12 +4,14 @@ go 1.26.1
 
 require (
 	github.com/getkin/kin-openapi v0.134.0
+	github.com/go-chi/chi/v5 v5.2.5
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
+	github.com/tetratelabs/wazero v1.11.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.19.0 // indirect
-	github.com/go-chi/chi/v5 v5.2.5 // indirect
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
 	github.com/go-openapi/swag v0.23.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
@@ -19,8 +21,6 @@ require (
 	github.com/oasdiff/yaml3 v0.0.0-20260224194419-61cd415a242b // indirect
 	github.com/openai/openai-go/v3 v3.15.0 // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect
-	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
-	github.com/tetratelabs/wazero v1.11.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect

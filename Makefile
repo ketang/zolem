@@ -1,0 +1,2 @@
+smoke:
+	./scripts/smoke.sh

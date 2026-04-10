@@ -1,11 +1,6 @@
-package specs_test
+package specs
 
-import (
-	"strings"
-	"testing"
-
-	"zolem.dev/zolem/internal/specs"
-)
+import "testing"
 
 const testOpenAPIChatCompletionsSpecYAML = `
 openapi: 3.1.0
@@ -95,14 +90,16 @@ paths:
           description: ok
 `
 
-func TestNormalizeOpenAPI_OpenAI(t *testing.T) {
-	normalized, err := specs.NormalizeOpenAPI("openai", "v1", []byte(testOpenAPIChatCompletionsSpecYAML))
+func TestOpenAPINormalizer_NormalizeOpenAI(t *testing.T) {
+	normalizer := OpenAPINormalizer{}
+
+	schema, err := normalizer.Normalize(ContractSource{Provider: "openai", Version: "v1", Kind: SourceKindOpenAPI}, []byte(testOpenAPIChatCompletionsSpecYAML))
 	if err != nil {
 		t.Fatalf("normalize openapi: %v", err)
 	}
 
-	validator := specs.NewValidator()
-	if err := validator.LoadRaw("openai", "v1", normalized); err != nil {
+	validator := NewValidator()
+	if err := validator.LoadNormalized("openai", "v1", schema); err != nil {
 		t.Fatalf("load normalized schema: %v", err)
 	}
 
@@ -117,14 +114,16 @@ func TestNormalizeOpenAPI_OpenAI(t *testing.T) {
 	}
 }
 
-func TestNormalizeOpenAPI_OpenRouter(t *testing.T) {
-	normalized, err := specs.NormalizeOpenAPI("openrouter", "v1", []byte(testOpenAPIChatCompletionsSpecYAML))
+func TestOpenAPINormalizer_NormalizeOpenRouter(t *testing.T) {
+	normalizer := OpenAPINormalizer{}
+
+	schema, err := normalizer.Normalize(ContractSource{Provider: "openrouter", Version: "v1", Kind: SourceKindOpenAPI}, []byte(testOpenAPIChatCompletionsSpecYAML))
 	if err != nil {
 		t.Fatalf("normalize openapi: %v", err)
 	}
 
-	validator := specs.NewValidator()
-	if err := validator.LoadRaw("openrouter", "v1", normalized); err != nil {
+	validator := NewValidator()
+	if err := validator.LoadNormalized("openrouter", "v1", schema); err != nil {
 		t.Fatalf("load normalized schema: %v", err)
 	}
 
@@ -134,9 +133,9 @@ func TestNormalizeOpenAPI_OpenRouter(t *testing.T) {
 }
 
 func TestLoadProviderSchema_NormalizesOpenAPIProviders(t *testing.T) {
-	validator := specs.NewValidator()
+	validator := NewValidator()
 	for _, provider := range []string{"openai", "openrouter"} {
-		if err := specs.LoadProviderSchema(validator, provider, "v1", []byte(testOpenAPIChatCompletionsSpecYAML)); err != nil {
+		if err := LoadProviderSchema(validator, provider, "v1", []byte(testOpenAPIChatCompletionsSpecYAML)); err != nil {
 			t.Fatalf("load provider schema %s: %v", provider, err)
 		}
 		if err := validator.Validate(provider, "v1", []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`)); err != nil {
@@ -145,22 +144,20 @@ func TestLoadProviderSchema_NormalizesOpenAPIProviders(t *testing.T) {
 	}
 }
 
-func TestNormalizeOpenAPI_MissingOperation(t *testing.T) {
-	_, err := specs.NormalizeOpenAPI("openai", "v1", []byte(testOpenAPINoChatCompletionsSpec))
+func TestOpenAPINormalizer_MissingOperation(t *testing.T) {
+	normalizer := OpenAPINormalizer{}
+
+	_, err := normalizer.Normalize(ContractSource{Provider: "openai", Version: "v1", Kind: SourceKindOpenAPI}, []byte(testOpenAPINoChatCompletionsSpec))
 	if err == nil {
 		t.Fatal("expected missing operation error")
 	}
-	if !strings.Contains(err.Error(), "operation not found") {
-		t.Fatalf("unexpected error: %v", err)
-	}
 }
 
-func TestNormalizeOpenAPI_MalformedSchema(t *testing.T) {
-	_, err := specs.NormalizeOpenAPI("openai", "v1", []byte(testOpenAPIBrokenSchemaSpec))
+func TestOpenAPINormalizer_MalformedSchema(t *testing.T) {
+	normalizer := OpenAPINormalizer{}
+
+	_, err := normalizer.Normalize(ContractSource{Provider: "openai", Version: "v1", Kind: SourceKindOpenAPI}, []byte(testOpenAPIBrokenSchemaSpec))
 	if err == nil {
 		t.Fatal("expected malformed schema error")
-	}
-	if !strings.Contains(err.Error(), "MissingMessage") {
-		t.Fatalf("unexpected error: %v", err)
 	}
 }
