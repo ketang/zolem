@@ -45,7 +45,7 @@ func newHandlerWithGenerator(t *testing.T, generator testGenerator) *anthropic.H
 	matcher := fixture.NewMatcher(runner, nil)
 	lorem := response.NewLoremGenerator()
 	validator := specs.NewValidator()
-	return anthropic.NewHandler(validator, matcher, lorem, generator)
+	return anthropic.NewHandler(validator, matcher, lorem, generator, nil)
 }
 
 func TestMessages_MissingAuthHeader(t *testing.T) {

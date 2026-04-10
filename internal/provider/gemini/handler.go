@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"zolem.dev/zolem/internal/fixture"
+	"zolem.dev/zolem/internal/ollama"
 	"zolem.dev/zolem/internal/response"
 	"zolem.dev/zolem/internal/router"
 	runtimecfg "zolem.dev/zolem/internal/runtime"
@@ -20,6 +21,7 @@ type Handler struct {
 	matcher      *fixture.Matcher
 	generator    response.Generator
 	ollamaClient textGenerator
+	ollamaHTTP   chatGenerator
 	mux          *chi.Mux
 }
 
@@ -27,8 +29,13 @@ type textGenerator interface {
 	Generate(context.Context, string) (string, error)
 }
 
-func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, ollamaClient textGenerator) *Handler {
-	h := &Handler{validator: validator, matcher: matcher, generator: generator, ollamaClient: ollamaClient}
+type chatGenerator interface {
+	NonStreaming(ctx context.Context, upstream string, messages []ollama.ChatMessage, model string) (string, error)
+	Streaming(ctx context.Context, upstream string, messages []ollama.ChatMessage, model string, fn func(delta string) error) error
+}
+
+func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, ollamaClient textGenerator, ollamaHTTP chatGenerator) *Handler {
+	h := &Handler{validator: validator, matcher: matcher, generator: generator, ollamaClient: ollamaClient, ollamaHTTP: ollamaHTTP}
 	h.mux = chi.NewRouter()
 	// chi uses ':param' syntax so colons in literal path segments break routing.
 	// Use a catch-all under /v1/models/ and /v1beta/models/ and dispatch by

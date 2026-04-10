@@ -42,7 +42,7 @@ func newHandlerWithGenerator(t *testing.T, generator testGenerator) *gemini.Hand
 	t.Helper()
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)
-	return gemini.NewHandler(specs.NewValidator(), fixture.NewMatcher(runner, nil), response.NewLoremGenerator(), generator)
+	return gemini.NewHandler(specs.NewValidator(), fixture.NewMatcher(runner, nil), response.NewLoremGenerator(), generator, nil)
 }
 
 func TestGenerateContent_MissingAuth(t *testing.T) {

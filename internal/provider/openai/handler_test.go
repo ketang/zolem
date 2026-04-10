@@ -42,7 +42,7 @@ func newHandlerWithGenerator(t *testing.T, generator testGenerator) *openai.Hand
 	t.Helper()
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)
-	return openai.NewHandler(specs.NewValidator(), fixture.NewMatcher(runner, nil), response.NewLoremGenerator(), generator)
+	return openai.NewHandler(specs.NewValidator(), fixture.NewMatcher(runner, nil), response.NewLoremGenerator(), generator, nil)
 }
 
 func TestChatCompletions_MissingAuth(t *testing.T) {

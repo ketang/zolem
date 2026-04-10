@@ -66,7 +66,7 @@ func newAnthropicHandler(t *testing.T, validator *specs.Validator, buildFixtures
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)
 	matcher := fixture.NewMatcher(runner, buildFixtures(runner))
-	return anthropic.NewHandler(validator, matcher, response.NewLoremGenerator(), nil)
+	return anthropic.NewHandler(validator, matcher, response.NewLoremGenerator(), nil, nil)
 }
 
 func loadAnthropicVendoredSnapshot(t *testing.T, validator *specs.Validator) {
