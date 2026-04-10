@@ -15,6 +15,7 @@ import (
 	"zolem.dev/zolem/internal/provider/anthropic"
 	"zolem.dev/zolem/internal/response"
 	"zolem.dev/zolem/internal/router"
+	runtimecfg "zolem.dev/zolem/internal/runtime"
 	"zolem.dev/zolem/internal/specs"
 )
 
@@ -257,6 +258,42 @@ func TestMessages_FixtureNonStreaming(t *testing.T) {
 	}
 	if resp.Usage.OutputTokens != 5 {
 		t.Fatalf("output tokens: got %d, want 5", resp.Usage.OutputTokens)
+	}
+}
+
+func TestMessages_LocalRuntimeFixtureResponseModelForceBackend(t *testing.T) {
+	h := newAnthropicHandler(t, specs.NewValidator(), func(r *fixture.Runner) []fixture.Fixture {
+		mod := compileWASM(t, r, constScoreWASM(1))
+		return []fixture.Fixture{{
+			ID:           "anthropic-fixture",
+			Provider:     "anthropic",
+			Version:      "v1",
+			Status:       http.StatusOK,
+			ResponseBody: []byte(anthropicFixtureJSON),
+			Module:       &mod,
+		}}
+	})
+
+	req := newAuthRequest(`{"model":"claude-3-5-sonnet-20241022","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`)
+	req = req.WithContext(runtimecfg.WithListenerRuntime(req.Context(), runtimecfg.ListenerRuntime{
+		Profile: runtimecfg.RuntimeProfile{
+			ResponseModelPolicy: runtimecfg.ResponseModelForceBackend,
+			BackendModel:        "anthropic-backend-model",
+		},
+	}))
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	var resp anthropic.MessagesResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Model != "anthropic-backend-model" {
+		t.Fatalf("model: got %q, want anthropic-backend-model", resp.Model)
 	}
 }
 

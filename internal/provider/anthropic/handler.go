@@ -11,6 +11,7 @@ import (
 	"zolem.dev/zolem/internal/fixture"
 	"zolem.dev/zolem/internal/response"
 	"zolem.dev/zolem/internal/router"
+	runtimecfg "zolem.dev/zolem/internal/runtime"
 	"zolem.dev/zolem/internal/specs"
 )
 
@@ -73,23 +74,27 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	matchReq := fixture.MatchRequest{
-		Provider: "anthropic",
-		Version:  version,
-		Labels:   labelsFromContext(r.Context()),
-		Body:     json.RawMessage(body),
-	}
-	matched, _ := h.matcher.Match(r.Context(), matchReq)
+	if runtimecfg.UsesFixtures(r.Context()) {
+		matchReq := fixture.MatchRequest{
+			Provider: "anthropic",
+			Version:  version,
+			Labels:   labelsFromContext(r.Context()),
+			Body:     json.RawMessage(body),
+		}
+		matched, _ := h.matcher.Match(r.Context(), matchReq)
 
-	if matched != nil {
-		serveFixture(w, matched, req.Stream)
-		return
+		if matched != nil {
+			serveFixture(w, r.Context(), matched, req)
+			return
+		}
 	}
 
 	inputTokens := estimateInputTokens(req)
+	responseModel := runtimecfg.ResponseModelForRequest(r.Context(), req.Model)
+
 	if text, ok := h.generateText(r.Context(), promptFromRequest(req)); ok {
 		if req.Stream {
-			streamResponse(w, req.Model, tokenize(text), inputTokens)
+			streamResponse(w, responseModel, tokenize(text), inputTokens)
 			return
 		}
 
@@ -98,7 +103,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 			Type:       "message",
 			Role:       "assistant",
 			Content:    []ContentBlock{{Type: "text", Text: text}},
-			Model:      req.Model,
+			Model:      responseModel,
 			StopReason: "end_turn",
 			Usage:      Usage{InputTokens: inputTokens, OutputTokens: len(strings.Fields(text))},
 		}
@@ -109,7 +114,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 	tokens := h.generator.Generate(30)
 	if req.Stream {
-		streamResponse(w, req.Model, tokens, inputTokens)
+		streamResponse(w, responseModel, tokens, inputTokens)
 		return
 	}
 
@@ -119,7 +124,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		Type:       "message",
 		Role:       "assistant",
 		Content:    []ContentBlock{{Type: "text", Text: text}},
-		Model:      req.Model,
+		Model:      responseModel,
 		StopReason: "end_turn",
 		Usage:      Usage{InputTokens: inputTokens, OutputTokens: len(tokens)},
 	}
@@ -127,8 +132,19 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-func serveFixture(w http.ResponseWriter, f *fixture.Fixture, stream bool) {
-	if !stream {
+func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture, req MessagesRequest) {
+	responseModel := runtimecfg.ResponseModelForRequest(ctx, req.Model)
+	if !req.Stream {
+		if _, ok := runtimecfg.ListenerRuntimeFromContext(ctx); ok {
+			var msg MessagesResponse
+			if err := json.Unmarshal(f.ResponseBody, &msg); err == nil {
+				msg.Model = responseModel
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(f.Status)
+				_ = json.NewEncoder(w).Encode(msg)
+				return
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(f.Status)
 		w.Write(f.ResponseBody)
@@ -143,7 +159,7 @@ func serveFixture(w http.ResponseWriter, f *fixture.Fixture, stream bool) {
 	}
 	text := msg.Content[0].Text
 	tokens := tokenize(text)
-	streamResponse(w, msg.Model, tokens, msg.Usage.InputTokens)
+	streamResponse(w, responseModel, tokens, msg.Usage.InputTokens)
 }
 
 func tokenize(text string) []string {

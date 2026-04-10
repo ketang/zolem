@@ -13,6 +13,7 @@ import (
 	"zolem.dev/zolem/internal/provider/openai"
 	"zolem.dev/zolem/internal/response"
 	"zolem.dev/zolem/internal/router"
+	runtimecfg "zolem.dev/zolem/internal/runtime"
 	"zolem.dev/zolem/internal/specs"
 )
 
@@ -202,6 +203,35 @@ func TestChatCompletions_MissingModel(t *testing.T) {
 	env := decodeError(t, rr.Body.Bytes())
 	if env.Error.Message != "model is required" {
 		t.Fatalf("error message: got %q, want model is required", env.Error.Message)
+	}
+}
+
+func TestChatCompletions_LocalRuntimeResponseModelForceLiteral(t *testing.T) {
+	runner := newRunner(t)
+	h := newTestHandler(t, specs.NewValidator(), runner, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
+	req = req.WithContext(runtimecfg.WithListenerRuntime(req.Context(), runtimecfg.ListenerRuntime{
+		Profile: runtimecfg.RuntimeProfile{
+			ResponseModelPolicy: runtimecfg.ResponseModelForceLiteral,
+			ResponseModel:       "mock-openai-model",
+		},
+	}))
+	req.Header.Set("Authorization", "Bearer sk-test")
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	var resp openai.ChatCompletionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Model != "mock-openai-model" {
+		t.Fatalf("model: got %q, want mock-openai-model", resp.Model)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"zolem.dev/zolem/internal/fixture"
 	"zolem.dev/zolem/internal/response"
 	"zolem.dev/zolem/internal/router"
+	runtimecfg "zolem.dev/zolem/internal/runtime"
 	"zolem.dev/zolem/internal/specs"
 )
 
@@ -67,22 +68,26 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	matchReq := fixture.MatchRequest{
-		Provider: "openai", Version: "v1",
-		Labels: labelsFromContext(r.Context()),
-		Body:   json.RawMessage(body),
-	}
-	matched, _ := h.matcher.Match(r.Context(), matchReq)
-	if matched != nil {
-		serveFixture(w, matched, req)
-		return
+	if runtimecfg.UsesFixtures(r.Context()) {
+		matchReq := fixture.MatchRequest{
+			Provider: "openai", Version: "v1",
+			Labels: labelsFromContext(r.Context()),
+			Body:   json.RawMessage(body),
+		}
+		matched, _ := h.matcher.Match(r.Context(), matchReq)
+		if matched != nil {
+			serveFixture(w, r.Context(), matched, req)
+			return
+		}
 	}
 
 	promptTokens := estimatePromptTokens(req)
+	responseModel := runtimecfg.ResponseModelForRequest(r.Context(), req.Model)
+
 	if text, ok := h.generateText(r.Context(), promptFromRequest(req)); ok {
 		completionTokens := len(strings.Fields(text))
 		if req.Stream {
-			streamResponse(w, req.Model, tokenize(text), promptTokens)
+			streamResponse(w, responseModel, tokenize(text), promptTokens)
 			return
 		}
 
@@ -90,7 +95,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 			ID:      fmt.Sprintf("chatcmpl-zolem%d", time.Now().UnixNano()),
 			Object:  "chat.completion",
 			Created: time.Now().Unix(),
-			Model:   req.Model,
+			Model:   responseModel,
 			Choices: []Choice{{Index: 0, Message: Message{Role: "assistant", Content: text}, FinishReason: "stop"}},
 			Usage:   Usage{PromptTokens: promptTokens, CompletionTokens: completionTokens, TotalTokens: promptTokens + completionTokens},
 		}
@@ -102,7 +107,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	tokens := h.generator.Generate(30)
 
 	if req.Stream {
-		streamResponse(w, req.Model, tokens, promptTokens)
+		streamResponse(w, responseModel, tokens, promptTokens)
 		return
 	}
 
@@ -111,7 +116,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		ID:      fmt.Sprintf("chatcmpl-zolem%d", time.Now().UnixNano()),
 		Object:  "chat.completion",
 		Created: time.Now().Unix(),
-		Model:   req.Model,
+		Model:   responseModel,
 		Choices: []Choice{{Index: 0, Message: Message{Role: "assistant", Content: text}, FinishReason: "stop"}},
 		Usage:   Usage{PromptTokens: promptTokens, CompletionTokens: len(tokens), TotalTokens: promptTokens + len(tokens)},
 	}
@@ -119,8 +124,19 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(resp)
 }
 
-func serveFixture(w http.ResponseWriter, f *fixture.Fixture, req ChatCompletionRequest) {
+func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture, req ChatCompletionRequest) {
+	responseModel := runtimecfg.ResponseModelForRequest(ctx, req.Model)
 	if !req.Stream {
+		if _, ok := runtimecfg.ListenerRuntimeFromContext(ctx); ok {
+			var resp ChatCompletionResponse
+			if err := json.Unmarshal(f.ResponseBody, &resp); err == nil {
+				resp.Model = responseModel
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(f.Status)
+				_ = json.NewEncoder(w).Encode(resp)
+				return
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(f.Status)
 		w.Write(f.ResponseBody)
@@ -134,7 +150,7 @@ func serveFixture(w http.ResponseWriter, f *fixture.Fixture, req ChatCompletionR
 		return
 	}
 	tokens := tokenize(resp.Choices[0].Message.Content)
-	streamResponse(w, resp.Model, tokens, resp.Usage.PromptTokens)
+	streamResponse(w, responseModel, tokens, resp.Usage.PromptTokens)
 }
 
 func tokenize(text string) []string {
