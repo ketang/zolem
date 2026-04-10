@@ -160,10 +160,10 @@ func ValidateProfile(profile RuntimeProfile) error {
 		return err
 	}
 	switch profile.Backend {
-	case "", "lorem", "faker", "fixture":
+	case "", "lorem", "faker", "fixture", "ollama":
 		return nil
 	default:
-		return errors.New("profile backend must be lorem, faker, or fixture")
+		return errors.New("profile backend must be lorem, faker, fixture, or ollama")
 	}
 }
 

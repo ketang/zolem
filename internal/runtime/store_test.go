@@ -115,3 +115,13 @@ func TestValidateProfileRejectsForceLiteralWithoutResponseModel(t *testing.T) {
 		t.Fatal("expected missing response model to fail validation")
 	}
 }
+
+func TestValidateProfile_OllamaBackend(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:    "test",
+		Backend: "ollama",
+	})
+	if err != nil {
+		t.Fatalf("ollama backend should be valid: %v", err)
+	}
+}
