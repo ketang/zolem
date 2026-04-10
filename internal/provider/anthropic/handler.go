@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -98,6 +99,11 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 	inputTokens := estimateInputTokens(req)
 	responseModel := runtimecfg.ResponseModelForRequest(r.Context(), req.Model)
+
+	if runtimecfg.BackendForRequest(r.Context()) == runtimecfg.BackendOllama {
+		h.handleOllamaBackend(w, r, req, responseModel, inputTokens)
+		return
+	}
 
 	if text, ok := h.generateText(r.Context(), promptFromRequest(req)); ok {
 		if req.Stream {
@@ -224,4 +230,121 @@ func labelsFromContext(ctx context.Context) map[string]string {
 		}
 	}
 	return map[string]string{}
+}
+
+func (h *Handler) handleOllamaBackend(w http.ResponseWriter, r *http.Request, req MessagesRequest, responseModel string, inputTokens int) {
+	rt, _ := runtimecfg.ListenerRuntimeFromContext(r.Context())
+	upstream := rt.Profile.OllamaUpstream
+	if upstream == "" {
+		upstream = "http://localhost:11434"
+	}
+	model := rt.Profile.BackendModel
+	if model == "" {
+		model = req.Model
+	}
+
+	messages := anthropicToChatMessages(req)
+
+	if req.Stream {
+		h.handleOllamaStream(w, r.Context(), upstream, messages, model, responseModel, inputTokens)
+		return
+	}
+
+	text, err := h.ollamaHTTP.NonStreaming(r.Context(), upstream, messages, model)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "api_error", "ollama backend error: "+err.Error())
+		return
+	}
+
+	resp := MessagesResponse{
+		ID:         "msg_zolem_ollama",
+		Type:       "message",
+		Role:       "assistant",
+		Content:    []ContentBlock{{Type: "text", Text: text}},
+		Model:      responseModel,
+		StopReason: "end_turn",
+		Usage:      Usage{InputTokens: inputTokens, OutputTokens: len(strings.Fields(text))},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *Handler) handleOllamaStream(w http.ResponseWriter, ctx context.Context, upstream string, messages []ollama.ChatMessage, model, responseModel string, inputTokens int) {
+	sse := response.NewSSEWriter(w)
+	sse.SetHeaders()
+
+	msgID := "msg_zolem_" + fmt.Sprintf("%016x", pseudoRandID())
+
+	msgStart, _ := json.Marshal(map[string]any{
+		"type": "message_start",
+		"message": map[string]any{
+			"id": msgID, "type": "message", "role": "assistant",
+			"content": []any{}, "model": responseModel,
+			"stop_reason": nil, "stop_sequence": nil,
+			"usage": map[string]int{"input_tokens": inputTokens, "output_tokens": 1},
+		},
+	})
+	sse.WriteEvent("message_start", msgStart)
+	sse.Flush()
+
+	cbStart, _ := json.Marshal(map[string]any{
+		"type": "content_block_start", "index": 0,
+		"content_block": map[string]string{"type": "text", "text": ""},
+	})
+	sse.WriteEvent("content_block_start", cbStart)
+	sse.Flush()
+
+	sse.WriteEvent("ping", []byte(`{"type":"ping"}`))
+	sse.Flush()
+
+	outputTokens := 0
+	err := h.ollamaHTTP.Streaming(ctx, upstream, messages, model, func(delta string) error {
+		outputTokens++
+		d, _ := json.Marshal(map[string]any{
+			"type": "content_block_delta", "index": 0,
+			"delta": map[string]string{"type": "text_delta", "text": delta},
+		})
+		sse.WriteEvent("content_block_delta", d)
+		sse.Flush()
+		return nil
+	})
+
+	if err != nil {
+		errData, _ := json.Marshal(map[string]any{
+			"type":  "error",
+			"error": map[string]string{"type": "api_error", "message": "ollama backend error: " + err.Error()},
+		})
+		sse.WriteEvent("error", errData)
+		sse.Flush()
+		return
+	}
+
+	sse.WriteEvent("content_block_stop", []byte(`{"type":"content_block_stop","index":0}`))
+	sse.Flush()
+
+	msgDelta, _ := json.Marshal(map[string]any{
+		"type":  "message_delta",
+		"delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil},
+		"usage": map[string]int{"output_tokens": outputTokens},
+	})
+	sse.WriteEvent("message_delta", msgDelta)
+	sse.Flush()
+
+	sse.WriteEvent("message_stop", []byte(`{"type":"message_stop"}`))
+	sse.Flush()
+}
+
+func anthropicToChatMessages(req MessagesRequest) []ollama.ChatMessage {
+	var messages []ollama.ChatMessage
+	if req.System != "" {
+		messages = append(messages, ollama.ChatMessage{Role: "system", Content: strings.TrimSpace(req.System)})
+	}
+	for _, msg := range req.Messages {
+		text := msg.Content.PlainText()
+		if text == "" {
+			continue
+		}
+		messages = append(messages, ollama.ChatMessage{Role: msg.Role, Content: text})
+	}
+	return messages
 }
