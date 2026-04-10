@@ -202,11 +202,32 @@ func buildStartupApp(cfg *config.Config, deps startupDeps) (*startupApp, []strin
 	ctx, cancel := context.WithCancel(context.Background())
 	refreshDone := startRefreshLoop(ctx, cfg.Specs.RefreshInterval, deps.contractRegistry(), deps.newContractLoader(cfg.Specs.CacheDir), validator, deps.logf)
 
+	var watchDone <-chan struct{}
+	if cfg.Fixtures.Watch && cfg.Fixtures.Dir != "" {
+		reloadFn := func() ([]fixture.Fixture, error) {
+			reloaded, _, err := loadFixtures(cfg, runner, deps.readFile)
+			return reloaded, err
+		}
+		var watchErr error
+		watchDone, watchErr = fixture.StartWatcher(ctx, fixture.WatcherConfig{
+			Dir:     cfg.Fixtures.Dir,
+			Matcher: matcher,
+			Reload:  reloadFn,
+			Logf:    deps.logf,
+		})
+		if watchErr != nil {
+			warnings = append(warnings, fmt.Sprintf("fixture watcher failed to start: %v", watchErr))
+		}
+	}
+
 	return &startupApp{
 		handler: handler,
 		close: func() {
 			cancel()
 			<-refreshDone
+			if watchDone != nil {
+				<-watchDone
+			}
 			runner.Close()
 		},
 	}, warnings, nil
