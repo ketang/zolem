@@ -5,10 +5,10 @@ real OpenAPI/discovery specs and returns synthetic responses, so you can develop
 and test integrations against Anthropic, OpenAI, OpenRouter, and Gemini without
 burning tokens.
 
-Zolem currently has two ways to run:
+Zolem currently has two supported local execution paths:
 
-- static config mode: one server driven by `zolem.yaml`
 - local runtime mode: a local admin server creates in-memory profiles and loopback listeners on demand
+- fixed-listener mode: one loopback listener is pinned to one provider/profile at startup
 
 ## Supported providers
 
@@ -24,24 +24,6 @@ Zolem currently has two ways to run:
 | `lorem` | Returns lorem-ipsum placeholder text (default) |
 | `faker` | Returns randomized fake data |
 | `fixture` | Returns responses defined by WASM-matched fixture files |
-
-## Quick start: static config mode
-
-```bash
-go build -o zolem ./cmd/zolem
-./zolem -config zolem.yaml
-```
-
-Example config:
-
-```yaml
-server:
-  addr: ":8080"
-mode: lorem
-routes:
-  - host: "localhost:8080"
-    provider: anthropic
-```
 
 ## Quick start: local runtime mode
 
@@ -121,7 +103,21 @@ go run ./cmd/zolem \
 When the admin server is started with local TLS certs, you can request HTTPS
 data-plane listeners by including `"tls": true` in the listener payload.
 
-Full guide: [docs/local-runtime.md](/home/ketan/.codex/memories/worktrees/zolem-local-runtime-config-design/docs/local-runtime.md)
+## Quick Start: Fixed Listener Mode
+
+Start one loopback listener pinned to a provider and backend:
+
+```bash
+go run ./cmd/zolem \
+  -local-addr 127.0.0.1:18080 \
+  -local-provider anthropic \
+  -local-profile demo \
+  -local-backend lorem
+```
+
+For fixture-backed fixed listeners, also pass `-local-fixtures-dir`.
+
+Full guide: [docs/local-runtime.md](/home/ketan/.codex/memories/worktrees/zolem-remove-static-config-mode/docs/local-runtime.md)
 
 ## Verification
 

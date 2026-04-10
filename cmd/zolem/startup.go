@@ -9,47 +9,30 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
-	"zolem.dev/zolem/internal/config"
 	"zolem.dev/zolem/internal/fixture"
-	"zolem.dev/zolem/internal/ollama"
 	"zolem.dev/zolem/internal/provider/anthropic"
 	"zolem.dev/zolem/internal/provider/gemini"
 	"zolem.dev/zolem/internal/provider/openai"
 	"zolem.dev/zolem/internal/response"
-	"zolem.dev/zolem/internal/router"
 	runtimecfg "zolem.dev/zolem/internal/runtime"
 	"zolem.dev/zolem/internal/specs"
 )
-
-type contractLoader interface {
-	LoadFallback(source specs.ContractSource) (specs.NormalizedSchema, error)
-	Refresh(source specs.ContractSource) (specs.NormalizedSchema, error)
-}
 
 type specFetcher interface {
 	Get(provider, version string) ([]byte, error)
 }
 
-type textGenerator interface {
-	Generate(context.Context, string) (string, error)
-}
-
 type startupDeps struct {
-	loadConfig        func(string) (*config.Config, error)
-	newValidator      func() *specs.Validator
-	contractRegistry  func() specs.Registry
-	newContractLoader func(cacheDir string) contractLoader
-	newFetcher        func(cacheDir string, sources map[string]string) specFetcher
-	newRunner         func() *fixture.Runner
-	newLorem          func() *response.LoremGenerator
-	newFaker          func() *response.FakerGenerator
-	newOllamaClient   func(context.Context, config.OllamaConfig) (textGenerator, []string)
-	readFile          func(string) ([]byte, error)
-	listen            func(addr string, handler http.Handler) error
-	listenTLS         func(addr, certFile, keyFile string, handler http.Handler) error
-	logf              func(string, ...any)
+	newValidator func() *specs.Validator
+	newFetcher   func(cacheDir string, sources map[string]string) specFetcher
+	newRunner    func() *fixture.Runner
+	newLorem     func() *response.LoremGenerator
+	newFaker     func() *response.FakerGenerator
+	readFile     func(string) ([]byte, error)
+	listen       func(addr string, handler http.Handler) error
+	listenTLS    func(addr, certFile, keyFile string, handler http.Handler) error
+	logf         func(string, ...any)
 }
 
 type startupApp struct {
@@ -72,19 +55,8 @@ type localOptions struct {
 }
 
 func (d startupDeps) withDefaults() startupDeps {
-	if d.loadConfig == nil {
-		d.loadConfig = config.Load
-	}
 	if d.newValidator == nil {
 		d.newValidator = specs.NewValidator
-	}
-	if d.contractRegistry == nil {
-		d.contractRegistry = specs.DefaultRegistry
-	}
-	if d.newContractLoader == nil {
-		d.newContractLoader = func(cacheDir string) contractLoader {
-			return specs.NewContractLoader(cacheDir)
-		}
 	}
 	if d.newFetcher == nil {
 		d.newFetcher = func(cacheDir string, sources map[string]string) specFetcher {
@@ -100,17 +72,6 @@ func (d startupDeps) withDefaults() startupDeps {
 	if d.newFaker == nil {
 		d.newFaker = response.NewFakerGenerator
 	}
-	if d.newOllamaClient == nil {
-		d.newOllamaClient = func(ctx context.Context, cfg config.OllamaConfig) (textGenerator, []string) {
-			if !cfg.IsEnabled() {
-				return nil, nil
-			}
-			return ollama.Detect(ctx, ollama.Config{
-				BinaryPath: cfg.BinaryPath,
-				Model:      cfg.Model,
-			})
-		}
-	}
 	if d.readFile == nil {
 		d.readFile = os.ReadFile
 	}
@@ -124,31 +85,6 @@ func (d startupDeps) withDefaults() startupDeps {
 		d.logf = log.Printf
 	}
 	return d
-}
-
-func run(cfgPath string, deps startupDeps) error {
-	deps = deps.withDefaults()
-
-	cfg, err := deps.loadConfig(cfgPath)
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
-
-	app, warnings, err := buildStartupApp(cfg, deps)
-	if err != nil {
-		return err
-	}
-	defer app.close()
-
-	for _, warning := range warnings {
-		deps.logf("warn: %s", warning)
-	}
-
-	deps.logf("zolem listening on %s", cfg.Server.Addr)
-	if cfg.Server.TLS.Cert != "" {
-		return deps.listenTLS(cfg.Server.Addr, cfg.Server.TLS.Cert, cfg.Server.TLS.Key, app.handler)
-	}
-	return deps.listen(cfg.Server.Addr, app.handler)
 }
 
 func runLocal(opts localOptions, deps startupDeps) error {
@@ -178,59 +114,6 @@ func runLocal(opts localOptions, deps startupDeps) error {
 		return deps.listenTLS(listenerRuntime.Spec.Addr, opts.TLS.CertFile, opts.TLS.KeyFile, app.handler)
 	}
 	return deps.listen(listenerRuntime.Spec.Addr, app.handler)
-}
-
-func buildStartupApp(cfg *config.Config, deps startupDeps) (*startupApp, []string, error) {
-	deps = deps.withDefaults()
-
-	validator := deps.newValidator()
-	warnings := loadContracts(validator, deps.contractRegistry(), deps.newContractLoader(cfg.Specs.CacheDir))
-
-	runner := deps.newRunner()
-	fixtures, fixtureWarnings, err := loadFixtures(cfg, runner, deps.readFile)
-	warnings = append(warnings, fixtureWarnings...)
-	if err != nil {
-		runner.Close()
-		return nil, warnings, err
-	}
-
-	matcher := fixture.NewMatcher(runner, fixtures)
-	ollamaClient, ollamaWarnings := deps.newOllamaClient(context.Background(), cfg.Ollama)
-	warnings = append(warnings, ollamaWarnings...)
-	handler := buildHandler(cfg.Routes, validator, matcher, selectGenerator(cfg.Mode, deps), ollamaClient)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	refreshDone := startRefreshLoop(ctx, cfg.Specs.RefreshInterval, deps.contractRegistry(), deps.newContractLoader(cfg.Specs.CacheDir), validator, deps.logf)
-
-	var watchDone <-chan struct{}
-	if cfg.Fixtures.Watch && cfg.Fixtures.Dir != "" {
-		reloadFn := func() ([]fixture.Fixture, error) {
-			reloaded, _, err := loadFixtures(cfg, runner, deps.readFile)
-			return reloaded, err
-		}
-		var watchErr error
-		watchDone, watchErr = fixture.StartWatcher(ctx, fixture.WatcherConfig{
-			Dir:     cfg.Fixtures.Dir,
-			Matcher: matcher,
-			Reload:  reloadFn,
-			Logf:    deps.logf,
-		})
-		if watchErr != nil {
-			warnings = append(warnings, fmt.Sprintf("fixture watcher failed to start: %v", watchErr))
-		}
-	}
-
-	return &startupApp{
-		handler: handler,
-		close: func() {
-			cancel()
-			<-refreshDone
-			if watchDone != nil {
-				<-watchDone
-			}
-			runner.Close()
-		},
-	}, warnings, nil
 }
 
 func buildLocalStartupApp(opts localOptions, deps startupDeps) (*startupApp, []string, error) {
@@ -282,77 +165,7 @@ func loadLocalFixtures(backend, fixturesDir, fixtureNamespace string, runner *fi
 	if fixtureNamespace != "" {
 		fixturesDir = filepath.Join(fixturesDir, filepath.FromSlash(fixtureNamespace))
 	}
-	cfg := &config.Config{
-		Mode:     "fixture",
-		Fixtures: config.FixturesConfig{Dir: fixturesDir},
-	}
-	return loadFixtures(cfg, runner, readFile)
-}
-
-func loadContracts(validator *specs.Validator, registry specs.Registry, loader contractLoader) []string {
-	var warnings []string
-	for _, source := range registry.List() {
-		fallback, err := loader.LoadFallback(source)
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("failed to load fallback contract %s: %v", source.Key(), err))
-		} else if err := validator.LoadNormalized(source.Provider, source.Version, fallback); err != nil {
-			warnings = append(warnings, fmt.Sprintf("failed to compile fallback contract %s: %v", source.Key(), err))
-		}
-
-		if !source.HasRemote() {
-			continue
-		}
-
-		normalized, err := loader.Refresh(source)
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("failed to refresh contract %s: %v", source.Key(), err))
-			continue
-		}
-		if err := validator.LoadNormalized(source.Provider, source.Version, normalized); err != nil {
-			warnings = append(warnings, fmt.Sprintf("failed to compile refreshed contract %s: %v", source.Key(), err))
-		}
-	}
-	return warnings
-}
-
-func startRefreshLoop(ctx context.Context, interval time.Duration, registry specs.Registry, loader contractLoader, validator *specs.Validator, logf func(string, ...any)) <-chan struct{} {
-	done := make(chan struct{})
-	if interval <= 0 {
-		close(done)
-		return done
-	}
-	go func() {
-		defer close(done)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				refreshContracts(registry, loader, validator, logf)
-			}
-		}
-	}()
-	return done
-}
-
-func refreshContracts(registry specs.Registry, loader contractLoader, validator *specs.Validator, logf func(string, ...any)) {
-	for _, source := range registry.List() {
-		if !source.HasRemote() {
-			continue
-		}
-		normalized, err := loader.Refresh(source)
-		if err != nil {
-			logf("spec refresh failed for %s: %v", source.Key(), err)
-			continue
-		}
-		if err := validator.LoadNormalized(source.Provider, source.Version, normalized); err != nil {
-			logf("spec refresh compile failed for %s: %v", source.Key(), err)
-			continue
-		}
-		logf("spec refreshed: %s", source.Key())
-	}
+	return loadFixtures(fixturesDir, runner, readFile)
 }
 
 func loadSpecs(validator *specs.Validator, fetcher specFetcher) []string {
@@ -371,16 +184,12 @@ func loadSpecs(validator *specs.Validator, fetcher specFetcher) []string {
 	return warnings
 }
 
-func loadFixtures(cfg *config.Config, runner *fixture.Runner, readFile func(string) ([]byte, error)) ([]fixture.Fixture, []string, error) {
-	if cfg.Mode != "fixture" {
+func loadFixtures(fixturesDir string, runner *fixture.Runner, readFile func(string) ([]byte, error)) ([]fixture.Fixture, []string, error) {
+	if fixturesDir == "" {
 		return nil, nil, nil
 	}
 
-	if cfg.Fixtures.Dir == "" {
-		return nil, nil, nil
-	}
-
-	loader := fixture.NewLoader(cfg.Fixtures.Dir)
+	loader := fixture.NewLoader(fixturesDir)
 	fixtures, err := loader.Load()
 	if err != nil {
 		return nil, nil, err
@@ -407,35 +216,6 @@ func loadFixtures(cfg *config.Config, runner *fixture.Runner, readFile func(stri
 	}
 
 	return fixtures, warnings, nil
-}
-
-func buildHandler(routes []config.RouteConfig, validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, ollamaClient textGenerator) http.Handler {
-	anthropicH := anthropic.NewHandler(validator, matcher, generator, ollamaClient)
-	openaiH := openai.NewHandler(validator, matcher, generator, ollamaClient)
-	geminiH := gemini.NewHandler(validator, matcher, generator, ollamaClient)
-	r := router.New(routes)
-
-	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		routeCtx, ok := r.Match(req.Host)
-		if !ok {
-			writeZolemError(w, "no route matched host: "+req.Host)
-			return
-		}
-
-		ctx := context.WithValue(req.Context(), router.LabelsKey{}, routeCtx.Labels)
-		req = req.WithContext(ctx)
-
-		switch routeCtx.Provider {
-		case "anthropic":
-			anthropicH.ServeHTTP(w, req)
-		case "openai":
-			openaiH.ServeHTTP(w, req)
-		case "gemini":
-			geminiH.ServeHTTP(w, req)
-		default:
-			writeZolemError(w, "unknown provider: "+routeCtx.Provider)
-		}
-	})
 }
 
 func buildLocalHandler(listenerRuntime runtimecfg.ListenerRuntime, validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator) http.Handler {
@@ -466,14 +246,6 @@ func buildLocalHandler(listenerRuntime runtimecfg.ListenerRuntime, validator *sp
 			writeZolemError(w, "unknown provider: "+listenerRuntime.Spec.Provider)
 		}
 	})
-}
-
-func selectGenerator(mode string, deps startupDeps) response.Generator {
-	generator, err := generatorForBackend(mode, deps)
-	if err != nil {
-		return deps.newLorem()
-	}
-	return generator
 }
 
 func generatorForBackend(backend string, deps startupDeps) (response.Generator, error) {
