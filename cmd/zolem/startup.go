@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"zolem.dev/zolem/internal/config"
 	"zolem.dev/zolem/internal/fixture"
@@ -198,9 +199,16 @@ func buildStartupApp(cfg *config.Config, deps startupDeps) (*startupApp, []strin
 	warnings = append(warnings, ollamaWarnings...)
 	handler := buildHandler(cfg.Routes, validator, matcher, selectGenerator(cfg.Mode, deps), ollamaClient)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	refreshDone := startRefreshLoop(ctx, cfg.Specs.RefreshInterval, deps.contractRegistry(), deps.newContractLoader(cfg.Specs.CacheDir), validator, deps.logf)
+
 	return &startupApp{
 		handler: handler,
-		close:   runner.Close,
+		close: func() {
+			cancel()
+			<-refreshDone
+			runner.Close()
+		},
 	}, warnings, nil
 }
 
@@ -284,6 +292,46 @@ func loadContracts(validator *specs.Validator, registry specs.Registry, loader c
 		}
 	}
 	return warnings
+}
+
+func startRefreshLoop(ctx context.Context, interval time.Duration, registry specs.Registry, loader contractLoader, validator *specs.Validator, logf func(string, ...any)) <-chan struct{} {
+	done := make(chan struct{})
+	if interval <= 0 {
+		close(done)
+		return done
+	}
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				refreshContracts(registry, loader, validator, logf)
+			}
+		}
+	}()
+	return done
+}
+
+func refreshContracts(registry specs.Registry, loader contractLoader, validator *specs.Validator, logf func(string, ...any)) {
+	for _, source := range registry.List() {
+		if !source.HasRemote() {
+			continue
+		}
+		normalized, err := loader.Refresh(source)
+		if err != nil {
+			logf("spec refresh failed for %s: %v", source.Key(), err)
+			continue
+		}
+		if err := validator.LoadNormalized(source.Provider, source.Version, normalized); err != nil {
+			logf("spec refresh compile failed for %s: %v", source.Key(), err)
+			continue
+		}
+		logf("spec refreshed: %s", source.Key())
+	}
 }
 
 func loadSpecs(validator *specs.Validator, fetcher specFetcher) []string {
