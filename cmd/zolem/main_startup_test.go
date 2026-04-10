@@ -105,6 +105,12 @@ func disabledOllamaClient(context.Context, config.OllamaConfig) (textGenerator, 
 	return nil, nil
 }
 
+type stubTextGenerator string
+
+func (g stubTextGenerator) Generate(context.Context, string) (string, error) {
+	return string(g), nil
+}
+
 func TestRun_ConfigLoadFailure(t *testing.T) {
 	var listenCalled bool
 	err := run("does-not-matter", startupDeps{
@@ -173,6 +179,33 @@ func TestBuildStartupApp_RefreshWarningsKeepFallbackSchema(t *testing.T) {
 	}
 }
 
+func TestBuildStartupApp_OllamaClientEnabled(t *testing.T) {
+	cfg := &config.Config{
+		Specs: config.SpecsConfig{CacheDir: t.TempDir()},
+		Ollama: config.OllamaConfig{},
+	}
+
+	app, warnings, err := buildStartupApp(cfg, startupDeps{
+		newContractLoader: func(string) contractLoader {
+			return fakeLoaderForTests()
+		},
+		newRunner: fixture.NewRunner,
+		newLorem:  response.NewLoremGenerator,
+		newOllamaClient: func(_ context.Context, _ config.OllamaConfig) (textGenerator, []string) {
+			return stubTextGenerator("ollama response"), []string{"ollama: using model gemma4:e4b"}
+		},
+		readFile: os.ReadFile,
+	})
+	if app != nil {
+		defer app.close()
+	}
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !containsWarning(warnings, "ollama: using model gemma4:e4b") {
+		t.Fatalf("expected ollama warning, got %v", warnings)
+	}
+}
 
 func TestSpecSourceMap_CanonicalSourceInvariants(t *testing.T) {
 	sources := specSourceMap()
