@@ -1,7 +1,7 @@
 # Local Runtime Mode
 
 Local runtime mode lets you create mock behavior at runtime through a localhost
-control plane instead of editing `zolem.yaml`.
+control plane instead of restarting Zolem for each setup change.
 
 This mode is designed for local development only right now:
 

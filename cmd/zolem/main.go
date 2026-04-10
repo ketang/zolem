@@ -6,7 +6,6 @@ import (
 )
 
 func main() {
-	cfgPath := flag.String("config", "zolem.yaml", "path to config file")
 	localAdminAddr := flag.String("local-admin-addr", "", "listen address for local admin control plane")
 	localAddr := flag.String("local-addr", "", "listen address for local fixed-listener mode")
 	localProvider := flag.String("local-provider", "", "provider for local fixed-listener mode")
@@ -48,7 +47,5 @@ func main() {
 		return
 	}
 
-	if err := run(*cfgPath, startupDeps{}); err != nil {
-		log.Fatal(err)
-	}
+	log.Fatal("choose either -local-admin-addr or -local-provider")
 }

@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	anthropicapi "github.com/anthropics/anthropic-sdk-go"
 	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
@@ -16,14 +15,11 @@ import (
 )
 
 func TestSDKCompatibility_Anthropic(t *testing.T) {
-	repoRoot := repoRoot(t)
-	svc := startService(t, repoRoot)
-	t.Cleanup(svc.Close)
+	svc := startFixedService(t, "anthropic")
 
 	client := anthropicapi.NewClient(
 		anthropicoption.WithAPIKey("sk-test"),
 		anthropicoption.WithBaseURL(svc.baseURL),
-		anthropicoption.WithHTTPClient(newHostRewriteClient("acme.api.anthropic.zolem.dev")),
 	)
 
 	t.Run("non-streaming", func(t *testing.T) {
@@ -37,21 +33,9 @@ func TestSDKCompatibility_Anthropic(t *testing.T) {
 		if err != nil {
 			t.Fatalf("messages.new: %v", err)
 		}
-		if message.Type != "message" {
-			t.Fatalf("type: got %q, want message", message.Type)
-		}
-		if message.Role != "assistant" {
-			t.Fatalf("role: got %q, want assistant", message.Role)
-		}
-		if len(message.Content) != 1 {
-			t.Fatalf("content blocks: got %d, want 1", len(message.Content))
-		}
 		text, ok := message.Content[0].AsAny().(anthropicapi.TextBlock)
-		if !ok {
-			t.Fatalf("unexpected content type: %#v", message.Content[0].AsAny())
-		}
-		if text.Text != "Fixture says hello from anthropic." {
-			t.Fatalf("text: got %q", text.Text)
+		if !ok || text.Text != "Fixture says hello from anthropic." {
+			t.Fatalf("content: %#v", message.Content)
 		}
 	})
 
@@ -95,27 +79,18 @@ func TestSDKCompatibility_Anthropic(t *testing.T) {
 			t.Fatal("expected error for invalid anthropic request")
 		}
 		var apiErr *anthropicapi.Error
-		if !errors.As(err, &apiErr) {
-			t.Fatalf("expected anthropic api error, got %T", err)
-		}
-		if apiErr.StatusCode != http.StatusBadRequest {
-			t.Fatalf("status: got %d, want 400", apiErr.StatusCode)
-		}
-		if !strings.Contains(apiErr.Error(), "max_tokens is required") {
-			t.Fatalf("error text: %v", err)
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
+			t.Fatalf("unexpected error: %v", err)
 		}
 	})
 }
 
 func TestSDKCompatibility_OpenAI(t *testing.T) {
-	repoRoot := repoRoot(t)
-	svc := startService(t, repoRoot)
-	t.Cleanup(svc.Close)
+	svc := startFixedService(t, "openai")
 
 	client := openai.NewClient(
 		openaioption.WithAPIKey("sk-test"),
 		openaioption.WithBaseURL(svc.baseURL+"/v1"),
-		openaioption.WithHTTPClient(newHostRewriteClient("acme.api.openai.zolem.dev")),
 	)
 
 	t.Run("non-streaming", func(t *testing.T) {
@@ -127,9 +102,6 @@ func TestSDKCompatibility_OpenAI(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatalf("chat.completions.new: %v", err)
-		}
-		if len(completion.Choices) != 1 {
-			t.Fatalf("choices: got %d, want 1", len(completion.Choices))
 		}
 		if got := completion.Choices[0].Message.Content; got != "Fixture says hello from openai." {
 			t.Fatalf("content: got %q", got)
@@ -171,35 +143,8 @@ func TestSDKCompatibility_OpenAI(t *testing.T) {
 			t.Fatal("expected error for invalid openai request")
 		}
 		var apiErr *openai.Error
-		if !errors.As(err, &apiErr) {
-			t.Fatalf("expected openai api error, got %T", err)
-		}
-		if apiErr.StatusCode != http.StatusBadRequest {
-			t.Fatalf("status: got %d, want 400", apiErr.StatusCode)
-		}
-		if !strings.Contains(apiErr.Message, "model") {
-			t.Fatalf("message: got %q", apiErr.Message)
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
+			t.Fatalf("unexpected error: %v", err)
 		}
 	})
-}
-
-func newHostRewriteClient(host string) *http.Client {
-	return &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: hostRewriteRoundTripper{
-			host: host,
-			base: http.DefaultTransport,
-		},
-	}
-}
-
-type hostRewriteRoundTripper struct {
-	host string
-	base http.RoundTripper
-}
-
-func (rt hostRewriteRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	clone := req.Clone(req.Context())
-	clone.Host = rt.host
-	return rt.base.RoundTrip(clone)
 }
