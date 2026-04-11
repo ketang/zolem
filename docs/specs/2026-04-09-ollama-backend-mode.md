@@ -101,8 +101,8 @@ Each provider handler has a function to map its native request into `[]ChatMessa
 
 ### Gemini to ChatMessage
 
-- `req.SystemInstruction` → `ChatMessage{Role: "system", Content: text}`
 - `req.Contents` → mapped (`user` stays `user`, `model` becomes `assistant`)
+- Note: `SystemInstruction` is not currently in zolem's Gemini request type and is not translated.
 
 Only text content is translated. Tool calls, function definitions, and multimodal content are silently dropped.
 

@@ -257,7 +257,7 @@ func (h *Handler) handleOllamaBackend(w http.ResponseWriter, r *http.Request, re
 	}
 
 	resp := MessagesResponse{
-		ID:         "msg_zolem_ollama",
+		ID:         "msg_zolem_" + fmt.Sprintf("%016x", pseudoRandID()),
 		Type:       "message",
 		Role:       "assistant",
 		Content:    []ContentBlock{{Type: "text", Text: text}},

@@ -342,7 +342,11 @@ func (h *Handler) handleOllamaStream(w http.ResponseWriter, ctx context.Context,
 	})
 
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "INTERNAL", "ollama backend error: "+err.Error())
+		errData, _ := json.Marshal(map[string]any{
+			"error": map[string]any{"code": 502, "message": "ollama backend error: " + err.Error(), "status": "INTERNAL"},
+		})
+		sse.WriteData(errData)
+		sse.Flush()
 		return
 	}
 
