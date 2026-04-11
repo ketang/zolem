@@ -43,6 +43,7 @@ type errorEnvelope struct {
 	Error struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
+		Param   any    `json:"param"`
 		Code    any    `json:"code"`
 	} `json:"error"`
 }
@@ -203,6 +204,86 @@ func TestChatCompletions_MissingModel(t *testing.T) {
 	env := decodeError(t, rr.Body.Bytes())
 	if env.Error.Message != "model is required" {
 		t.Fatalf("error message: got %q, want model is required", env.Error.Message)
+	}
+}
+
+func TestChatCompletions_MissingAuthUsesHighFidelityEnvelope(t *testing.T) {
+	runner := newRunner(t)
+	h := newTestHandler(t, specs.NewValidator(), runner, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusUnauthorized)
+	}
+	env := decodeError(t, rr.Body.Bytes())
+	if env.Error.Code != "invalid_api_key" {
+		t.Fatalf("error code: got %#v, want invalid_api_key", env.Error.Code)
+	}
+	if env.Error.Param != nil {
+		t.Fatalf("error param: got %#v, want nil", env.Error.Param)
+	}
+	if !strings.Contains(env.Error.Message, "Authorization header") {
+		t.Fatalf("error message: got %q, want Authorization header guidance", env.Error.Message)
+	}
+}
+
+func TestChatCompletions_InvalidJSONUsesHighFidelityEnvelope(t *testing.T) {
+	runner := newRunner(t)
+	h := newTestHandler(t, specs.NewValidator(), runner, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString("{"))
+	req.Header.Set("Authorization", "Bearer sk-test")
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+	env := decodeError(t, rr.Body.Bytes())
+	if env.Error.Type != "invalid_request_error" {
+		t.Fatalf("error type: got %q, want invalid_request_error", env.Error.Type)
+	}
+	if env.Error.Param != nil {
+		t.Fatalf("error param: got %#v, want nil", env.Error.Param)
+	}
+	if !strings.Contains(env.Error.Message, "invalid JSON") {
+		t.Fatalf("error message: got %q, want invalid JSON detail", env.Error.Message)
+	}
+}
+
+func TestChatCompletions_LocalRuntimeErrorBackendRateLimit(t *testing.T) {
+	runner := newRunner(t)
+	h := newTestHandler(t, specs.NewValidator(), runner, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
+	req = req.WithContext(runtimecfg.WithListenerRuntime(req.Context(), runtimecfg.ListenerRuntime{
+		Profile: runtimecfg.RuntimeProfile{
+			Backend:   runtimecfg.BackendError,
+			ErrorType: runtimecfg.ErrorTypeRateLimit,
+		},
+	}))
+	req.Header.Set("Authorization", "Bearer sk-test")
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusTooManyRequests)
+	}
+	env := decodeError(t, rr.Body.Bytes())
+	if env.Error.Type != "rate_limit_error" {
+		t.Fatalf("error type: got %q, want rate_limit_error", env.Error.Type)
+	}
+	if env.Error.Code != "rate_limit_exceeded" {
+		t.Fatalf("error code: got %#v, want rate_limit_exceeded", env.Error.Code)
 	}
 }
 

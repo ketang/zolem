@@ -9,7 +9,7 @@ This mode is designed for local development only right now:
 - listeners are stored in memory
 - all addresses must bind to loopback
 - there is no auth or TTL enforcement yet
-- the current local runtime backends are `lorem`, `faker`, `fixture`, and `ollama`
+- the current local runtime backends are `lorem`, `faker`, `fixture`, `ollama`, and `error`
 - TLS is available when you provide local cert and key files
 
 ## Concepts
@@ -27,12 +27,69 @@ Each listener exposes:
 
 Profile fields you can use today:
 
-- `backend`: `lorem`, `faker`, `fixture`, or `ollama`
+- `backend`: `lorem`, `faker`, `fixture`, `ollama`, or `error`
+- `error_type`: required when `backend` is `error`
 - `fixture_namespace`: optional relative subdirectory under `-local-fixtures-dir`
 - `response_model_policy`: `echo_request`, `force_literal`, or `force_backend`
 - `response_model`: required when `response_model_policy` is `force_literal`
 - `backend_model`: used when `response_model_policy` is `force_backend`; also selects the model sent to Ollama when `backend` is `ollama`
 - `ollama_upstream`: base URL of the Ollama server (default `http://localhost:11434`); must be `http` or `https`
+
+## Error Backend
+
+The `error` backend is for deterministic client error-path testing.
+
+Goals:
+
+- an error profile should deterministically fail every provider request on that listener
+- provider error payloads should always be high fidelity when Zolem emits an error
+- profile config should stay semantic and provider-agnostic
+
+Profile shape:
+
+```json
+{
+  "backend": "error",
+  "error_type": "authentication"
+}
+```
+
+Supported `error_type` values:
+
+- `authentication`
+- `permission`
+- `invalid_request`
+- `rate_limit`
+- `server_error`
+
+Behavior:
+
+- `backend=error` means the listener always returns an error
+- the selected `error_type` maps to a provider-native status code and body
+- Zolem owns the exact message and envelope shape for fidelity
+- profile config should not override the error message, because custom messages reduce fidelity with the reference provider API
+- success backends such as `lorem`, `faker`, and `fixture` are bypassed entirely for error profiles
+
+Example:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"backend":"error","error_type":"rate_limit"}' \
+  http://127.0.0.1:18090/_zolem/profiles/rate-limit-demo
+```
+
+Bind that profile to a listener:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"addr":"127.0.0.1:0","provider":"openai","profile":"rate-limit-demo"}' \
+  http://127.0.0.1:18090/_zolem/listeners/openai-rate-limit
+```
+
+Every request sent to that listener's provider endpoint returns the configured
+provider-native error instead of a generated or fixture-backed success response.
 
 ## Start The Admin Server
 
@@ -100,6 +157,15 @@ curl -X PUT \
   http://127.0.0.1:18090/_zolem/profiles/fixture-demo
 ```
 
+Create an `error` profile:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"backend":"error","error_type":"rate_limit"}' \
+  http://127.0.0.1:18090/_zolem/profiles/error-demo
+```
+
 Create a profile that forces the returned `model` field:
 
 ```bash
@@ -125,7 +191,9 @@ Notes:
 
 - a profile cannot be deleted while a listener is still using it
 - unsupported backends are rejected at profile creation time
+- `error` profiles require `error_type`
 - `fixture` profiles only become usable when the admin server or fixed listener was started with `-local-fixtures-dir`
+- `error_type` is only valid when `backend=error`
 - `fixture_namespace` must be a normalized relative subdirectory such as `team-a` or `team-a/smoke`
 - `response_model_policy=force_literal` requires `response_model`
 - `response_model_policy=force_backend` uses `backend_model` when present and otherwise falls back to the request model

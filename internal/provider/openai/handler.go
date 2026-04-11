@@ -48,30 +48,34 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	if writeForcedProfileError(r.Context(), w) {
+		return
+	}
+
 	auth := r.Header.Get("Authorization")
 	if !strings.HasPrefix(auth, "Bearer ") {
-		writeUnauthorized(w)
+		writeUnauthorized(r.Context(), w)
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeInvalidRequest(w, "failed to read request body")
+		writeInvalidRequest(r.Context(), w, "failed to read request body")
 		return
 	}
 
 	if err := h.validator.Validate("openai", "v1", body); err != nil {
-		writeInvalidRequest(w, err.Error())
+		writeInvalidRequest(r.Context(), w, err.Error())
 		return
 	}
 
 	var req ChatCompletionRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		writeInvalidRequest(w, "invalid JSON: "+err.Error())
+		writeInvalidRequest(r.Context(), w, "invalid JSON: "+err.Error())
 		return
 	}
 	if req.Model == "" {
-		writeInvalidRequest(w, "model is required")
+		writeInvalidRequest(r.Context(), w, "model is required")
 		return
 	}
 
@@ -239,7 +243,7 @@ func (h *Handler) handleOllamaBackend(w http.ResponseWriter, r *http.Request, re
 
 	text, err := h.ollamaHTTP.NonStreaming(r.Context(), upstream, messages, model)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "server_error", "ollama backend error: "+err.Error())
+		writeError(w, http.StatusBadGateway, "server_error", "ollama backend error: "+err.Error(), nil)
 		return
 	}
 

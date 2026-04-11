@@ -12,9 +12,11 @@ LOCAL_TLS_CERT="${LOCAL_TLS_CERT:-}"
 LOCAL_TLS_KEY="${LOCAL_TLS_KEY:-}"
 LISTENER_TLS="${LISTENER_TLS:-0}"
 PROFILE_BACKEND="${PROFILE_BACKEND:-lorem}"
+ERROR_TYPE="${ERROR_TYPE:-rate_limit}"
 FIXTURES_DIR="${FIXTURES_DIR:-}"
 ADMIN_SCHEME="http"
 CURL_ARGS=(-fsS)
+ENDPOINT_CURL_ARGS=(-sS)
 TLS_FLAGS=()
 PROFILE_NAME="demo"
 LISTENER_NAME="runtime-demo"
@@ -38,6 +40,8 @@ fi
 
 case "$PROFILE_BACKEND" in
   lorem|faker)
+    ;;
+  error)
     ;;
   fixture)
     LISTENER_PROVIDER="anthropic"
@@ -120,7 +124,13 @@ echo "==> Creating demo profile"
 curl "${CURL_ARGS[@]}" \
   -X PUT \
   -H 'Content-Type: application/json' \
-  -d "{\"backend\":\"$PROFILE_BACKEND\"}" \
+  -d "$(
+    if [[ "$PROFILE_BACKEND" == "error" ]]; then
+      printf '{"backend":"%s","error_type":"%s"}' "$PROFILE_BACKEND" "$ERROR_TYPE"
+    else
+      printf '{"backend":"%s"}' "$PROFILE_BACKEND"
+    fi
+  )" \
   "$ADMIN_BASE_URL/_zolem/profiles/$PROFILE_NAME" >/dev/null
 
 echo "==> Creating listener"
@@ -154,7 +164,7 @@ assert payload["backend"] == sys.argv[3], payload
 
 echo "==> Calling provider-compatible endpoint"
 if [[ "$LISTENER_PROVIDER" == "openai" ]]; then
-  response_json="$(curl "${CURL_ARGS[@]}" \
+  response_json="$(curl "${ENDPOINT_CURL_ARGS[@]}" \
     -X POST \
     -H 'Authorization: Bearer sk-test' \
     -H 'Content-Type: application/json' \
@@ -163,11 +173,15 @@ if [[ "$LISTENER_PROVIDER" == "openai" ]]; then
   python3 -c '
 import json, sys
 payload = json.load(sys.stdin)
-assert payload["model"] == "gpt-4o", payload
-assert payload["choices"], payload
-' <<<"$response_json"
+if sys.argv[1] == "error":
+    assert payload["error"]["type"] == "rate_limit_error", payload
+    assert payload["error"]["code"] == "rate_limit_exceeded", payload
+else:
+    assert payload["model"] == "gpt-4o", payload
+    assert payload["choices"], payload
+' "$PROFILE_BACKEND" <<<"$response_json"
 else
-  response_json="$(curl "${CURL_ARGS[@]}" \
+  response_json="$(curl "${ENDPOINT_CURL_ARGS[@]}" \
     -X POST \
     -H 'x-api-key: test-key' \
     -H 'Content-Type: application/json' \
@@ -179,10 +193,17 @@ payload = json.load(sys.stdin)
 if sys.argv[1] == "fixture":
     assert payload["id"] == "fixture-msg", payload
     assert payload["content"][0]["text"] == "fixture text", payload
+elif sys.argv[1] == "error":
+    if sys.argv[2] == "anthropic":
+        assert payload["error"]["type"] == "rate_limit_error", payload
+        assert payload["request_id"], payload
+    else:
+        assert payload["error"]["status"] == "RESOURCE_EXHAUSTED", payload
+        assert payload["error"]["details"][0]["reason"] == "RATE_LIMIT_EXCEEDED", payload
 else:
     assert payload["model"] == "claude-3-5-sonnet-20241022", payload
     assert payload["content"], payload
-' "$PROFILE_BACKEND" <<<"$response_json"
+' "$PROFILE_BACKEND" "$LISTENER_PROVIDER" <<<"$response_json"
 fi
 
 echo

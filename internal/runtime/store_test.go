@@ -158,3 +158,35 @@ func TestValidateProfile_OllamaUpstreamBadScheme(t *testing.T) {
 		t.Fatal("expected non-http scheme to fail validation")
 	}
 }
+
+func TestValidateProfileRejectsErrorTypeWithoutErrorBackend(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:      "demo",
+		Backend:   "lorem",
+		ErrorType: runtimecfg.ErrorTypeRateLimit,
+	})
+	if err == nil {
+		t.Fatal("expected error_type without error backend to fail validation")
+	}
+}
+
+func TestValidateProfileRejectsErrorBackendWithoutErrorType(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:    "demo",
+		Backend: runtimecfg.BackendError,
+	})
+	if err == nil {
+		t.Fatal("expected missing error_type to fail validation")
+	}
+}
+
+func TestValidateProfileAcceptsErrorBackendWithErrorType(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:      "demo",
+		Backend:   runtimecfg.BackendError,
+		ErrorType: runtimecfg.ErrorTypeRateLimit,
+	})
+	if err != nil {
+		t.Fatalf("expected error backend to be valid, got %v", err)
+	}
+}

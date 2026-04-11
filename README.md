@@ -25,6 +25,7 @@ Zolem currently has two supported local execution paths:
 | `faker` | Returns randomized fake data |
 | `fixture` | Returns responses defined by WASM-matched fixture files |
 | `ollama` | Forwards generation to a local Ollama instance via its HTTP API |
+| `error` | Local runtime only; always returns a provider-native error |
 
 ## Quick start: local runtime mode
 
@@ -85,10 +86,15 @@ Current local runtime limitations:
 - local-only, loopback addresses only
 - in-memory only; profiles and listeners disappear on restart
 - no auth or TTLs yet
-- currently supported local runtime backends: `lorem`, `faker`, `fixture`, `ollama`
+- currently supported local runtime backends: `lorem`, `faker`, `fixture`, `ollama`, `error`
 - `fixture` listeners require `-local-fixtures-dir` on the admin server or fixed listener
 - `fixture_namespace` can scope a profile to a relative subdirectory under that fixtures root
 - `response_model_policy` controls the provider-visible `model` field for local runtime listeners
+
+Local runtime also supports an `error` backend for deterministic client
+error-path testing. See
+[docs/local-runtime.md](/home/ketan/.codex/memories/worktrees/zolem-high-fidelity-errors/docs/local-runtime.md)
+for examples and behavior.
 
 Optional local runtime TLS:
 
