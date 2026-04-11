@@ -11,8 +11,10 @@ import (
 	"testing"
 
 	"zolem.dev/zolem/internal/fixture"
+	"zolem.dev/zolem/internal/ollama"
 	"zolem.dev/zolem/internal/provider/gemini"
 	"zolem.dev/zolem/internal/response"
+	runtimecfg "zolem.dev/zolem/internal/runtime"
 	"zolem.dev/zolem/internal/specs"
 )
 
@@ -42,7 +44,7 @@ func newHandlerWithGenerator(t *testing.T, generator testGenerator) *gemini.Hand
 	t.Helper()
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)
-	return gemini.NewHandler(specs.NewValidator(), fixture.NewMatcher(runner, nil), response.NewLoremGenerator(), generator)
+	return gemini.NewHandler(specs.NewValidator(), fixture.NewMatcher(runner, nil), response.NewLoremGenerator(), generator, nil)
 }
 
 func TestGenerateContent_MissingAuth(t *testing.T) {
@@ -168,5 +170,122 @@ func TestGenerateContent_OllamaError_FallsBackToLorem(t *testing.T) {
 	}
 	if resp.Candidates[0].Content.Parts[0].Text == "" {
 		t.Fatal("expected non-empty lorem fallback text")
+	}
+}
+
+type stubChatGenerator struct {
+	text string
+	err  error
+}
+
+func (g *stubChatGenerator) NonStreaming(_ context.Context, _ string, _ []ollama.ChatMessage, _ string) (string, error) {
+	return g.text, g.err
+}
+
+func (g *stubChatGenerator) Streaming(_ context.Context, _ string, _ []ollama.ChatMessage, _ string, fn func(string) error) error {
+	if g.err != nil {
+		return g.err
+	}
+	for _, word := range strings.Fields(g.text) {
+		if err := fn(word + " "); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func TestGenerateContent_OllamaBackend_NonStreaming(t *testing.T) {
+	runner := fixture.NewRunner()
+	t.Cleanup(runner.Close)
+	matcher := fixture.NewMatcher(runner, nil)
+	lorem := response.NewLoremGenerator()
+	validator := specs.NewValidator()
+	chat := &stubChatGenerator{text: "Ollama says hello"}
+	h := gemini.NewHandler(validator, matcher, lorem, nil, chat)
+
+	body := `{"contents":[{"parts":[{"text":"hi"}],"role":"user"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/models/gemini-2.0-flash:generateContent", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", "any-key")
+
+	rt := runtimecfg.ListenerRuntime{
+		Profile: runtimecfg.RuntimeProfile{Name: "test", Backend: "ollama"},
+	}
+	req = req.WithContext(runtimecfg.WithListenerRuntime(req.Context(), rt))
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200. body: %s", rr.Code, rr.Body.String())
+	}
+	var resp gemini.GenerateContentResponse
+	json.NewDecoder(rr.Body).Decode(&resp)
+	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
+		t.Fatalf("unexpected empty response: %+v", resp)
+	}
+	if resp.Candidates[0].Content.Parts[0].Text != "Ollama says hello" {
+		t.Fatalf("unexpected text: %q", resp.Candidates[0].Content.Parts[0].Text)
+	}
+}
+
+func TestGenerateContent_OllamaBackend_Error(t *testing.T) {
+	runner := fixture.NewRunner()
+	t.Cleanup(runner.Close)
+	matcher := fixture.NewMatcher(runner, nil)
+	lorem := response.NewLoremGenerator()
+	validator := specs.NewValidator()
+	chat := &stubChatGenerator{err: errors.New("connection refused")}
+	h := gemini.NewHandler(validator, matcher, lorem, nil, chat)
+
+	body := `{"contents":[{"parts":[{"text":"hi"}],"role":"user"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/models/gemini-2.0-flash:generateContent", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", "any-key")
+
+	rt := runtimecfg.ListenerRuntime{
+		Profile: runtimecfg.RuntimeProfile{Name: "test", Backend: "ollama"},
+	}
+	req = req.WithContext(runtimecfg.WithListenerRuntime(req.Context(), rt))
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("status: got %d, want 502", rr.Code)
+	}
+}
+
+func TestStreamGenerateContent_OllamaBackend(t *testing.T) {
+	runner := fixture.NewRunner()
+	t.Cleanup(runner.Close)
+	matcher := fixture.NewMatcher(runner, nil)
+	lorem := response.NewLoremGenerator()
+	validator := specs.NewValidator()
+	chat := &stubChatGenerator{text: "Hello world"}
+	h := gemini.NewHandler(validator, matcher, lorem, nil, chat)
+
+	body := `{"contents":[{"parts":[{"text":"hi"}],"role":"user"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/models/gemini-2.0-flash:streamGenerateContent", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", "any-key")
+
+	rt := runtimecfg.ListenerRuntime{
+		Profile: runtimecfg.RuntimeProfile{Name: "test", Backend: "ollama"},
+	}
+	req = req.WithContext(runtimecfg.WithListenerRuntime(req.Context(), rt))
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", rr.Code)
+	}
+	responseBody := rr.Body.String()
+	if !strings.Contains(responseBody, "Hello") {
+		t.Fatalf("expected 'Hello' in streaming response, got: %s", responseBody)
+	}
+	if !strings.Contains(responseBody, "STOP") {
+		t.Fatalf("expected STOP in final chunk, got: %s", responseBody)
 	}
 }

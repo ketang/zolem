@@ -3,6 +3,7 @@ package runtimecfg
 import (
 	"errors"
 	"net"
+	"net/url"
 	"path"
 	"slices"
 	"strings"
@@ -159,11 +160,14 @@ func ValidateProfile(profile RuntimeProfile) error {
 	if err := validateResponseModelPolicy(profile); err != nil {
 		return err
 	}
+	if err := validateOllamaUpstream(profile); err != nil {
+		return err
+	}
 	switch profile.Backend {
-	case "", "lorem", "faker", "fixture":
+	case "", "lorem", "faker", "fixture", "ollama":
 		return nil
 	default:
-		return errors.New("profile backend must be lorem, faker, or fixture")
+		return errors.New("profile backend must be lorem, faker, fixture, or ollama")
 	}
 }
 
@@ -215,4 +219,21 @@ func validateResponseModelPolicy(profile RuntimeProfile) error {
 	default:
 		return errors.New("response_model_policy must be echo_request, force_literal, or force_backend")
 	}
+}
+
+func validateOllamaUpstream(profile RuntimeProfile) error {
+	if profile.OllamaUpstream == "" {
+		return nil
+	}
+	u, err := url.Parse(profile.OllamaUpstream)
+	if err != nil {
+		return errors.New("ollama_upstream must be a valid URL")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return errors.New("ollama_upstream must use http or https scheme")
+	}
+	if u.Host == "" {
+		return errors.New("ollama_upstream must include a host")
+	}
+	return nil
 }

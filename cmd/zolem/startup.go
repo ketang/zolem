@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"zolem.dev/zolem/internal/fixture"
+	"zolem.dev/zolem/internal/ollama"
 	"zolem.dev/zolem/internal/provider/anthropic"
 	"zolem.dev/zolem/internal/provider/gemini"
 	"zolem.dev/zolem/internal/provider/openai"
@@ -18,6 +19,16 @@ import (
 	runtimecfg "zolem.dev/zolem/internal/runtime"
 	"zolem.dev/zolem/internal/specs"
 )
+
+type ollamaHTTPAdapter struct{}
+
+func (a *ollamaHTTPAdapter) NonStreaming(ctx context.Context, upstream string, messages []ollama.ChatMessage, model string) (string, error) {
+	return ollama.HTTPChatCompletion(ctx, upstream, messages, model)
+}
+
+func (a *ollamaHTTPAdapter) Streaming(ctx context.Context, upstream string, messages []ollama.ChatMessage, model string, fn func(delta string) error) error {
+	return ollama.HTTPChatCompletionStream(ctx, upstream, messages, model, fn)
+}
 
 type specFetcher interface {
 	Get(provider, version string) ([]byte, error)
@@ -219,9 +230,9 @@ func loadFixtures(fixturesDir string, runner *fixture.Runner, readFile func(stri
 }
 
 func buildLocalHandler(listenerRuntime runtimecfg.ListenerRuntime, validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator) http.Handler {
-	anthropicH := anthropic.NewHandler(validator, matcher, generator, nil)
-	openaiH := openai.NewHandler(validator, matcher, generator, nil)
-	geminiH := gemini.NewHandler(validator, matcher, generator, nil)
+	anthropicH := anthropic.NewHandler(validator, matcher, generator, nil, &ollamaHTTPAdapter{})
+	openaiH := openai.NewHandler(validator, matcher, generator, nil, &ollamaHTTPAdapter{})
+	geminiH := gemini.NewHandler(validator, matcher, generator, nil, &ollamaHTTPAdapter{})
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.Method == http.MethodGet && req.URL.Path == "/_zolem/health" {
@@ -256,6 +267,8 @@ func generatorForBackend(backend string, deps startupDeps) (response.Generator, 
 		return deps.newFaker(), nil
 	case runtimecfg.BackendFixture:
 		return deps.newLorem(), nil
+	case runtimecfg.BackendOllama:
+		return deps.newLorem(), nil // generator unused for ollama backend; handler dispatches to HTTP client
 	default:
 		return nil, fmt.Errorf("unsupported local backend %q", backend)
 	}

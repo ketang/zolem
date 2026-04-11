@@ -115,3 +115,46 @@ func TestValidateProfileRejectsForceLiteralWithoutResponseModel(t *testing.T) {
 		t.Fatal("expected missing response model to fail validation")
 	}
 }
+
+func TestValidateProfile_OllamaBackend(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:    "test",
+		Backend: "ollama",
+	})
+	if err != nil {
+		t.Fatalf("ollama backend should be valid: %v", err)
+	}
+}
+
+func TestValidateProfile_OllamaUpstreamValid(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:           "test",
+		Backend:        "ollama",
+		OllamaUpstream: "http://localhost:11434",
+	})
+	if err != nil {
+		t.Fatalf("valid ollama upstream should pass: %v", err)
+	}
+}
+
+func TestValidateProfile_OllamaUpstreamInvalidURL(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:           "test",
+		Backend:        "ollama",
+		OllamaUpstream: "not-a-url",
+	})
+	if err == nil {
+		t.Fatal("expected invalid ollama upstream to fail validation")
+	}
+}
+
+func TestValidateProfile_OllamaUpstreamBadScheme(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:           "test",
+		Backend:        "ollama",
+		OllamaUpstream: "ftp://localhost:11434",
+	})
+	if err == nil {
+		t.Fatal("expected non-http scheme to fail validation")
+	}
+}

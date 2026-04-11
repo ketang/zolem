@@ -7,6 +7,7 @@ const (
 	BackendLorem   = "lorem"
 	BackendFaker   = "faker"
 	BackendFixture = "fixture"
+	BackendOllama  = "ollama"
 )
 
 // BackendForRequest returns the explicit local-runtime backend when present,

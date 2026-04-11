@@ -9,6 +9,7 @@ type RuntimeProfile struct {
 	ResponseModel       string `json:"response_model"`
 	FixtureNamespace    string `json:"fixture_namespace"`
 	Seed                *int64 `json:"seed,omitempty"`
+	OllamaUpstream      string `json:"ollama_upstream,omitempty"`
 }
 
 // ListenerSpec binds a provider/profile pair to one listening address.
