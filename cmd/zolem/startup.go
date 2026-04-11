@@ -267,6 +267,8 @@ func generatorForBackend(backend string, deps startupDeps) (response.Generator, 
 		return deps.newFaker(), nil
 	case runtimecfg.BackendFixture:
 		return deps.newLorem(), nil
+	case runtimecfg.BackendOllama:
+		return deps.newLorem(), nil // generator unused for ollama backend; handler dispatches to HTTP client
 	default:
 		return nil, fmt.Errorf("unsupported local backend %q", backend)
 	}
