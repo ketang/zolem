@@ -125,6 +125,11 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 		}
 	}
 
+	if runtimecfg.BackendForRequest(r.Context()) == runtimecfg.BackendOllama {
+		h.handleOllamaBackend(w, r, req, version, model, stream)
+		return
+	}
+
 	promptTokens := estimatePromptTokens(req)
 	responseModel := runtimecfg.ResponseModelForRequest(r.Context(), model)
 
@@ -266,6 +271,121 @@ func (h *Handler) generateText(ctx context.Context, prompt string) (string, bool
 	}
 	text = strings.TrimSpace(text)
 	return text, text != ""
+}
+
+func (h *Handler) handleOllamaBackend(w http.ResponseWriter, r *http.Request, req GenerateContentRequest, version, model string, stream bool) {
+	rt, _ := runtimecfg.ListenerRuntimeFromContext(r.Context())
+	upstream := rt.Profile.OllamaUpstream
+	if upstream == "" {
+		upstream = "http://localhost:11434"
+	}
+	ollamaModel := rt.Profile.BackendModel
+	if ollamaModel == "" {
+		ollamaModel = model
+	}
+
+	promptTokens := estimatePromptTokens(req)
+	responseModel := runtimecfg.ResponseModelForRequest(r.Context(), model)
+	messages := geminiToChatMessages(req)
+
+	if stream {
+		h.handleOllamaStream(w, r.Context(), upstream, messages, ollamaModel, responseModel, promptTokens)
+		return
+	}
+
+	text, err := h.ollamaHTTP.NonStreaming(r.Context(), upstream, messages, ollamaModel)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "INTERNAL", "ollama backend error: "+err.Error())
+		return
+	}
+
+	completionTokens := len(strings.Fields(text))
+	resp := GenerateContentResponse{
+		Candidates: []Candidate{{
+			Content:      Content{Parts: []Part{{Text: text}}, Role: "model"},
+			FinishReason: "STOP",
+			Index:        0,
+		}},
+		UsageMetadata: UsageMetadata{
+			PromptTokenCount:     promptTokens,
+			CandidatesTokenCount: completionTokens,
+			TotalTokenCount:      promptTokens + completionTokens,
+		},
+		ModelVersion: responseModel,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *Handler) handleOllamaStream(w http.ResponseWriter, ctx context.Context, upstream string, messages []ollama.ChatMessage, model, responseModel string, promptTokens int) {
+	sse := response.NewSSEWriter(w)
+	sse.SetHeaders()
+
+	completionTokens := 0
+	err := h.ollamaHTTP.Streaming(ctx, upstream, messages, model, func(delta string) error {
+		completionTokens++
+		chunk := GenerateContentResponse{
+			Candidates: []Candidate{{
+				Content:      Content{Parts: []Part{{Text: delta}}, Role: "model"},
+				FinishReason: "NONE",
+				Index:        0,
+			}},
+			UsageMetadata: UsageMetadata{
+				PromptTokenCount: promptTokens,
+			},
+			ModelVersion: responseModel,
+		}
+		data, _ := json.Marshal(chunk)
+		sse.WriteData(data)
+		sse.Flush()
+		return nil
+	})
+
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "INTERNAL", "ollama backend error: "+err.Error())
+		return
+	}
+
+	finalChunk := GenerateContentResponse{
+		Candidates: []Candidate{{
+			Content:      Content{Parts: []Part{{Text: ""}}, Role: "model"},
+			FinishReason: "STOP",
+			Index:        0,
+		}},
+		UsageMetadata: UsageMetadata{
+			PromptTokenCount:     promptTokens,
+			CandidatesTokenCount: completionTokens,
+			TotalTokenCount:      promptTokens + completionTokens,
+		},
+		ModelVersion: responseModel,
+	}
+	data, _ := json.Marshal(finalChunk)
+	sse.WriteData(data)
+	sse.Flush()
+}
+
+func geminiToChatMessages(req GenerateContentRequest) []ollama.ChatMessage {
+	var messages []ollama.ChatMessage
+	for _, content := range req.Contents {
+		role := content.Role
+		if role == "" {
+			role = "user"
+		}
+		if role == "model" {
+			role = "assistant"
+		}
+		var parts []string
+		for _, part := range content.Parts {
+			if text := strings.TrimSpace(part.Text); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		if len(parts) == 0 {
+			continue
+		}
+		messages = append(messages, ollama.ChatMessage{Role: role, Content: strings.Join(parts, " ")})
+	}
+	return messages
 }
 
 func labelsFromContext(ctx context.Context) map[string]string {
