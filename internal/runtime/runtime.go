@@ -5,6 +5,7 @@ type RuntimeProfile struct {
 	Name                string `json:"name"`
 	Backend             string `json:"backend"`
 	BackendModel        string `json:"backend_model"`
+	ErrorType           string `json:"error_type"`
 	ResponseModelPolicy string `json:"response_model_policy"`
 	ResponseModel       string `json:"response_model"`
 	FixtureNamespace    string `json:"fixture_namespace"`

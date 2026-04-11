@@ -39,14 +39,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
+	if writeForcedProfileError(r.Context(), w) {
+		return
+	}
+
 	if r.Header.Get("x-api-key") == "" {
-		writeUnauthorized(w)
+		writeUnauthorized(r.Context(), w)
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeInvalidRequest(w, "failed to read request body")
+		writeInvalidRequest(r.Context(), w, "failed to read request body")
 		return
 	}
 
@@ -56,21 +60,21 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.validator.Validate("anthropic", version, body); err != nil {
-		writeInvalidRequest(w, err.Error())
+		writeInvalidRequest(r.Context(), w, err.Error())
 		return
 	}
 
 	var req MessagesRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		writeInvalidRequest(w, "invalid JSON: "+err.Error())
+		writeInvalidRequest(r.Context(), w, "invalid JSON: "+err.Error())
 		return
 	}
 	if req.Model == "" {
-		writeInvalidRequest(w, "model is required")
+		writeInvalidRequest(r.Context(), w, "model is required")
 		return
 	}
 	if req.MaxTokens == 0 {
-		writeInvalidRequest(w, "max_tokens is required")
+		writeInvalidRequest(r.Context(), w, "max_tokens is required")
 		return
 	}
 

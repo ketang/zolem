@@ -156,14 +156,17 @@ func ValidateProfile(profile RuntimeProfile) error {
 	if err := validateFixtureNamespace(profile.FixtureNamespace); err != nil {
 		return err
 	}
+	if err := validateErrorProfile(profile); err != nil {
+		return err
+	}
 	if err := validateResponseModelPolicy(profile); err != nil {
 		return err
 	}
 	switch profile.Backend {
-	case "", "lorem", "faker", "fixture":
+	case "", "lorem", "faker", "fixture", "error":
 		return nil
 	default:
-		return errors.New("profile backend must be lorem, faker, or fixture")
+		return errors.New("profile backend must be lorem, faker, fixture, or error")
 	}
 }
 
@@ -214,5 +217,30 @@ func validateResponseModelPolicy(profile RuntimeProfile) error {
 		return nil
 	default:
 		return errors.New("response_model_policy must be echo_request, force_literal, or force_backend")
+	}
+}
+
+func validateErrorProfile(profile RuntimeProfile) error {
+	switch profile.Backend {
+	case BackendError:
+		if err := validateErrorType(profile.ErrorType); err != nil {
+			return err
+		}
+	default:
+		if profile.ErrorType != "" {
+			return errors.New("error_type is only allowed when backend is error")
+		}
+	}
+	return nil
+}
+
+func validateErrorType(value string) error {
+	switch value {
+	case ErrorTypeAuthentication, ErrorTypePermission, ErrorTypeInvalidRequest, ErrorTypeRateLimit, ErrorTypeServerError:
+		return nil
+	case "":
+		return errors.New("error_type is required when backend is error")
+	default:
+		return errors.New("error_type must be authentication, permission, invalid_request, rate_limit, or server_error")
 	}
 }

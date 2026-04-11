@@ -79,29 +79,33 @@ func (h *Handler) handleCatchAll(version string) http.HandlerFunc {
 }
 
 func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version, model string, stream bool) {
+	if writeForcedProfileError(r.Context(), w) {
+		return
+	}
+
 	if r.Header.Get("x-goog-api-key") == "" {
-		writeForbidden(w)
+		writeForbidden(r.Context(), w)
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeInvalidRequest(w, "failed to read request body")
+		writeInvalidRequest(r.Context(), w, "failed to read request body")
 		return
 	}
 
 	if err := h.validator.Validate("gemini", version, body); err != nil {
-		writeInvalidRequest(w, err.Error())
+		writeInvalidRequest(r.Context(), w, err.Error())
 		return
 	}
 
 	var req GenerateContentRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		writeInvalidRequest(w, "invalid JSON: "+err.Error())
+		writeInvalidRequest(r.Context(), w, "invalid JSON: "+err.Error())
 		return
 	}
 	if len(req.Contents) == 0 {
-		writeInvalidRequest(w, "contents is required")
+		writeInvalidRequest(r.Context(), w, "contents is required")
 		return
 	}
 

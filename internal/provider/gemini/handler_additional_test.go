@@ -193,6 +193,41 @@ func assertGeminiError(t *testing.T, rr *httptest.ResponseRecorder, wantStatus i
 	}
 }
 
+func assertGeminiHighFidelityError(t *testing.T, rr *httptest.ResponseRecorder, wantStatus int, wantStatusText, wantReason string) {
+	t.Helper()
+
+	if rr.Code != wantStatus {
+		t.Fatalf("status: got %d, want %d", rr.Code, wantStatus)
+	}
+
+	var envelope struct {
+		Error struct {
+			Code    int    `json:"code"`
+			Status  string `json:"status"`
+			Details []struct {
+				Type   string `json:"@type"`
+				Reason string `json:"reason"`
+				Domain string `json:"domain"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode error envelope: %v", err)
+	}
+	if envelope.Error.Code != wantStatus {
+		t.Fatalf("error code: got %d, want %d", envelope.Error.Code, wantStatus)
+	}
+	if envelope.Error.Status != wantStatusText {
+		t.Fatalf("error status: got %q, want %q", envelope.Error.Status, wantStatusText)
+	}
+	if len(envelope.Error.Details) == 0 {
+		t.Fatal("expected error details in high fidelity error")
+	}
+	if envelope.Error.Details[0].Reason != wantReason {
+		t.Fatalf("detail reason: got %q, want %q", envelope.Error.Details[0].Reason, wantReason)
+	}
+}
+
 func sseDataPayloads(t *testing.T, body string) []string {
 	t.Helper()
 
@@ -253,6 +288,56 @@ func TestGenerateContent_EmptyContents(t *testing.T) {
 	h.ServeHTTP(rr, req)
 
 	assertGeminiError(t, rr, http.StatusBadRequest, "INVALID_ARGUMENT", "contents is required")
+}
+
+func TestGenerateContent_MissingAuthUsesHighFidelityEnvelope(t *testing.T) {
+	runner := fixture.NewRunner()
+	t.Cleanup(runner.Close)
+	h := newGeminiAdditionalHandler(t, runner, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPost, geminiGeneratePath, strings.NewReader(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	assertGeminiHighFidelityError(t, rr, http.StatusForbidden, "PERMISSION_DENIED", "API_KEY_INVALID")
+}
+
+func TestGenerateContent_InvalidJSONUsesHighFidelityEnvelope(t *testing.T) {
+	runner := fixture.NewRunner()
+	t.Cleanup(runner.Close)
+	h := newGeminiAdditionalHandler(t, runner, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPost, geminiGeneratePath, strings.NewReader("{not-json"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", "test-key")
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	assertGeminiHighFidelityError(t, rr, http.StatusBadRequest, "INVALID_ARGUMENT", "REQUEST_VALIDATION_FAILED")
+}
+
+func TestGenerateContent_LocalRuntimeErrorBackendRateLimit(t *testing.T) {
+	runner := fixture.NewRunner()
+	t.Cleanup(runner.Close)
+	h := newGeminiAdditionalHandler(t, runner, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPost, geminiGeneratePath, strings.NewReader(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`))
+	req = req.WithContext(runtimecfg.WithListenerRuntime(req.Context(), runtimecfg.ListenerRuntime{
+		Profile: runtimecfg.RuntimeProfile{
+			Backend:   runtimecfg.BackendError,
+			ErrorType: runtimecfg.ErrorTypeRateLimit,
+		},
+	}))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", "test-key")
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	assertGeminiHighFidelityError(t, rr, http.StatusTooManyRequests, "RESOURCE_EXHAUSTED", "RATE_LIMIT_EXCEEDED")
 }
 
 func TestGenerateContent_InvalidActionSuffix(t *testing.T) {

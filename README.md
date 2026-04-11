@@ -24,6 +24,7 @@ Zolem currently has two ways to run:
 | `lorem` | Returns lorem-ipsum placeholder text (default) |
 | `faker` | Returns randomized fake data |
 | `fixture` | Returns responses defined by WASM-matched fixture files |
+| `error` | Local runtime only; always returns a provider-native error |
 
 ## Quick start: static config mode
 
@@ -102,10 +103,15 @@ Current local runtime limitations:
 - local-only, loopback addresses only
 - in-memory only; profiles and listeners disappear on restart
 - no auth or TTLs yet
-- currently supported local runtime backends: `lorem`, `faker`, `fixture`
+- currently supported local runtime backends: `lorem`, `faker`, `fixture`, `error`
 - `fixture` listeners require `-local-fixtures-dir` on the admin server or fixed listener
 - `fixture_namespace` can scope a profile to a relative subdirectory under that fixtures root
 - `response_model_policy` controls the provider-visible `model` field for local runtime listeners
+
+Local runtime also supports an `error` backend for deterministic client
+error-path testing. See
+[docs/local-runtime.md](/home/ketan/.codex/memories/worktrees/zolem-high-fidelity-errors/docs/local-runtime.md)
+for examples and behavior.
 
 Optional local runtime TLS:
 
@@ -121,7 +127,7 @@ go run ./cmd/zolem \
 When the admin server is started with local TLS certs, you can request HTTPS
 data-plane listeners by including `"tls": true` in the listener payload.
 
-Full guide: [docs/local-runtime.md](/home/ketan/.codex/memories/worktrees/zolem-local-runtime-config-design/docs/local-runtime.md)
+Full guide: [docs/local-runtime.md](/home/ketan/.codex/memories/worktrees/zolem-high-fidelity-errors/docs/local-runtime.md)
 
 ## Verification
 

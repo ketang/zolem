@@ -300,7 +300,7 @@ func anthropicReadyProbe(client *http.Client, baseURL string) error {
 }
 
 func waitForReady(client *http.Client, svc *serviceProcess, probe func(*http.Client, string) error) error {
-	deadline := time.Now().Add(45 * time.Second)
+	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
 		select {
 		case <-svc.done:

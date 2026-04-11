@@ -54,8 +54,9 @@ var anthropicLengthMatchWASM = []byte{
 }
 
 type anthropicErrorResponse struct {
-	Type  string `json:"type"`
-	Error struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	Error     struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error"`
@@ -204,6 +205,72 @@ func TestMessages_MissingMaxTokens(t *testing.T) {
 	resp := decodeAnthropicError(t, rr)
 	if resp.Error.Message != "max_tokens is required" {
 		t.Fatalf("error message: got %q, want max_tokens is required", resp.Error.Message)
+	}
+}
+
+func TestMessages_MissingAuthUsesHighFidelityEnvelope(t *testing.T) {
+	h := newAnthropicHandler(t, specs.NewValidator(), func(*fixture.Runner) []fixture.Fixture { return nil })
+
+	req := httptest.NewRequest(http.MethodPost, anthropicMessagesPath, bytes.NewBufferString(`{"model":"claude-3-5-sonnet-20241022","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusUnauthorized)
+	}
+	resp := decodeAnthropicError(t, rr)
+	if resp.RequestID == "" {
+		t.Fatal("expected request_id in high fidelity error")
+	}
+	if resp.Error.Message != "invalid x-api-key" {
+		t.Fatalf("error message: got %q, want invalid x-api-key", resp.Error.Message)
+	}
+}
+
+func TestMessages_InvalidJSONUsesHighFidelityEnvelope(t *testing.T) {
+	h := newAnthropicHandler(t, specs.NewValidator(), func(*fixture.Runner) []fixture.Fixture { return nil })
+
+	req := httptest.NewRequest(http.MethodPost, anthropicMessagesPath, bytes.NewBufferString(`{"model":`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", "test-key")
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+	resp := decodeAnthropicError(t, rr)
+	if resp.RequestID == "" {
+		t.Fatal("expected request_id in high fidelity error")
+	}
+	if !strings.Contains(resp.Error.Message, "invalid JSON") {
+		t.Fatalf("error message: got %q, want invalid JSON detail", resp.Error.Message)
+	}
+}
+
+func TestMessages_LocalRuntimeErrorBackendRateLimit(t *testing.T) {
+	h := newAnthropicHandler(t, specs.NewValidator(), func(*fixture.Runner) []fixture.Fixture { return nil })
+
+	req := newAuthRequest(`{"model":"claude-3-5-sonnet-20241022","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`)
+	req = req.WithContext(runtimecfg.WithListenerRuntime(req.Context(), runtimecfg.ListenerRuntime{
+		Profile: runtimecfg.RuntimeProfile{
+			Backend:   runtimecfg.BackendError,
+			ErrorType: runtimecfg.ErrorTypeRateLimit,
+		},
+	}))
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusTooManyRequests)
+	}
+	resp := decodeAnthropicError(t, rr)
+	if resp.Error.Type != "rate_limit_error" {
+		t.Fatalf("error type: got %q, want rate_limit_error", resp.Error.Type)
 	}
 }
 

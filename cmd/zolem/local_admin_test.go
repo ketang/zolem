@@ -79,6 +79,9 @@ func TestLocalAdminHandler_ProfileCRUD(t *testing.T) {
 	if len(profiles) != 1 || profiles[0]["name"] != "demo" {
 		t.Fatalf("profiles: got %#v", profiles)
 	}
+	if profiles[0]["error_type"] != "" {
+		t.Fatalf("error_type: got %#v, want empty default", profiles[0]["error_type"])
+	}
 
 	deleteReq := httptestRequest(http.MethodDelete, "/_zolem/profiles/demo", bytes.NewBuffer(nil))
 	deleteResp := doRequest(t, handler, deleteReq)
@@ -188,6 +191,50 @@ func TestLocalAdminHandler_ProfileRejectsInvalidResponseModelPolicy(t *testing.T
 	handler := buildLocalAdminHandler(control)
 
 	req := httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"lorem","response_model_policy":"bogus"}`))
+	resp := doRequest(t, handler, req)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestLocalAdminHandler_ProfileAllowsErrorBackend(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	handler := buildLocalAdminHandler(control)
+
+	req := httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"error","error_type":"rate_limit"}`))
+	resp := doRequest(t, handler, req)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", resp.StatusCode)
+	}
+	var profile map[string]any
+	decodeJSON(t, resp.Body, &profile)
+	if profile["error_type"] != "rate_limit" {
+		t.Fatalf("error_type: got %#v, want rate_limit", profile["error_type"])
+	}
+}
+
+func TestLocalAdminHandler_ProfileRejectsErrorBackendWithoutErrorType(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	handler := buildLocalAdminHandler(control)
+
+	req := httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"error"}`))
+	resp := doRequest(t, handler, req)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestLocalAdminHandler_ProfileRejectsErrorTypeWithoutErrorBackend(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	handler := buildLocalAdminHandler(control)
+
+	req := httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"lorem","error_type":"rate_limit"}`))
 	resp := doRequest(t, handler, req)
 	defer resp.Body.Close()
 

@@ -25,6 +25,7 @@ type localAdminOptions struct {
 type localProfilePayload struct {
 	Backend             string `json:"backend"`
 	BackendModel        string `json:"backend_model"`
+	ErrorType           string `json:"error_type"`
 	ResponseModelPolicy string `json:"response_model_policy"`
 	ResponseModel       string `json:"response_model"`
 	FixtureNamespace    string `json:"fixture_namespace"`
@@ -127,6 +128,7 @@ func (c *localControlPlane) UpsertProfile(name string, payload localProfilePaylo
 		Name:                name,
 		Backend:             payload.Backend,
 		BackendModel:        payload.BackendModel,
+		ErrorType:           payload.ErrorType,
 		ResponseModelPolicy: payload.ResponseModelPolicy,
 		ResponseModel:       payload.ResponseModel,
 		FixtureNamespace:    payload.FixtureNamespace,

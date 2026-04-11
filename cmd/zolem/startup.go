@@ -482,7 +482,7 @@ func generatorForBackend(backend string, deps startupDeps) (response.Generator, 
 		return deps.newLorem(), nil
 	case "faker":
 		return deps.newFaker(), nil
-	case runtimecfg.BackendFixture:
+	case runtimecfg.BackendFixture, runtimecfg.BackendError:
 		return deps.newLorem(), nil
 	default:
 		return nil, fmt.Errorf("unsupported local backend %q", backend)
