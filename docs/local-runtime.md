@@ -9,7 +9,7 @@ This mode is designed for local development only right now:
 - listeners are stored in memory
 - all addresses must bind to loopback
 - there is no auth or TTL enforcement yet
-- the current local runtime backends are `lorem`, `faker`, and `fixture`
+- the current local runtime backends are `lorem`, `faker`, `fixture`, and `ollama`
 - TLS is available when you provide local cert and key files
 
 ## Concepts
@@ -27,11 +27,12 @@ Each listener exposes:
 
 Profile fields you can use today:
 
-- `backend`: `lorem`, `faker`, or `fixture`
+- `backend`: `lorem`, `faker`, `fixture`, or `ollama`
 - `fixture_namespace`: optional relative subdirectory under `-local-fixtures-dir`
 - `response_model_policy`: `echo_request`, `force_literal`, or `force_backend`
 - `response_model`: required when `response_model_policy` is `force_literal`
-- `backend_model`: used when `response_model_policy` is `force_backend`
+- `backend_model`: used when `response_model_policy` is `force_backend`; also selects the model sent to Ollama when `backend` is `ollama`
+- `ollama_upstream`: base URL of the Ollama server (default `http://localhost:11434`); must be `http` or `https`
 
 ## Start The Admin Server
 
@@ -250,6 +251,76 @@ curl -X POST \
 
 If the request matches a fixture, Zolem returns `response.json`. If no fixture
 matches, provider behavior falls back to generated output.
+
+## Ollama Backend
+
+The `ollama` backend forwards generation to a local Ollama instance using its
+OpenAI-compatible HTTP API. Unlike the other backends, there is no fallback: if
+Ollama is unreachable or returns an error, the request fails with a
+provider-appropriate 502 error.
+
+Ollama must be running and serving its HTTP API (default `http://localhost:11434`).
+
+Create an ollama profile:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"backend":"ollama","backend_model":"gemma3:4b"}' \
+  http://127.0.0.1:18090/_zolem/profiles/ollama-demo
+```
+
+Create a listener and call it:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"addr":"127.0.0.1:0","provider":"openai","profile":"ollama-demo"}' \
+  http://127.0.0.1:18090/_zolem/listeners/openai-ollama
+
+curl -X POST \
+  -H 'Authorization: Bearer sk-test' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}' \
+  http://127.0.0.1:19001/v1/chat/completions
+```
+
+The request arrives shaped as OpenAI, Anthropic, or Gemini (depending on the
+listener's provider), and Zolem translates it into an OpenAI-compatible chat
+completion request for Ollama. The response text is wrapped back in the
+provider's native envelope.
+
+Streaming works: if the incoming request asks for streaming, Zolem streams from
+Ollama and re-emits each token in the provider's SSE format.
+
+Profile options:
+
+- `backend_model`: the model Ollama should use (e.g. `gemma3:4b`). If omitted, the model from the incoming request is forwarded as-is.
+- `ollama_upstream`: base URL of the Ollama server. Defaults to `http://localhost:11434`.
+
+To point at a non-default Ollama instance:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"backend":"ollama","backend_model":"gemma3:4b","ollama_upstream":"http://192.168.1.50:11434"}' \
+  http://127.0.0.1:18090/_zolem/profiles/remote-ollama
+```
+
+Fixed listener mode also supports the ollama backend:
+
+```bash
+go run ./cmd/zolem \
+  -local-addr 127.0.0.1:18080 \
+  -local-provider anthropic \
+  -local-profile demo \
+  -local-backend ollama
+```
+
+Limitations:
+
+- Only text content is translated. Tool calls, function definitions, and multimodal content are not forwarded.
+- Gemini `systemInstruction` is not translated (the field is not in Zolem's Gemini request type).
 
 ## Response Model Policy
 

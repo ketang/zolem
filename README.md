@@ -24,6 +24,7 @@ Zolem currently has two supported local execution paths:
 | `lorem` | Returns lorem-ipsum placeholder text (default) |
 | `faker` | Returns randomized fake data |
 | `fixture` | Returns responses defined by WASM-matched fixture files |
+| `ollama` | Forwards generation to a local Ollama instance via its HTTP API |
 
 ## Quick start: local runtime mode
 
@@ -84,7 +85,7 @@ Current local runtime limitations:
 - local-only, loopback addresses only
 - in-memory only; profiles and listeners disappear on restart
 - no auth or TTLs yet
-- currently supported local runtime backends: `lorem`, `faker`, `fixture`
+- currently supported local runtime backends: `lorem`, `faker`, `fixture`, `ollama`
 - `fixture` listeners require `-local-fixtures-dir` on the admin server or fixed listener
 - `fixture_namespace` can scope a profile to a relative subdirectory under that fixtures root
 - `response_model_policy` controls the provider-visible `model` field for local runtime listeners
