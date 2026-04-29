@@ -37,10 +37,11 @@ var importOnlyWASM = []byte{
 }
 
 type fixtureSpec struct {
-	name     string
-	meta     string
-	response string
-	wasm     []byte
+	name             string
+	meta             string
+	response         string
+	templateResponse string
+	wasm             []byte
 }
 
 func writeFixtureSpec(t *testing.T, root string, spec fixtureSpec) string {
@@ -56,6 +57,11 @@ func writeFixtureSpec(t *testing.T, root string, spec fixtureSpec) string {
 	if spec.response != "" {
 		if err := os.WriteFile(filepath.Join(dir, "response.json"), []byte(spec.response), 0o644); err != nil {
 			t.Fatalf("write response for %q: %v", spec.name, err)
+		}
+	}
+	if spec.templateResponse != "" {
+		if err := os.WriteFile(filepath.Join(dir, "response.json.tmpl"), []byte(spec.templateResponse), 0o644); err != nil {
+			t.Fatalf("write template response for %q: %v", spec.name, err)
 		}
 	}
 	if len(spec.wasm) != 0 {
@@ -182,8 +188,67 @@ stream: false
 	if !strings.Contains(msg, "fixture \"missing-response\"") {
 		t.Fatalf("error %q does not identify the missing-response fixture", msg)
 	}
-	if !strings.Contains(msg, "read response.json") {
-		t.Fatalf("error %q does not mention response.json read failure", msg)
+	if !strings.Contains(msg, "response.json or response.json.tmpl") {
+		t.Fatalf("error %q does not mention missing response body", msg)
+	}
+}
+
+func TestLoader_LoadsTemplatedResponseAndSeed(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureSpec(t, root, fixtureSpec{
+		name: "templated",
+		meta: `id: templated
+provider: openai
+version: v1
+status: 202
+template_seed: 123
+`,
+		templateResponse: `{"id": {{ json .Fixture.ID }}, "request_sequence": {{ json .Sequence.ProfileRequest }}}`,
+	})
+
+	fixtures, err := fixture.NewLoader(root).Load()
+	if err != nil {
+		t.Fatalf("load fixtures: %v", err)
+	}
+	if len(fixtures) != 1 {
+		t.Fatalf("fixture count: got %d, want 1", len(fixtures))
+	}
+	got := fixtures[0]
+	if !got.Templated {
+		t.Fatal("expected templated fixture")
+	}
+	if got.TemplateSeed == nil || *got.TemplateSeed != 123 {
+		t.Fatalf("template seed: got %#v, want 123", got.TemplateSeed)
+	}
+	rendered, err := fixture.RenderBody(got, fixture.RenderInput{
+		Sequence: fixture.TemplateSequenceContext{ProfileRequest: 9, TemplateRender: 2},
+	})
+	if err != nil {
+		t.Fatalf("render body: %v", err)
+	}
+	if string(rendered) != `{"id": "templated", "request_sequence": 9}` {
+		t.Fatalf("rendered body: got %s", rendered)
+	}
+}
+
+func TestLoader_RejectsStaticAndTemplatedResponseTogether(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureSpec(t, root, fixtureSpec{
+		name: "duplicate-response",
+		meta: `id: duplicate-response
+provider: openai
+version: v1
+`,
+		response:         `{"id":"static"}`,
+		templateResponse: `{"id": {{ json .Fixture.ID }}}`,
+	})
+
+	_, err := fixture.NewLoader(root).Load()
+	if err == nil {
+		t.Fatal("expected loader error")
+	}
+	if !strings.Contains(err.Error(), "only one of response.json or response.json.tmpl") {
+		t.Fatalf("error %q does not mention response exclusivity", err)
 	}
 }
 
