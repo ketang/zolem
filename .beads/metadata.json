@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "zolem",
+  "project_id": "05db898c-e92d-49e4-bbe5-104e03b26668"
+}
