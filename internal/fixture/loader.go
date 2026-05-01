@@ -9,11 +9,12 @@ import (
 )
 
 type meta struct {
-	ID       string `yaml:"id"`
-	Provider string `yaml:"provider"`
-	Version  string `yaml:"version"`
-	Stream   bool   `yaml:"stream"`
-	Status   int    `yaml:"status"`
+	ID           string  `yaml:"id"`
+	Provider     string  `yaml:"provider"`
+	Version      string  `yaml:"version"`
+	Stream       bool    `yaml:"stream"`
+	Status       int     `yaml:"status"`
+	TemplateSeed *uint64 `yaml:"template_seed"`
 }
 
 type Loader struct {
@@ -59,9 +60,21 @@ func loadOne(dir string) (Fixture, error) {
 		m.Status = 200
 	}
 
-	body, err := os.ReadFile(filepath.Join(dir, "response.json"))
+	bodyPath := filepath.Join(dir, "response.json")
+	templatePath := filepath.Join(dir, "response.json.tmpl")
+	hasBody, err := fileExists(bodyPath)
 	if err != nil {
-		return Fixture{}, fmt.Errorf("read response.json: %w", err)
+		return Fixture{}, fmt.Errorf("stat response.json: %w", err)
+	}
+	hasTemplate, err := fileExists(templatePath)
+	if err != nil {
+		return Fixture{}, fmt.Errorf("stat response.json.tmpl: %w", err)
+	}
+	switch {
+	case hasBody && hasTemplate:
+		return Fixture{}, fmt.Errorf("only one of response.json or response.json.tmpl is allowed")
+	case !hasBody && !hasTemplate:
+		return Fixture{}, fmt.Errorf("expected response.json or response.json.tmpl")
 	}
 
 	wasmPath := filepath.Join(dir, "match.wasm")
@@ -69,13 +82,43 @@ func loadOne(dir string) (Fixture, error) {
 		wasmPath = ""
 	}
 
-	return Fixture{
+	f := Fixture{
 		ID:           m.ID,
 		Provider:     m.Provider,
 		Version:      m.Version,
 		Stream:       m.Stream,
 		Status:       m.Status,
-		ResponseBody: body,
+		TemplateSeed: m.TemplateSeed,
 		WASMPath:     wasmPath,
-	}, nil
+	}
+
+	if hasBody {
+		body, err := os.ReadFile(bodyPath)
+		if err != nil {
+			return Fixture{}, fmt.Errorf("read response.json: %w", err)
+		}
+		f.ResponseBody = body
+	} else {
+		body, err := os.ReadFile(templatePath)
+		if err != nil {
+			return Fixture{}, fmt.Errorf("read response.json.tmpl: %w", err)
+		}
+		if err := f.SetResponseTemplate(body); err != nil {
+			return Fixture{}, err
+		}
+	}
+
+	return f, nil
+}
+
+func fileExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	switch {
+	case err == nil:
+		return true, nil
+	case os.IsNotExist(err):
+		return false, nil
+	default:
+		return false, err
+	}
 }

@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.19.0
+	github.com/brianvoe/gofakeit/v7 v7.14.1
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/getkin/kin-openapi v0.134.0
 	github.com/go-chi/chi/v5 v5.2.5

@@ -135,17 +135,20 @@ func buildLocalStartupApp(opts localOptions, deps startupDeps) (*startupApp, []s
 		return nil, nil, err
 	}
 
-	return buildLocalStartupAppForRuntime(listenerRuntime, opts.FixturesDir, deps)
+	return buildLocalStartupAppForRuntime(listenerRuntime, opts.FixturesDir, runtimecfg.NewProfileCounters(), deps)
 }
 
-func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, fixturesDir string, deps startupDeps) (*startupApp, []string, error) {
+func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, fixturesDir string, counters *runtimecfg.ProfileCounters, deps startupDeps) (*startupApp, []string, error) {
 	deps = deps.withDefaults()
+	if counters == nil {
+		counters = runtimecfg.NewProfileCounters()
+	}
 
 	validator := deps.newValidator()
 	warnings := loadSpecs(validator, deps.newFetcher(filepath.Join(os.TempDir(), "zolem-specs"), map[string]string{}))
 
 	runner := deps.newRunner()
-	fixtures, fixtureWarnings, err := loadLocalFixtures(listenerRuntime.Profile.Backend, fixturesDir, listenerRuntime.Profile.FixtureNamespace, runner, deps.readFile)
+	fixtures, fixtureWarnings, err := loadLocalFixtures(listenerRuntime, fixturesDir, runner, deps.readFile)
 	warnings = append(warnings, fixtureWarnings...)
 	if err != nil {
 		runner.Close()
@@ -159,24 +162,24 @@ func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, 
 		return nil, warnings, err
 	}
 
-	handler := buildLocalHandler(listenerRuntime, validator, matcher, generator)
+	handler := buildLocalHandler(listenerRuntime, counters, validator, matcher, generator)
 	return &startupApp{
 		handler: handler,
 		close:   runner.Close,
 	}, warnings, nil
 }
 
-func loadLocalFixtures(backend, fixturesDir, fixtureNamespace string, runner *fixture.Runner, readFile func(string) ([]byte, error)) ([]fixture.Fixture, []string, error) {
-	if backend != runtimecfg.BackendFixture {
+func loadLocalFixtures(listenerRuntime runtimecfg.ListenerRuntime, fixturesDir string, runner *fixture.Runner, readFile func(string) ([]byte, error)) ([]fixture.Fixture, []string, error) {
+	if listenerRuntime.Profile.Backend != runtimecfg.BackendFixture {
 		return nil, nil, nil
 	}
 	if fixturesDir == "" {
 		return nil, nil, fmt.Errorf("local fixture backend requires -local-fixtures-dir")
 	}
-	if fixtureNamespace != "" {
-		fixturesDir = filepath.Join(fixturesDir, filepath.FromSlash(fixtureNamespace))
+	if listenerRuntime.Profile.FixtureNamespace != "" {
+		fixturesDir = filepath.Join(fixturesDir, filepath.FromSlash(listenerRuntime.Profile.FixtureNamespace))
 	}
-	return loadFixtures(fixturesDir, runner, readFile)
+	return loadFixtures(fixturesDir, listenerRuntime, runner, readFile)
 }
 
 func loadSpecs(validator *specs.Validator, fetcher specFetcher) []string {
@@ -195,7 +198,7 @@ func loadSpecs(validator *specs.Validator, fetcher specFetcher) []string {
 	return warnings
 }
 
-func loadFixtures(fixturesDir string, runner *fixture.Runner, readFile func(string) ([]byte, error)) ([]fixture.Fixture, []string, error) {
+func loadFixtures(fixturesDir string, listenerRuntime runtimecfg.ListenerRuntime, runner *fixture.Runner, readFile func(string) ([]byte, error)) ([]fixture.Fixture, []string, error) {
 	if fixturesDir == "" {
 		return nil, nil, nil
 	}
@@ -208,6 +211,9 @@ func loadFixtures(fixturesDir string, runner *fixture.Runner, readFile func(stri
 
 	var warnings []string
 	for i := range fixtures {
+		if err := fixture.ValidateTemplate(fixtures[i], fixture.ValidationInput{Runtime: fixture.RuntimeContext(listenerRuntime)}); err != nil {
+			return nil, warnings, fmt.Errorf("validate response for fixture %q: %w", fixtures[i].ID, err)
+		}
 		if fixtures[i].WASMPath == "" {
 			warnings = append(warnings, fmt.Sprintf("fixture %q has no match.wasm - will never match", fixtures[i].ID))
 			continue
@@ -229,7 +235,7 @@ func loadFixtures(fixturesDir string, runner *fixture.Runner, readFile func(stri
 	return fixtures, warnings, nil
 }
 
-func buildLocalHandler(listenerRuntime runtimecfg.ListenerRuntime, validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator) http.Handler {
+func buildLocalHandler(listenerRuntime runtimecfg.ListenerRuntime, counters *runtimecfg.ProfileCounters, validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator) http.Handler {
 	anthropicH := anthropic.NewHandler(validator, matcher, generator, nil, &ollamaHTTPAdapter{})
 	openaiH := openai.NewHandler(validator, matcher, generator, nil, &ollamaHTTPAdapter{})
 	geminiH := gemini.NewHandler(validator, matcher, generator, nil, &ollamaHTTPAdapter{})
@@ -244,7 +250,11 @@ func buildLocalHandler(listenerRuntime runtimecfg.ListenerRuntime, validator *sp
 			return
 		}
 
-		req = req.WithContext(runtimecfg.WithListenerRuntime(req.Context(), listenerRuntime))
+		ctx := runtimecfg.WithListenerRuntime(req.Context(), listenerRuntime)
+		ctx = runtimecfg.WithProfileCounters(ctx, counters)
+		profileRequest := counters.IncrementProfileRequest(listenerRuntime.Profile.Name)
+		ctx = runtimecfg.WithProfileRequestSequence(ctx, profileRequest)
+		req = req.WithContext(ctx)
 
 		switch listenerRuntime.Spec.Provider {
 		case "anthropic":

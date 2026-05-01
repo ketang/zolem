@@ -3,9 +3,11 @@ package gemini
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"zolem.dev/zolem/internal/fixture"
@@ -14,6 +16,7 @@ import (
 	"zolem.dev/zolem/internal/router"
 	runtimecfg "zolem.dev/zolem/internal/runtime"
 	"zolem.dev/zolem/internal/specs"
+	"zolem.dev/zolem/internal/zolemerr"
 )
 
 type Handler struct {
@@ -124,7 +127,13 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 		}
 		matched, _ := h.matcher.Match(r.Context(), matchReq)
 		if matched != nil {
-			serveFixture(w, r.Context(), matched, stream, model)
+			rendered, ok := renderFixtureBody(w, r.Context(), matched)
+			if !ok {
+				return
+			}
+			served := *matched
+			served.ResponseBody = rendered
+			serveFixture(w, r.Context(), &served, stream, model)
 			return
 		}
 	}
@@ -185,6 +194,31 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func renderFixtureBody(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture) ([]byte, bool) {
+	if !f.Templated {
+		return f.ResponseBody, true
+	}
+	rt, ok := runtimecfg.ListenerRuntimeFromContext(ctx)
+	if !ok {
+		zolemerr.Write(w, fmt.Sprintf("fixture %q template requires local runtime metadata", f.ID))
+		return nil, false
+	}
+	renderSeq := runtimecfg.IncrementTemplateRenderForRequest(ctx)
+	body, err := fixture.RenderBody(*f, fixture.RenderInput{
+		Runtime: fixture.RuntimeContext(rt),
+		Sequence: fixture.TemplateSequenceContext{
+			ProfileRequest: runtimecfg.ProfileRequestSequenceFromContext(ctx),
+			TemplateRender: renderSeq,
+		},
+		Now: time.Now().UTC(),
+	})
+	if err != nil {
+		zolemerr.Write(w, err.Error())
+		return nil, false
+	}
+	return body, true
 }
 
 func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture, stream bool, model string) {
