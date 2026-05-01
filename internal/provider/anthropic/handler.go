@@ -16,16 +16,18 @@ import (
 	"zolem.dev/zolem/internal/router"
 	runtimecfg "zolem.dev/zolem/internal/runtime"
 	"zolem.dev/zolem/internal/specs"
+	"zolem.dev/zolem/internal/wasmgen"
 	"zolem.dev/zolem/internal/zolemerr"
 )
 
 type Handler struct {
-	validator    *specs.Validator
-	matcher      *fixture.Matcher
-	generator    response.Generator
-	ollamaClient textGenerator
-	ollamaHTTP   chatGenerator
-	mux          *chi.Mux
+	validator     *specs.Validator
+	matcher       *fixture.Matcher
+	generator     response.Generator
+	wasmGenerator *wasmgen.Generator
+	ollamaClient  textGenerator
+	ollamaHTTP    chatGenerator
+	mux           *chi.Mux
 }
 
 type textGenerator interface {
@@ -37,8 +39,11 @@ type chatGenerator interface {
 	Streaming(ctx context.Context, upstream string, messages []ollama.ChatMessage, model string, fn func(delta string) error) error
 }
 
-func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, ollamaClient textGenerator, ollamaHTTP chatGenerator) *Handler {
+func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, ollamaClient textGenerator, ollamaHTTP chatGenerator, wasmGenerator ...*wasmgen.Generator) *Handler {
 	h := &Handler{validator: validator, matcher: matcher, generator: generator, ollamaClient: ollamaClient, ollamaHTTP: ollamaHTTP}
+	if len(wasmGenerator) > 0 {
+		h.wasmGenerator = wasmGenerator[0]
+	}
 	h.mux = chi.NewRouter()
 	h.mux.Post("/v1/messages", h.handleMessages)
 	return h
@@ -116,10 +121,39 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		h.handleOllamaBackend(w, r, req, responseModel, inputTokens)
 		return
 	}
+	if runtimecfg.BackendForRequest(r.Context()) == runtimecfg.BackendWASM {
+		matchReq := fixture.MatchRequest{
+			Provider: "anthropic",
+			Version:  version,
+			Labels:   labelsFromContext(r.Context()),
+			Body:     json.RawMessage(body),
+		}
+		tokens, err := h.generateWASM(r.Context(), matchReq)
+		if err != nil {
+			response.WriteZolemError(w, "wasm generator error: "+err.Error())
+			return
+		}
+		if req.Stream {
+			streamResponse(r.Context(), w, responseModel, tokens, inputTokens)
+			return
+		}
+		resp := MessagesResponse{
+			ID:         "msg_zolem_generated",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    []ContentBlock{{Type: "text", Text: strings.Join(tokens, "")}},
+			Model:      responseModel,
+			StopReason: "end_turn",
+			Usage:      Usage{InputTokens: inputTokens, OutputTokens: response.CountNonEmpty(tokens)},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
 
 	if text, ok := h.generateText(r.Context(), promptFromRequest(req)); ok {
 		if req.Stream {
-			streamResponse(w, responseModel, tokenize(text), inputTokens)
+			streamResponse(r.Context(), w, responseModel, tokenize(text), inputTokens)
 			return
 		}
 
@@ -139,7 +173,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 	tokens := h.generator.Generate(30)
 	if req.Stream {
-		streamResponse(w, responseModel, tokens, inputTokens)
+		streamResponse(r.Context(), w, responseModel, tokens, inputTokens)
 		return
 	}
 
@@ -209,7 +243,7 @@ func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture
 	}
 	text := msg.Content[0].Text
 	tokens := tokenize(text)
-	streamResponse(w, responseModel, tokens, msg.Usage.InputTokens)
+	streamResponse(ctx, w, responseModel, tokens, msg.Usage.InputTokens)
 }
 
 func tokenize(text string) []string {
@@ -258,6 +292,13 @@ func (h *Handler) generateText(ctx context.Context, prompt string) (string, bool
 	}
 	text = strings.TrimSpace(text)
 	return text, text != ""
+}
+
+func (h *Handler) generateWASM(ctx context.Context, req fixture.MatchRequest) ([]string, error) {
+	if h.wasmGenerator == nil {
+		return nil, fmt.Errorf("wasm generator is not configured")
+	}
+	return h.wasmGenerator.Generate(ctx, req)
 }
 
 func labelsFromContext(ctx context.Context) map[string]string {

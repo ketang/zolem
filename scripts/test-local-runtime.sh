@@ -41,6 +41,8 @@ fi
 case "$PROFILE_BACKEND" in
   lorem|faker)
     ;;
+  wasm)
+    ;;
   error)
     ;;
   fixture)
@@ -121,12 +123,15 @@ curl "${CURL_ARGS[@]}" "$ADMIN_BASE_URL/_zolem/health" >/dev/null
 
 echo
 echo "==> Creating demo profile"
+WASM_GENERATOR_BASE64='AGFzbQEAAAABFQRgAX8Bf2ACf38AYAJ/fwF/YAF/AAMHBgABAgAAAwUDAQABB08HBm1lbW9yeQIABWFsbG9jAAAHZGVhbGxvYwABCGdlbmVyYXRlAAIKcmVzdWx0X3B0cgADCnJlc3VsdF9sZW4ABAtyZXN1bHRfZnJlZQAFCh0GBQBBgAgLAgALBABBAQsFAEGAEAsEAEEXCwIACwseAQBBgBALF1siSGVsbG8gIiwiZnJvbSBXQVNNLiJd'
 curl "${CURL_ARGS[@]}" \
   -X PUT \
   -H 'Content-Type: application/json' \
   -d "$(
     if [[ "$PROFILE_BACKEND" == "error" ]]; then
       printf '{"backend":"%s","error_type":"%s"}' "$PROFILE_BACKEND" "$ERROR_TYPE"
+    elif [[ "$PROFILE_BACKEND" == "wasm" ]]; then
+      printf '{"backend":"wasm","wasm_module_base64":"%s","wasm_generate_timeout_ms":100,"stream_delay":{"mode":"fixed","ms":0}}' "$WASM_GENERATOR_BASE64"
     else
       printf '{"backend":"%s"}' "$PROFILE_BACKEND"
     fi
@@ -179,6 +184,8 @@ if sys.argv[1] == "error":
 else:
     assert payload["model"] == "gpt-4o", payload
     assert payload["choices"], payload
+    if sys.argv[1] == "wasm":
+        assert payload["choices"][0]["message"]["content"] == "Hello from WASM.", payload
 ' "$PROFILE_BACKEND" <<<"$response_json"
 else
   response_json="$(curl "${ENDPOINT_CURL_ARGS[@]}" \

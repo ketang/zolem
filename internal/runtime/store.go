@@ -1,13 +1,17 @@
 package runtimecfg
 
 import (
+	"context"
 	"errors"
+	"hash/fnv"
+	"math/rand"
 	"net"
 	"net/url"
 	"path"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 var (
@@ -166,11 +170,17 @@ func ValidateProfile(profile RuntimeProfile) error {
 	if err := validateOllamaUpstream(profile); err != nil {
 		return err
 	}
+	if err := validateWASMProfile(profile); err != nil {
+		return err
+	}
+	if err := validateStreamDelay(profile.StreamDelay); err != nil {
+		return err
+	}
 	switch profile.Backend {
-	case "", "lorem", "faker", "fixture", "ollama", "error":
+	case "", "lorem", "faker", "fixture", "ollama", "error", BackendWASM:
 		return nil
 	default:
-		return errors.New("profile backend must be lorem, faker, fixture, ollama, or error")
+		return errors.New("profile backend must be lorem, faker, fixture, ollama, error, or wasm")
 	}
 }
 
@@ -263,5 +273,120 @@ func validateErrorType(value string) error {
 		return errors.New("error_type is required when backend is error")
 	default:
 		return errors.New("error_type must be authentication, permission, invalid_request, rate_limit, or server_error")
+	}
+}
+
+func validateWASMProfile(profile RuntimeProfile) error {
+	if profile.Backend == BackendWASM {
+		if profile.WASMModuleBase64 == "" {
+			return errors.New("wasm_module_base64 is required when backend is wasm")
+		}
+		if profile.WASMGenerateTimeoutMS < 0 {
+			return errors.New("wasm_generate_timeout_ms must be non-negative")
+		}
+		if profile.WASMGenerateTimeoutMS != 0 && (profile.WASMGenerateTimeoutMS < 1 || profile.WASMGenerateTimeoutMS > 5000) {
+			return errors.New("wasm_generate_timeout_ms must be between 1 and 5000")
+		}
+		return nil
+	}
+	if profile.WASMModuleBase64 != "" {
+		return errors.New("wasm_module_base64 is only allowed when backend is wasm")
+	}
+	if profile.WASMGenerateTimeoutMS != 0 {
+		return errors.New("wasm_generate_timeout_ms is only allowed when backend is wasm")
+	}
+	return nil
+}
+
+func validateStreamDelay(delay StreamDelay) error {
+	switch delay.Mode {
+	case "":
+		if delay.MS != 0 || delay.MinMS != 0 || delay.MaxMS != 0 || delay.Seed != nil {
+			return errors.New("stream_delay mode is required when stream_delay fields are set")
+		}
+		return nil
+	case "fixed":
+		if delay.MS < 0 {
+			return errors.New("stream_delay.ms must be non-negative")
+		}
+		if delay.MinMS != 0 || delay.MaxMS != 0 || delay.Seed != nil {
+			return errors.New("fixed stream_delay only allows ms")
+		}
+		return nil
+	case "random":
+		if delay.MinMS < 0 || delay.MaxMS < 0 {
+			return errors.New("stream_delay min_ms and max_ms must be non-negative")
+		}
+		if delay.MaxMS < delay.MinMS {
+			return errors.New("stream_delay max_ms must be greater than or equal to min_ms")
+		}
+		if delay.MS != 0 {
+			return errors.New("random stream_delay does not allow ms")
+		}
+		return nil
+	default:
+		return errors.New("stream_delay mode must be fixed or random")
+	}
+}
+
+type StreamDelayFunc func(context.Context) error
+
+func StreamDelayForRequest(ctx context.Context) StreamDelayFunc {
+	rt, ok := ListenerRuntimeFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	delay := rt.Profile.StreamDelay
+	switch delay.Mode {
+	case "fixed":
+		d := time.Duration(delay.MS) * time.Millisecond
+		return func(ctx context.Context) error {
+			return sleepContext(ctx, d)
+		}
+	case "random":
+		ordinal := ProfileRequestSequenceFromContext(ctx)
+		seed := int64(0)
+		if delay.Seed != nil {
+			seed = *delay.Seed
+		}
+		rng := rand.New(rand.NewSource(streamSeed(rt.Profile.Name, seed, ordinal)))
+		minMS := delay.MinMS
+		maxMS := delay.MaxMS
+		return func(ctx context.Context) error {
+			ms := minMS
+			if maxMS > minMS {
+				ms += rng.Intn(maxMS - minMS + 1)
+			}
+			return sleepContext(ctx, time.Duration(ms)*time.Millisecond)
+		}
+	default:
+		return nil
+	}
+}
+
+func streamSeed(profileName string, seed int64, ordinal uint64) int64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(profileName))
+	_, _ = h.Write([]byte{0})
+	for i := 0; i < 8; i++ {
+		_, _ = h.Write([]byte{byte(uint64(seed) >> (8 * i))})
+	}
+	for i := 0; i < 8; i++ {
+		_, _ = h.Write([]byte{byte(ordinal >> (8 * i))})
+	}
+	return int64(h.Sum64())
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
