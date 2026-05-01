@@ -190,3 +190,22 @@ The same certificate pair can now be used for local runtime mode:
 
 - `-local-admin-addr ... -local-tls-cert ... -local-tls-key ...`
 - `-local-addr ... -local-provider ... -local-tls-cert ... -local-tls-key ...`
+
+## Shatter
+
+Zolem is configured for a full Shatter scan of the non-test Go source under
+`cmd/` and `internal/`.
+
+```bash
+make shatter
+```
+
+By default this uses `~/project/shatter/target/release/shatter`. Set
+`SHATTER_BIN=/path/to/shatter` to use a different binary. Reports are written
+under `shatter-report/`, with generated cache and artifact state ignored by git.
+
+The setup check verifies full source discovery without executing functions:
+
+```bash
+./scripts/test-shatter-setup.sh
+```

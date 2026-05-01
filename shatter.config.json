@@ -1,0 +1,32 @@
+{
+  "include": [
+    "cmd/**/*.go",
+    "internal/**/*.go"
+  ],
+  "exclude": [
+    "**/*_test.go",
+    "**/testdata/**",
+    "**/.git/**",
+    "**/.shatter/**",
+    "**/.shatter-cache/**",
+    "**/shatter-artifacts/**",
+    "**/shatter-report/**"
+  ],
+  "language": "go",
+  "max_depth": 20,
+  "timeout_total": 900,
+  "exec_timeout": 10,
+  "parallelism": 0,
+  "output": {
+    "format": "markdown",
+    "paths": [
+      "shatter-report/full-scan.md",
+      "shatter-report/full-scan.json"
+    ],
+    "stdout": false
+  },
+  "cache_dir": ".shatter-cache/behavior-maps",
+  "no_cache": false,
+  "seeds_dir": ".shatter/seeds",
+  "capture_side_effects": true
+}
