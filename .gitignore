@@ -2,3 +2,9 @@
 /zolem
 certs/
 .tmp/
+.shatter/cache/
+.shatter/seeds/
+.shatter/test-markers/
+.shatter-cache/
+shatter-artifacts/
+shatter-report/

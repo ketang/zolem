@@ -1,0 +1,8 @@
+# Shatter project configuration for Zolem.
+#
+# This file contains per-function defaults. Repository-wide discovery and
+# output settings live in shatter.config.json.
+
+defaults:
+  max_iterations: 100
+  timeout: 60
