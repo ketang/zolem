@@ -57,7 +57,7 @@ func TestBuildLocalStartupAppForRuntime_FixtureNamespace(t *testing.T) {
 			Backend:          runtimecfg.BackendFixture,
 			FixtureNamespace: "team-a",
 		},
-	}, fixturesDir, startupDeps{
+	}, fixturesDir, runtimecfg.NewProfileCounters(), startupDeps{
 		newFetcher: disabledTestFetcher,
 	})
 	if err != nil {
@@ -78,6 +78,82 @@ func TestBuildLocalStartupAppForRuntime_FixtureNamespace(t *testing.T) {
 	if payload["id"] != "fixture-team-a" {
 		t.Fatalf("id: got %#v, want fixture-team-a", payload["id"])
 	}
+}
+
+func TestBuildLocalStartupAppForRuntime_TemplatedFixtureUsesRuntimeAndCounters(t *testing.T) {
+	fixturesDir := t.TempDir()
+	writeLocalTemplateFixture(t, fixturesDir, "openai-template", "openai", "v1", `{
+  "id": {{ json .Fixture.ID }},
+  "object": "chat.completion",
+  "created": 1,
+  "model": "fixture-model",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": {{ json (printf "%s:%s:%d:%d:%s" .Runtime.ListenerName .Runtime.ProfileName .Sequence.ProfileRequest .Sequence.TemplateRender .Runtime.BackendModel) }}
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+}`, localAlwaysMatchWASM)
+
+	counters := runtimecfg.NewProfileCounters()
+	app, _, err := buildLocalStartupAppForRuntime(runtimecfg.ListenerRuntime{
+		Spec: runtimecfg.ListenerSpec{
+			Name:     "openai-demo",
+			Addr:     "127.0.0.1:12001",
+			Provider: "openai",
+			Profile:  "demo",
+			TLS:      true,
+		},
+		Profile: runtimecfg.RuntimeProfile{
+			Name:         "demo",
+			Backend:      runtimecfg.BackendFixture,
+			BackendModel: "backend-template-model",
+		},
+	}, fixturesDir, counters, startupDeps{
+		newFetcher: disabledTestFetcher,
+	})
+	if err != nil {
+		t.Fatalf("buildLocalStartupAppForRuntime: %v", err)
+	}
+	defer app.close()
+
+	assertTemplatedOpenAIContent := func(want string) {
+		t.Helper()
+		req := httptestRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`))
+		req.Header.Set("Authorization", "Bearer sk-test")
+		resp := doRequest(t, app.handler, req)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status: got %d, want 200", resp.StatusCode)
+		}
+
+		var payload struct {
+			ID      string `json:"id"`
+			Choices []struct {
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+		}
+		decodeJSON(t, resp.Body, &payload)
+		if payload.ID != "openai-template" {
+			t.Fatalf("id: got %q, want openai-template", payload.ID)
+		}
+		if len(payload.Choices) != 1 {
+			t.Fatalf("choices: got %d, want 1", len(payload.Choices))
+		}
+		if payload.Choices[0].Message.Content != want {
+			t.Fatalf("content: got %q, want %q", payload.Choices[0].Message.Content, want)
+		}
+	}
+
+	assertTemplatedOpenAIContent("openai-demo:demo:1:1:backend-template-model")
+	assertTemplatedOpenAIContent("openai-demo:demo:2:2:backend-template-model")
 }
 
 func TestBuildLocalStartupApp_LoremBackendIgnoresFixtures(t *testing.T) {
@@ -293,6 +369,26 @@ func writeLocalFixture(t *testing.T, root, id, provider, version string, respons
 	}
 	if err := os.WriteFile(filepath.Join(dir, "response.json"), responseJSON, 0o644); err != nil {
 		t.Fatalf("write response.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "match.wasm"), wasm, 0o644); err != nil {
+		t.Fatalf("write match.wasm: %v", err)
+	}
+}
+
+func writeLocalTemplateFixture(t *testing.T, root, id, provider, version, responseTemplate string, wasm []byte) {
+	t.Helper()
+
+	dir := filepath.Join(root, id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir fixture dir: %v", err)
+	}
+
+	meta := []byte("id: " + id + "\nprovider: " + provider + "\nversion: " + version + "\nstatus: 200\n")
+	if err := os.WriteFile(filepath.Join(dir, "meta.yaml"), meta, 0o644); err != nil {
+		t.Fatalf("write meta.yaml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "response.json.tmpl"), []byte(responseTemplate), 0o644); err != nil {
+		t.Fatalf("write response.json.tmpl: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "match.wasm"), wasm, 0o644); err != nil {
 		t.Fatalf("write match.wasm: %v", err)

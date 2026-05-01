@@ -67,6 +67,7 @@ type localControlPlane struct {
 	fixturesDir string
 	tls         localTLSConfig
 	startServer func(runtimecfg.ListenerSpec, localTLSConfig, http.Handler) (localServer, error)
+	counters    *runtimecfg.ProfileCounters
 
 	mu        sync.Mutex
 	listeners map[string]*managedLocalListener
@@ -103,6 +104,7 @@ func newLocalControlPlane(opts localAdminOptions, deps startupDeps) *localContro
 		fixturesDir: opts.FixturesDir,
 		tls:         opts.TLS,
 		startServer: startLocalServer,
+		counters:    runtimecfg.NewProfileCounters(),
 		listeners:   make(map[string]*managedLocalListener),
 	}
 }
@@ -170,7 +172,7 @@ func (c *localControlPlane) UpsertListener(name string, payload localListenerPay
 		Profile: profile,
 	}
 
-	app, warnings, err := buildLocalStartupAppForRuntime(runtime, c.fixturesDir, c.deps)
+	app, warnings, err := buildLocalStartupAppForRuntime(runtime, c.fixturesDir, c.counters, c.deps)
 	if err != nil {
 		return localListenerView{}, warnings, err
 	}

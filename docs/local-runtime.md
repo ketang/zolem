@@ -265,7 +265,7 @@ go run ./cmd/zolem \
 Each fixture still needs the normal files under a subdirectory:
 
 - `meta.yaml`
-- `response.json`
+- `response.json` or `response.json.tmpl`
 - `match.wasm`
 
 Minimal example:
@@ -286,6 +286,72 @@ provider: anthropic
 version: v1
 status: 200
 ```
+
+For a templated fixture, replace `response.json` with `response.json.tmpl`.
+Zolem parses, executes, and validates the rendered JSON when the fixture-backed
+listener is created. Bad template syntax or invalid rendered JSON fails startup
+or hot reload before the fixture can serve traffic.
+
+Template example:
+
+```json
+{
+  "id": {{ json .Faker.UUID }},
+  "object": "chat.completion",
+  "created": 1,
+  "model": {{ json .Runtime.BackendModel }},
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": {{ json (printf "fixture %s request %d render %d" .Fixture.ID .Sequence.ProfileRequest .Sequence.TemplateRender) }}
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+}
+```
+
+Templated fixture rules:
+
+- templates use Go `text/template`
+- use the `json` helper for dynamic values so the rendered response stays valid JSON
+- templates can call the full `gofakeit/v7` faker surface through `.Faker`
+- templates cannot read request body, query parameters, path parameters, or headers
+- Zolem provides the current UTC time as `.Now`
+- `.Sequence.ProfileRequest` increments once per request handled by the profile
+- `.Sequence.TemplateRender` increments once per templated fixture render for the profile
+
+Template context fields:
+
+- `.Runtime.ListenerName`
+- `.Runtime.ListenerProvider`
+- `.Runtime.ProfileName`
+- `.Runtime.BackendModel`
+- `.Runtime.FixtureNamespace`
+- `.Runtime.TLS`
+- `.Fixture.ID`
+- `.Fixture.Provider`
+- `.Fixture.Version`
+- `.Fixture.Stream`
+- `.Fixture.Status`
+- `.Template.Seed`
+
+To make faker output deterministic, set `template_seed` in `meta.yaml`:
+
+```yaml
+id: openai-templated
+provider: openai
+version: v1
+status: 200
+template_seed: 42
+```
+
+When `template_seed` is absent, Zolem chooses a fresh seed for each template
+render. Setup-time validation uses a fixed validation seed and does not advance
+live profile counters.
 
 Example fixture listener flow:
 
@@ -317,8 +383,9 @@ curl -X POST \
   http://127.0.0.1:19101/v1/messages
 ```
 
-If the request matches a fixture, Zolem returns `response.json`. If no fixture
-matches, provider behavior falls back to generated output.
+If the request matches a fixture, Zolem returns `response.json` or the rendered
+`response.json.tmpl`. If no fixture matches, provider behavior falls back to
+generated output.
 
 ## Ollama Backend
 
