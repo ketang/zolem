@@ -11,7 +11,7 @@ func main() {
 	localProvider := flag.String("local-provider", "", "provider for local fixed-listener mode")
 	localProfile := flag.String("local-profile", "default", "profile name for local fixed-listener mode")
 	localBackend := flag.String("local-backend", "lorem", "backend for local fixed-listener mode")
-	localFixturesDir := flag.String("local-fixtures-dir", "", "fixtures directory for local runtime fixture backend")
+	localFixturesDir := flag.String("local-fixtures-dir", "", "fixtures directory for local runtime fixture backend; fixtures may use response.json or response.json.tmpl")
 	localTLSCert := flag.String("local-tls-cert", "", "certificate file for local admin or fixed-listener TLS")
 	localTLSKey := flag.String("local-tls-key", "", "key file for local admin or fixed-listener TLS")
 	flag.Parse()
