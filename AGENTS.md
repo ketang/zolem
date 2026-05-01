@@ -10,6 +10,12 @@
 
 - Never download Chinese LLMs for use with Ollama in this repository.
 
+## CLI Help
+
+- When changing user-facing CLI behavior, flags, configuration, local runtime
+  workflows, or fixture authoring behavior, update the relevant flag help text
+  in `cmd/zolem/main.go` in the same change as README/docs updates.
+
 ## E2E Testing
 
 - If a change affects observable runtime behavior, add or extend end-to-end coverage in the same change unless there is a documented reason not to.
