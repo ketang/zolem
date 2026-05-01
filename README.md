@@ -41,19 +41,15 @@ go run ./cmd/zolem -local-admin-addr 127.0.0.1:18090
 Create a profile:
 
 ```bash
-curl -X PUT \
-  -H 'Content-Type: application/json' \
-  -d '{"backend":"lorem"}' \
-  http://127.0.0.1:18090/_zolem/profiles/demo
+go run ./cmd/zolemc -admin-url http://127.0.0.1:18090 \
+  profiles create demo -backend lorem
 ```
 
 Create a listener bound to a provider and profile:
 
 ```bash
-curl -X PUT \
-  -H 'Content-Type: application/json' \
-  -d '{"addr":"127.0.0.1:0","provider":"openai","profile":"demo"}' \
-  http://127.0.0.1:18090/_zolem/listeners/openai-demo
+go run ./cmd/zolemc -admin-url http://127.0.0.1:18090 \
+  listeners create openai-demo -addr 127.0.0.1:0 -provider openai -profile demo
 ```
 
 The response includes a `base_url`. Point your client at that URL and keep the
@@ -62,23 +58,23 @@ provider path, method, body, and auth headers unchanged.
 Inspect the listener:
 
 ```bash
-curl http://127.0.0.1:19001/_zolem/state
+go run ./cmd/zolemc -base-url http://127.0.0.1:19001 listener state
 ```
 
 Health check the listener:
 
 ```bash
-curl http://127.0.0.1:19001/_zolem/health
+go run ./cmd/zolemc -base-url http://127.0.0.1:19001 listener health
 ```
 
 Call a provider-compatible endpoint:
 
 ```bash
-curl -X POST \
+go run ./cmd/zolemc -base-url http://127.0.0.1:19001 \
+  request -method POST \
+  -path /v1/chat/completions \
   -H 'Authorization: Bearer sk-test' \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}' \
-  http://127.0.0.1:19001/v1/chat/completions
+  -json-body '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}'
 ```
 
 Current local runtime limitations:
