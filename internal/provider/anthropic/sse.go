@@ -1,17 +1,20 @@
 package anthropic
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync/atomic"
 
 	"zolem.dev/zolem/internal/response"
+	runtimecfg "zolem.dev/zolem/internal/runtime"
 )
 
-func streamResponse(w http.ResponseWriter, model string, tokens []string, inputTokens int) {
+func streamResponse(ctx context.Context, w http.ResponseWriter, model string, tokens []string, inputTokens int) {
 	sse := response.NewSSEWriter(w)
 	sse.SetHeaders()
+	delay := runtimecfg.StreamDelayForRequest(ctx)
 
 	msgID := "msg_zolem_" + fmt.Sprintf("%016x", pseudoRandID())
 
@@ -44,6 +47,11 @@ func streamResponse(w http.ResponseWriter, model string, tokens []string, inputT
 		})
 		sse.WriteEvent("content_block_delta", delta)
 		sse.Flush()
+		if delay != nil {
+			if err := delay(ctx); err != nil {
+				return
+			}
+		}
 	}
 
 	sse.WriteEvent("content_block_stop", []byte(`{"type":"content_block_stop","index":0}`))
@@ -52,7 +60,7 @@ func streamResponse(w http.ResponseWriter, model string, tokens []string, inputT
 	msgDelta, _ := json.Marshal(map[string]any{
 		"type":  "message_delta",
 		"delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil},
-		"usage": map[string]int{"output_tokens": len(tokens)},
+		"usage": map[string]int{"output_tokens": response.CountNonEmpty(tokens)},
 	})
 	sse.WriteEvent("message_delta", msgDelta)
 	sse.Flush()

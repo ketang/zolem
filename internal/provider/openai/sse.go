@@ -1,17 +1,20 @@
 package openai
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
 	"zolem.dev/zolem/internal/response"
+	runtimecfg "zolem.dev/zolem/internal/runtime"
 )
 
-func streamResponse(w http.ResponseWriter, model string, tokens []string, promptTokens int) {
+func streamResponse(ctx context.Context, w http.ResponseWriter, model string, tokens []string, promptTokens int) {
 	sse := response.NewSSEWriter(w)
 	sse.SetHeaders()
+	delay := runtimecfg.StreamDelayForRequest(ctx)
 
 	id := fmt.Sprintf("chatcmpl-zolem%d", time.Now().UnixNano())
 	created := time.Now().Unix()
@@ -32,6 +35,11 @@ func streamResponse(w http.ResponseWriter, model string, tokens []string, prompt
 		data, _ := json.Marshal(chunk)
 		sse.WriteData(data)
 		sse.Flush()
+		if delay != nil {
+			if err := delay(ctx); err != nil {
+				return
+			}
+		}
 	}
 
 	stop := "stop"
@@ -47,8 +55,8 @@ func streamResponse(w http.ResponseWriter, model string, tokens []string, prompt
 		"id": id, "object": "chat.completion.chunk", "created": created, "model": model,
 		"choices": []any{},
 		"usage": map[string]int{
-			"prompt_tokens": promptTokens, "completion_tokens": len(tokens),
-			"total_tokens": promptTokens + len(tokens),
+			"prompt_tokens": promptTokens, "completion_tokens": response.CountNonEmpty(tokens),
+			"total_tokens": promptTokens + response.CountNonEmpty(tokens),
 		},
 	}
 	data, _ = json.Marshal(usageChunk)

@@ -190,3 +190,43 @@ func TestValidateProfileAcceptsErrorBackendWithErrorType(t *testing.T) {
 		t.Fatalf("expected error backend to be valid, got %v", err)
 	}
 }
+
+func TestValidateProfileRejectsWASMBackendWithoutModule(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:    "demo",
+		Backend: runtimecfg.BackendWASM,
+	})
+	if err == nil {
+		t.Fatal("expected wasm backend without module to fail validation")
+	}
+}
+
+func TestValidateProfileRejectsWASMTimeoutOutOfBounds(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:                  "demo",
+		Backend:               runtimecfg.BackendWASM,
+		WASMModuleBase64:      "AGFzbQEAAA==",
+		WASMGenerateTimeoutMS: 5001,
+	})
+	if err == nil {
+		t.Fatal("expected out-of-bounds wasm timeout to fail validation")
+	}
+}
+
+func TestValidateProfileAcceptsWASMStreamDelay(t *testing.T) {
+	seed := int64(7)
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:             "demo",
+		Backend:          runtimecfg.BackendWASM,
+		WASMModuleBase64: "AGFzbQEAAA==",
+		StreamDelay: runtimecfg.StreamDelay{
+			Mode:  "random",
+			MinMS: 1,
+			MaxMS: 3,
+			Seed:  &seed,
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected wasm stream delay profile to be valid, got %v", err)
+	}
+}

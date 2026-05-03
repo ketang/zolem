@@ -9,7 +9,7 @@ This mode is designed for local development only right now:
 - listeners are stored in memory
 - all addresses must bind to loopback
 - there is no auth or TTL enforcement yet
-- the current local runtime backends are `lorem`, `faker`, `fixture`, `ollama`, and `error`
+- the current local runtime backends are `lorem`, `faker`, `fixture`, `ollama`, `wasm`, and `error`
 - TLS is available when you provide local cert and key files
 
 ## Concepts
@@ -27,13 +27,16 @@ Each listener exposes:
 
 Profile fields you can use today:
 
-- `backend`: `lorem`, `faker`, `fixture`, `ollama`, or `error`
+- `backend`: `lorem`, `faker`, `fixture`, `ollama`, `wasm`, or `error`
 - `error_type`: required when `backend` is `error`
 - `fixture_namespace`: optional relative subdirectory under `-local-fixtures-dir`
 - `response_model_policy`: `echo_request`, `force_literal`, or `force_backend`
 - `response_model`: required when `response_model_policy` is `force_literal`
 - `backend_model`: used when `response_model_policy` is `force_backend`; also selects the model sent to Ollama when `backend` is `ollama`
 - `ollama_upstream`: base URL of the Ollama server (default `http://localhost:11434`); must be `http` or `https`
+- `wasm_module_base64`: required when `backend` is `wasm`; base64-encoded binary WASM generator module
+- `wasm_generate_timeout_ms`: optional timeout for one WASM generation interaction; defaults to 100ms and must be between 1 and 5000 when set
+- `stream_delay`: optional streaming delay config for generated chunks
 
 ## Error Backend
 
@@ -197,6 +200,7 @@ Notes:
 - `fixture_namespace` must be a normalized relative subdirectory such as `team-a` or `team-a/smoke`
 - `response_model_policy=force_literal` requires `response_model`
 - `response_model_policy=force_backend` uses `backend_model` when present and otherwise falls back to the request model
+- `wasm_module_base64` and `wasm_generate_timeout_ms` are only valid when `backend=wasm`
 
 ## Manage Listeners
 
@@ -386,6 +390,81 @@ curl -X POST \
 If the request matches a fixture, Zolem returns `response.json` or the rendered
 `response.json.tmpl`. If no fixture matches, provider behavior falls back to
 generated output.
+
+## WASM Backend
+
+The `wasm` backend lets a profile provide a freestanding WebAssembly content
+generator. The generator returns assistant content only; Zolem still owns the
+OpenAI, Anthropic, and Gemini response envelopes and streaming wire formats.
+
+Profile shape:
+
+```json
+{
+  "backend": "wasm",
+  "wasm_module_base64": "AGFzbQEAAA...",
+  "wasm_generate_timeout_ms": 100,
+  "stream_delay": {
+    "mode": "fixed",
+    "ms": 75
+  }
+}
+```
+
+For deterministic random streaming pauses:
+
+```json
+{
+  "backend": "wasm",
+  "wasm_module_base64": "AGFzbQEAAA...",
+  "stream_delay": {
+    "mode": "random",
+    "seed": 12345,
+    "min_ms": 40,
+    "max_ms": 250
+  }
+}
+```
+
+The WASM generator receives the same JSON input shape as fixture `match.wasm`:
+
+```json
+{
+  "provider": "openai",
+  "version": "v1",
+  "labels": {},
+  "body": {}
+}
+```
+
+The module must return UTF-8 JSON bytes that decode to `[]string`. For
+non-streaming requests, Zolem joins the strings into one assistant message. For
+streaming requests, Zolem emits each string as one provider-native content
+delta, including empty strings.
+
+Required exports:
+
+```text
+memory
+alloc(len: i32) -> i32
+dealloc(ptr: i32, len: i32)
+generate(input_ptr: i32, input_len: i32) -> i32
+result_ptr(handle: i32) -> i32
+result_len(handle: i32) -> i32
+result_free(handle: i32)
+```
+
+Constraints:
+
+- modules must be binary WASM encoded as base64; WAT text is not accepted
+- modules must not import anything, including WASI or `env`
+- the exported surface must be exactly the required ABI exports above
+- Zolem compiles the module at profile write/listener setup time and creates a fresh WASM instance per request
+- each instance has a fixed 16 MiB host memory limit
+- result bytes are capped at 1 MiB
+- decoded result arrays are capped at 4096 strings
+- empty arrays and empty strings are valid
+- WASM validation, runtime, timeout, or result-shape failures return a Zolem internal error response
 
 ## Ollama Backend
 

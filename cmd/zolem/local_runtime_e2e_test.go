@@ -108,6 +108,49 @@ func TestLocalRuntimeErrorBackend_E2E(t *testing.T) {
 	})
 }
 
+func TestLocalRuntimeWASMBackend_E2E(t *testing.T) {
+	repoRoot := repoRoot(t)
+	admin := startLocalAdminService(t, repoRoot)
+	t.Cleanup(admin.Close)
+
+	listenerBaseURL := createRuntimeListener(t, admin, "openai", map[string]any{
+		"backend":                  "wasm",
+		"wasm_module_base64":       "AGFzbQEAAAABFQRgAX8Bf2ACf38AYAJ/fwF/YAF/AAMHBgABAgAAAwUDAQABB08HBm1lbW9yeQIABWFsbG9jAAAHZGVhbGxvYwABCGdlbmVyYXRlAAIKcmVzdWx0X3B0cgADCnJlc3VsdF9sZW4ABAtyZXN1bHRfZnJlZQAFCh0GBQBBgAgLAgALBABBAQsFAEGAEAsEAEEXCwIACwseAQBBgBALF1siSGVsbG8gIiwiZnJvbSBXQVNNLiJd",
+		"wasm_generate_timeout_ms": 100,
+		"stream_delay": map[string]any{
+			"mode": "fixed",
+			"ms":   0,
+		},
+	})
+
+	resp, body := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions", `{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`, "Content-Type: application/json", "Authorization: Bearer sk-test")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d, want 200: %s", resp.StatusCode, body)
+	}
+	var payload struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	mustJSONUnmarshal(t, body, &payload)
+	if len(payload.Choices) == 0 || payload.Choices[0].Message.Content != "Hello from WASM." {
+		t.Fatalf("unexpected WASM response: %s", body)
+	}
+
+	streamResp, streamBody := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions", `{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hello"}]}`, "Content-Type: application/json", "Authorization: Bearer sk-test")
+	defer streamResp.Body.Close()
+	if streamResp.StatusCode != http.StatusOK {
+		t.Fatalf("stream status: got %d, want 200: %s", streamResp.StatusCode, streamBody)
+	}
+	assertSSEHeaders(t, streamResp.Header)
+	if !strings.Contains(string(streamBody), `"content":"Hello "`) || !strings.Contains(string(streamBody), `"content":"from WASM."`) {
+		t.Fatalf("stream body did not contain generated chunks:\n%s", streamBody)
+	}
+}
+
 type localAdminService struct {
 	baseURL string
 	cmd     *exec.Cmd
@@ -187,8 +230,12 @@ func (s *localAdminService) Close() {
 func createRuntimeListener(t *testing.T, admin *localAdminService, provider string, profile map[string]any) string {
 	t.Helper()
 
-	profileName := provider + "-error-demo"
-	listenerName := provider + "-error-listener"
+	backend, _ := profile["backend"].(string)
+	if backend == "" {
+		backend = "lorem"
+	}
+	profileName := provider + "-" + backend + "-demo"
+	listenerName := provider + "-" + backend + "-listener"
 	profileBody, err := json.Marshal(profile)
 	if err != nil {
 		t.Fatalf("marshal profile: %v", err)
@@ -237,8 +284,8 @@ func createRuntimeListener(t *testing.T, admin *localAdminService, provider stri
 	if state["provider"] != provider {
 		t.Fatalf("state provider: got %#v, want %s", state["provider"], provider)
 	}
-	if state["backend"] != "error" {
-		t.Fatalf("state backend: got %#v, want error", state["backend"])
+	if state["backend"] != backend {
+		t.Fatalf("state backend: got %#v, want %s", state["backend"], backend)
 	}
 
 	return payload.BaseURL

@@ -16,16 +16,18 @@ import (
 	"zolem.dev/zolem/internal/router"
 	runtimecfg "zolem.dev/zolem/internal/runtime"
 	"zolem.dev/zolem/internal/specs"
+	"zolem.dev/zolem/internal/wasmgen"
 	"zolem.dev/zolem/internal/zolemerr"
 )
 
 type Handler struct {
-	validator    *specs.Validator
-	matcher      *fixture.Matcher
-	generator    response.Generator
-	ollamaClient textGenerator
-	ollamaHTTP   chatGenerator
-	mux          *chi.Mux
+	validator     *specs.Validator
+	matcher       *fixture.Matcher
+	generator     response.Generator
+	wasmGenerator *wasmgen.Generator
+	ollamaClient  textGenerator
+	ollamaHTTP    chatGenerator
+	mux           *chi.Mux
 }
 
 type textGenerator interface {
@@ -37,8 +39,11 @@ type chatGenerator interface {
 	Streaming(ctx context.Context, upstream string, messages []ollama.ChatMessage, model string, fn func(delta string) error) error
 }
 
-func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, ollamaClient textGenerator, ollamaHTTP chatGenerator) *Handler {
+func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, ollamaClient textGenerator, ollamaHTTP chatGenerator, wasmGenerator ...*wasmgen.Generator) *Handler {
 	h := &Handler{validator: validator, matcher: matcher, generator: generator, ollamaClient: ollamaClient, ollamaHTTP: ollamaHTTP}
+	if len(wasmGenerator) > 0 {
+		h.wasmGenerator = wasmGenerator[0]
+	}
 	h.mux = chi.NewRouter()
 	h.mux.Post("/v1/chat/completions", h.handleChatCompletions)
 	return h
@@ -106,11 +111,40 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		h.handleOllamaBackend(w, r, req, responseModel, promptTokens)
 		return
 	}
+	if runtimecfg.BackendForRequest(r.Context()) == runtimecfg.BackendWASM {
+		matchReq := fixture.MatchRequest{
+			Provider: "openai", Version: "v1",
+			Labels: labelsFromContext(r.Context()),
+			Body:   json.RawMessage(body),
+		}
+		tokens, err := h.generateWASM(r.Context(), matchReq)
+		if err != nil {
+			response.WriteZolemError(w, "wasm generator error: "+err.Error())
+			return
+		}
+		if req.Stream {
+			streamResponse(r.Context(), w, responseModel, tokens, promptTokens)
+			return
+		}
+		text := strings.Join(tokens, "")
+		completionTokens := response.CountNonEmpty(tokens)
+		resp := ChatCompletionResponse{
+			ID:      fmt.Sprintf("chatcmpl-zolem%d", time.Now().UnixNano()),
+			Object:  "chat.completion",
+			Created: time.Now().Unix(),
+			Model:   responseModel,
+			Choices: []Choice{{Index: 0, Message: Message{Role: "assistant", Content: text}, FinishReason: "stop"}},
+			Usage:   Usage{PromptTokens: promptTokens, CompletionTokens: completionTokens, TotalTokens: promptTokens + completionTokens},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
 
 	if text, ok := h.generateText(r.Context(), promptFromRequest(req)); ok {
 		completionTokens := len(strings.Fields(text))
 		if req.Stream {
-			streamResponse(w, responseModel, tokenize(text), promptTokens)
+			streamResponse(r.Context(), w, responseModel, tokenize(text), promptTokens)
 			return
 		}
 
@@ -130,7 +164,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	tokens := h.generator.Generate(30)
 
 	if req.Stream {
-		streamResponse(w, responseModel, tokens, promptTokens)
+		streamResponse(r.Context(), w, responseModel, tokens, promptTokens)
 		return
 	}
 
@@ -198,7 +232,7 @@ func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture
 		return
 	}
 	tokens := tokenize(resp.Choices[0].Message.Content)
-	streamResponse(w, responseModel, tokens, resp.Usage.PromptTokens)
+	streamResponse(ctx, w, responseModel, tokens, resp.Usage.PromptTokens)
 }
 
 func tokenize(text string) []string {
@@ -244,6 +278,13 @@ func (h *Handler) generateText(ctx context.Context, prompt string) (string, bool
 	}
 	text = strings.TrimSpace(text)
 	return text, text != ""
+}
+
+func (h *Handler) generateWASM(ctx context.Context, req fixture.MatchRequest) ([]string, error) {
+	if h.wasmGenerator == nil {
+		return nil, fmt.Errorf("wasm generator is not configured")
+	}
+	return h.wasmGenerator.Generate(ctx, req)
 }
 
 func labelsFromContext(ctx context.Context) map[string]string {

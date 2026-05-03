@@ -23,13 +23,16 @@ type localAdminOptions struct {
 }
 
 type localProfilePayload struct {
-	Backend             string `json:"backend"`
-	BackendModel        string `json:"backend_model"`
-	ErrorType           string `json:"error_type"`
-	ResponseModelPolicy string `json:"response_model_policy"`
-	ResponseModel       string `json:"response_model"`
-	FixtureNamespace    string `json:"fixture_namespace"`
-	Seed                *int64 `json:"seed"`
+	Backend               string                 `json:"backend"`
+	BackendModel          string                 `json:"backend_model"`
+	ErrorType             string                 `json:"error_type"`
+	ResponseModelPolicy   string                 `json:"response_model_policy"`
+	ResponseModel         string                 `json:"response_model"`
+	FixtureNamespace      string                 `json:"fixture_namespace"`
+	Seed                  *int64                 `json:"seed"`
+	WASMModuleBase64      string                 `json:"wasm_module_base64"`
+	WASMGenerateTimeoutMS int                    `json:"wasm_generate_timeout_ms"`
+	StreamDelay           runtimecfg.StreamDelay `json:"stream_delay"`
 }
 
 type localListenerPayload struct {
@@ -127,17 +130,30 @@ func (c *localControlPlane) Close() error {
 
 func (c *localControlPlane) UpsertProfile(name string, payload localProfilePayload) (runtimecfg.RuntimeProfile, error) {
 	profile := runtimecfg.RuntimeProfile{
-		Name:                name,
-		Backend:             payload.Backend,
-		BackendModel:        payload.BackendModel,
-		ErrorType:           payload.ErrorType,
-		ResponseModelPolicy: payload.ResponseModelPolicy,
-		ResponseModel:       payload.ResponseModel,
-		FixtureNamespace:    payload.FixtureNamespace,
-		Seed:                payload.Seed,
+		Name:                  name,
+		Backend:               payload.Backend,
+		BackendModel:          payload.BackendModel,
+		ErrorType:             payload.ErrorType,
+		ResponseModelPolicy:   payload.ResponseModelPolicy,
+		ResponseModel:         payload.ResponseModel,
+		FixtureNamespace:      payload.FixtureNamespace,
+		Seed:                  payload.Seed,
+		WASMModuleBase64:      payload.WASMModuleBase64,
+		WASMGenerateTimeoutMS: payload.WASMGenerateTimeoutMS,
+		StreamDelay:           payload.StreamDelay,
 	}
 	if profile.Backend == "" {
 		profile.Backend = "lorem"
+	}
+	if err := runtimecfg.ValidateProfile(profile); err != nil {
+		return runtimecfg.RuntimeProfile{}, err
+	}
+	if profile.Backend == runtimecfg.BackendWASM {
+		g, err := wasmGeneratorForProfile(profile)
+		if err != nil {
+			return runtimecfg.RuntimeProfile{}, err
+		}
+		_ = g.Close(context.Background())
 	}
 	return c.store.UpsertProfile(profile)
 }

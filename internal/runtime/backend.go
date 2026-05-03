@@ -9,6 +9,7 @@ const (
 	BackendFixture = "fixture"
 	BackendOllama  = "ollama"
 	BackendError   = "error"
+	BackendWASM    = "wasm"
 )
 
 // BackendForRequest returns the explicit local-runtime backend when present,

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"zolem.dev/zolem/internal/fixture"
 	"zolem.dev/zolem/internal/ollama"
@@ -18,6 +20,7 @@ import (
 	"zolem.dev/zolem/internal/response"
 	runtimecfg "zolem.dev/zolem/internal/runtime"
 	"zolem.dev/zolem/internal/specs"
+	"zolem.dev/zolem/internal/wasmgen"
 )
 
 type ollamaHTTPAdapter struct{}
@@ -161,11 +164,21 @@ func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, 
 		runner.Close()
 		return nil, warnings, err
 	}
+	wasmGenerator, err := wasmGeneratorForProfile(listenerRuntime.Profile)
+	if err != nil {
+		runner.Close()
+		return nil, warnings, err
+	}
 
-	handler := buildLocalHandler(listenerRuntime, counters, validator, matcher, generator)
+	handler := buildLocalHandler(listenerRuntime, counters, validator, matcher, generator, wasmGenerator)
 	return &startupApp{
 		handler: handler,
-		close:   runner.Close,
+		close: func() {
+			runner.Close()
+			if wasmGenerator != nil {
+				_ = wasmGenerator.Close(context.Background())
+			}
+		},
 	}, warnings, nil
 }
 
@@ -235,10 +248,10 @@ func loadFixtures(fixturesDir string, listenerRuntime runtimecfg.ListenerRuntime
 	return fixtures, warnings, nil
 }
 
-func buildLocalHandler(listenerRuntime runtimecfg.ListenerRuntime, counters *runtimecfg.ProfileCounters, validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator) http.Handler {
-	anthropicH := anthropic.NewHandler(validator, matcher, generator, nil, &ollamaHTTPAdapter{})
-	openaiH := openai.NewHandler(validator, matcher, generator, nil, &ollamaHTTPAdapter{})
-	geminiH := gemini.NewHandler(validator, matcher, generator, nil, &ollamaHTTPAdapter{})
+func buildLocalHandler(listenerRuntime runtimecfg.ListenerRuntime, counters *runtimecfg.ProfileCounters, validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, wasmGenerator *wasmgen.Generator) http.Handler {
+	anthropicH := anthropic.NewHandler(validator, matcher, generator, nil, &ollamaHTTPAdapter{}, wasmGenerator)
+	openaiH := openai.NewHandler(validator, matcher, generator, nil, &ollamaHTTPAdapter{}, wasmGenerator)
+	geminiH := gemini.NewHandler(validator, matcher, generator, nil, &ollamaHTTPAdapter{}, wasmGenerator)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.Method == http.MethodGet && req.URL.Path == "/_zolem/health" {
@@ -275,13 +288,32 @@ func generatorForBackend(backend string, deps startupDeps) (response.Generator, 
 		return deps.newLorem(), nil
 	case "faker":
 		return deps.newFaker(), nil
-	case runtimecfg.BackendFixture, runtimecfg.BackendError:
+	case runtimecfg.BackendFixture, runtimecfg.BackendError, runtimecfg.BackendWASM:
 		return deps.newLorem(), nil
 	case runtimecfg.BackendOllama:
 		return deps.newLorem(), nil // generator unused for ollama backend; handler dispatches to HTTP client
 	default:
 		return nil, fmt.Errorf("unsupported local backend %q", backend)
 	}
+}
+
+func wasmGeneratorForProfile(profile runtimecfg.RuntimeProfile) (*wasmgen.Generator, error) {
+	if profile.Backend != runtimecfg.BackendWASM {
+		return nil, nil
+	}
+	timeout := wasmGenerateTimeout(profile)
+	wasmBytes, err := base64.StdEncoding.DecodeString(profile.WASMModuleBase64)
+	if err != nil {
+		return nil, fmt.Errorf("decode wasm_module_base64: %w", err)
+	}
+	return wasmgen.Compile(wasmBytes, timeout)
+}
+
+func wasmGenerateTimeout(profile runtimecfg.RuntimeProfile) time.Duration {
+	if profile.WASMGenerateTimeoutMS == 0 {
+		return 100 * time.Millisecond
+	}
+	return time.Duration(profile.WASMGenerateTimeoutMS) * time.Millisecond
 }
 
 func writeZolemError(w http.ResponseWriter, message string) {

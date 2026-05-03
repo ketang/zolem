@@ -3,6 +3,7 @@ package gemini
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,16 +17,18 @@ import (
 	"zolem.dev/zolem/internal/router"
 	runtimecfg "zolem.dev/zolem/internal/runtime"
 	"zolem.dev/zolem/internal/specs"
+	"zolem.dev/zolem/internal/wasmgen"
 	"zolem.dev/zolem/internal/zolemerr"
 )
 
 type Handler struct {
-	validator    *specs.Validator
-	matcher      *fixture.Matcher
-	generator    response.Generator
-	ollamaClient textGenerator
-	ollamaHTTP   chatGenerator
-	mux          *chi.Mux
+	validator     *specs.Validator
+	matcher       *fixture.Matcher
+	generator     response.Generator
+	wasmGenerator *wasmgen.Generator
+	ollamaClient  textGenerator
+	ollamaHTTP    chatGenerator
+	mux           *chi.Mux
 }
 
 type textGenerator interface {
@@ -37,8 +40,11 @@ type chatGenerator interface {
 	Streaming(ctx context.Context, upstream string, messages []ollama.ChatMessage, model string, fn func(delta string) error) error
 }
 
-func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, ollamaClient textGenerator, ollamaHTTP chatGenerator) *Handler {
+func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, ollamaClient textGenerator, ollamaHTTP chatGenerator, wasmGenerator ...*wasmgen.Generator) *Handler {
 	h := &Handler{validator: validator, matcher: matcher, generator: generator, ollamaClient: ollamaClient, ollamaHTTP: ollamaHTTP}
+	if len(wasmGenerator) > 0 {
+		h.wasmGenerator = wasmGenerator[0]
+	}
 	h.mux = chi.NewRouter()
 	// chi uses ':param' syntax so colons in literal path segments break routing.
 	// Use a catch-all under /v1/models/ and /v1beta/models/ and dispatch by
@@ -145,11 +151,43 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 
 	promptTokens := estimatePromptTokens(req)
 	responseModel := runtimecfg.ResponseModelForRequest(r.Context(), model)
+	if runtimecfg.BackendForRequest(r.Context()) == runtimecfg.BackendWASM {
+		matchReq := fixture.MatchRequest{
+			Provider: "gemini", Version: version,
+			Labels: labelsFromContext(r.Context()),
+			Body:   json.RawMessage(body),
+		}
+		tokens, err := h.generateWASM(r.Context(), matchReq)
+		if err != nil {
+			response.WriteZolemError(w, "wasm generator error: "+err.Error())
+			return
+		}
+		if stream {
+			streamResponse(r.Context(), w, responseModel, tokens, promptTokens)
+			return
+		}
+		resp := GenerateContentResponse{
+			Candidates: []Candidate{{
+				Content:      Content{Parts: []Part{{Text: strings.Join(tokens, "")}}, Role: "model"},
+				FinishReason: "STOP",
+				Index:        0,
+			}},
+			UsageMetadata: UsageMetadata{
+				PromptTokenCount:     promptTokens,
+				CandidatesTokenCount: response.CountNonEmpty(tokens),
+				TotalTokenCount:      promptTokens + response.CountNonEmpty(tokens),
+			},
+			ModelVersion: responseModel,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
 
 	if text, ok := h.generateText(r.Context(), promptFromRequest(req)); ok {
 		completionTokens := len(strings.Fields(text))
 		if stream {
-			streamResponse(w, responseModel, tokenize(text), promptTokens)
+			streamResponse(r.Context(), w, responseModel, tokenize(text), promptTokens)
 			return
 		}
 
@@ -174,7 +212,7 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 	tokens := h.generator.Generate(30)
 
 	if stream {
-		streamResponse(w, responseModel, tokens, promptTokens)
+		streamResponse(r.Context(), w, responseModel, tokens, promptTokens)
 		return
 	}
 
@@ -251,7 +289,7 @@ func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture
 		text = resp.Candidates[0].Content.Parts[0].Text
 	}
 	tokens := tokenize(text)
-	streamResponse(w, responseModel, tokens, resp.UsageMetadata.PromptTokenCount)
+	streamResponse(ctx, w, responseModel, tokens, resp.UsageMetadata.PromptTokenCount)
 }
 
 func tokenize(text string) []string {
@@ -309,6 +347,13 @@ func (h *Handler) generateText(ctx context.Context, prompt string) (string, bool
 	}
 	text = strings.TrimSpace(text)
 	return text, text != ""
+}
+
+func (h *Handler) generateWASM(ctx context.Context, req fixture.MatchRequest) ([]string, error) {
+	if h.wasmGenerator == nil {
+		return nil, errors.New("wasm generator is not configured")
+	}
+	return h.wasmGenerator.Generate(ctx, req)
 }
 
 func (h *Handler) handleOllamaBackend(w http.ResponseWriter, r *http.Request, req GenerateContentRequest, version, model string, stream bool) {
