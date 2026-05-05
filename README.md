@@ -82,7 +82,7 @@ Current local runtime limitations:
 - local-only, loopback addresses only
 - in-memory only; profiles and listeners disappear on restart
 - no auth or TTLs yet
-- currently supported local runtime backends: `lorem`, `faker`, `fixture`, `ollama`, `error`
+- currently supported local runtime backends: `lorem`, `faker`, `fixture`, `ollama`, `wasm`, `error`
 - `fixture` listeners require `-local-fixtures-dir` on the admin server or fixed listener
 - `fixture_namespace` can scope a profile to a relative subdirectory under that fixtures root
 - fixtures can use either `response.json` or `response.json.tmpl`; templates are validated at setup time and cannot read request body, query, path, or headers
@@ -92,6 +92,18 @@ Local runtime also supports an `error` backend for deterministic client
 error-path testing. See
 [docs/local-runtime.md](/home/ketan/.codex/memories/worktrees/zolem-high-fidelity-errors/docs/local-runtime.md)
 for examples and behavior.
+
+For WASM-generator profiles, pass a compiled binary module through `zolemc`:
+
+```bash
+go run ./cmd/zolemc -admin-url http://127.0.0.1:18090 \
+  profiles create wasm-demo \
+  -wasm-module-file ./generator.wasm \
+  -wasm-timeout-ms 250
+```
+
+`-wasm-module-file` reads and base64-encodes the module for the admin API and
+selects the `wasm` backend when `-backend` is not set explicitly.
 
 Optional local runtime TLS:
 

@@ -411,6 +411,19 @@ Profile shape:
 }
 ```
 
+Create the same profile with `zolemc` from a binary `.wasm` file:
+
+```bash
+go run ./cmd/zolemc -admin-url http://127.0.0.1:18090 \
+  profiles create wasm-demo \
+  -wasm-module-file ./generator.wasm \
+  -wasm-timeout-ms 100
+```
+
+`-wasm-module-file` reads and base64-encodes the module for the profile payload.
+When `-backend` is not explicitly set, it selects `backend=wasm`; explicit
+non-WASM backends are rejected with the WASM flags.
+
 For deterministic random streaming pauses:
 
 ```json
