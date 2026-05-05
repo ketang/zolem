@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -23,13 +24,15 @@ type rootOptions struct {
 }
 
 type localProfilePayload struct {
-	Backend             string `json:"backend,omitempty"`
-	BackendModel        string `json:"backend_model,omitempty"`
-	ErrorType           string `json:"error_type,omitempty"`
-	ResponseModelPolicy string `json:"response_model_policy,omitempty"`
-	ResponseModel       string `json:"response_model,omitempty"`
-	FixtureNamespace    string `json:"fixture_namespace,omitempty"`
-	Seed                *int64 `json:"seed,omitempty"`
+	Backend               string `json:"backend,omitempty"`
+	BackendModel          string `json:"backend_model,omitempty"`
+	ErrorType             string `json:"error_type,omitempty"`
+	ResponseModelPolicy   string `json:"response_model_policy,omitempty"`
+	ResponseModel         string `json:"response_model,omitempty"`
+	FixtureNamespace      string `json:"fixture_namespace,omitempty"`
+	Seed                  *int64 `json:"seed,omitempty"`
+	WASMModuleBase64      string `json:"wasm_module_base64,omitempty"`
+	WASMGenerateTimeoutMS *int   `json:"wasm_generate_timeout_ms,omitempty"`
 }
 
 type localListenerPayload struct {
@@ -175,8 +178,10 @@ func runProfiles(ctx context.Context, client adminClient, opts rootOptions, args
 		payload := localProfilePayload{}
 		var seed int64
 		var seedSet bool
+		var wasmModuleFile string
+		var wasmTimeoutMS int
 		name, flagArgs := splitOptionalLeadingName(args[1:])
-		fs.StringVar(&payload.Backend, "backend", "lorem", "backend: lorem, faker, fixture, ollama, or error")
+		fs.StringVar(&payload.Backend, "backend", "lorem", "backend: lorem, faker, fixture, ollama, wasm, or error")
 		fs.StringVar(&payload.BackendModel, "backend-model", "", "backend model override")
 		fs.StringVar(&payload.ErrorType, "error-type", "", "error backend type")
 		fs.StringVar(&payload.ResponseModelPolicy, "response-model-policy", "", "response model policy")
@@ -184,6 +189,8 @@ func runProfiles(ctx context.Context, client adminClient, opts rootOptions, args
 		fs.StringVar(&payload.FixtureNamespace, "fixture-namespace", "", "relative fixture namespace")
 		fs.Int64Var(&seed, "seed", 0, "deterministic random seed")
 		fs.BoolVar(&seedSet, "seed-set", false, "include the -seed value in the profile payload")
+		fs.StringVar(&wasmModuleFile, "wasm-module-file", "", "binary WASM generator module file; implies -backend wasm when -backend is unset")
+		fs.IntVar(&wasmTimeoutMS, "wasm-timeout-ms", 0, "WASM generation timeout in milliseconds; omitted when unset")
 		if err := fs.Parse(flagArgs); err != nil {
 			return err
 		}
@@ -195,6 +202,28 @@ func runProfiles(ctx context.Context, client adminClient, opts rootOptions, args
 		}
 		if seedSet {
 			payload.Seed = &seed
+		}
+		backendSet := flagWasSet(fs, "backend")
+		wasmTimeoutSet := flagWasSet(fs, "wasm-timeout-ms")
+		if wasmModuleFile != "" {
+			if backendSet && payload.Backend != "wasm" {
+				return fmt.Errorf("-wasm-module-file requires -backend wasm, got %q", payload.Backend)
+			}
+			payload.Backend = "wasm"
+			wasmBytes, err := os.ReadFile(wasmModuleFile)
+			if err != nil {
+				return fmt.Errorf("read -wasm-module-file %q: %w", wasmModuleFile, err)
+			}
+			payload.WASMModuleBase64 = base64.StdEncoding.EncodeToString(wasmBytes)
+		}
+		if wasmTimeoutSet {
+			if wasmTimeoutMS < 0 {
+				return errors.New("-wasm-timeout-ms must be non-negative")
+			}
+			if payload.Backend != "wasm" {
+				return errors.New("-wasm-timeout-ms requires -backend wasm or -wasm-module-file")
+			}
+			payload.WASMGenerateTimeoutMS = &wasmTimeoutMS
 		}
 		var profile localProfileView
 		if err := client.putJSON(ctx, "/_zolem/profiles/"+url.PathEscape(name), payload, &profile); err != nil {
@@ -416,6 +445,16 @@ func splitOptionalLeadingName(args []string) (string, []string) {
 	return args[0], args[1:]
 }
 
+func flagWasSet(fs *flag.FlagSet, name string) bool {
+	seen := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			seen = true
+		}
+	})
+	return seen
+}
+
 func (c adminClient) getJSON(ctx context.Context, p string, out any) error {
 	return c.doJSON(ctx, http.MethodGet, p, nil, out)
 }
@@ -527,7 +566,8 @@ Global flags:
 Commands:
   health
   profiles list
-  profiles create <name> [-backend lorem|faker|fixture|ollama|error] [...]
+  profiles create <name> [-backend lorem|faker|fixture|ollama|wasm|error] [...]
+    [-wasm-module-file PATH] [-wasm-timeout-ms N]
   profiles delete <name>
   listeners list
   listeners create <name> -provider openai|anthropic|gemini -profile <name> [-addr 127.0.0.1:0] [-tls]

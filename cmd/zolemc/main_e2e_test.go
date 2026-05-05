@@ -124,6 +124,27 @@ func TestProfilesCreateSendsWASMFields(t *testing.T) {
 	}
 }
 
+func TestProfilesCreateRejectsWASMFieldsWithNonWASMBackend(t *testing.T) {
+	wasmPath := filepath.Join(t.TempDir(), "generator.wasm")
+	if err := os.WriteFile(wasmPath, []byte("test wasm module"), 0o644); err != nil {
+		t.Fatalf("write wasm module: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{
+		"-admin-url", "http://127.0.0.1:1",
+		"profiles", "create", "bad-demo",
+		"-backend", "lorem",
+		"-wasm-module-file", wasmPath,
+	}, &stdout, &stderr)
+	if err == nil {
+		t.Fatalf("profiles create unexpectedly succeeded\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+	}
+	if !strings.Contains(err.Error(), "-wasm-module-file requires -backend wasm") {
+		t.Fatalf("error: got %q", err)
+	}
+}
+
 type commandResult struct {
 	stdout string
 	stderr string
