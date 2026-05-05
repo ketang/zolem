@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -75,6 +76,52 @@ func TestZolemcLocalRuntimeE2E(t *testing.T) {
 
 	runZolemc(t, repoRoot, "-admin-url", admin.baseURL, "listeners", "delete", "openai-demo")
 	runZolemc(t, repoRoot, "-admin-url", admin.baseURL, "profiles", "delete", "demo")
+}
+
+func TestProfilesCreateSendsWASMFields(t *testing.T) {
+	wasmPath := filepath.Join(t.TempDir(), "generator.wasm")
+	wasmBytes := []byte("test wasm module")
+	if err := os.WriteFile(wasmPath, wasmBytes, 0o644); err != nil {
+		t.Fatalf("write wasm module: %v", err)
+	}
+
+	var gotPath string
+	var gotPayload map[string]any
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodPut {
+			t.Fatalf("method: got %s, want PUT", req.Method)
+		}
+		gotPath = req.URL.Path
+		if err := json.NewDecoder(req.Body).Decode(&gotPayload); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintln(w, `{"name":"wasm-demo","backend":"wasm"}`)
+	}))
+	t.Cleanup(admin.Close)
+
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{
+		"-admin-url", admin.URL,
+		"profiles", "create", "wasm-demo",
+		"-wasm-module-file", wasmPath,
+		"-wasm-timeout-ms", "250",
+	}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("profiles create failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if gotPath != "/_zolem/profiles/wasm-demo" {
+		t.Fatalf("path: got %q", gotPath)
+	}
+	if gotPayload["backend"] != "wasm" {
+		t.Fatalf("backend: got %#v, want wasm", gotPayload["backend"])
+	}
+	if gotPayload["wasm_module_base64"] != "dGVzdCB3YXNtIG1vZHVsZQ==" {
+		t.Fatalf("wasm_module_base64: got %#v", gotPayload["wasm_module_base64"])
+	}
+	if gotPayload["wasm_generate_timeout_ms"] != float64(250) {
+		t.Fatalf("wasm_generate_timeout_ms: got %#v", gotPayload["wasm_generate_timeout_ms"])
+	}
 }
 
 type commandResult struct {
