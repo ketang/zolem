@@ -1,0 +1,14 @@
+{
+  "id": "chatcmpl-fixture-{{ .Runtime.ProfileName }}",
+  "object": "chat.completion",
+  "created": 1,
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "index": 0,
+      "message": {"role": "assistant", "content": "Templated fixture for profile {{ .Runtime.ProfileName }}."},
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {"prompt_tokens": 7, "completion_tokens": 6, "total_tokens": 13}
+}
