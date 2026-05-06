@@ -35,9 +35,6 @@ func validateImportExportSurface(wasmBytes []byte) error {
 	if err != nil {
 		return err
 	}
-	if len(exports) != len(requiredExports) {
-		return fmt.Errorf("WASM generator must export exactly %d ABI entries", len(requiredExports))
-	}
 	for name, wantKind := range requiredExports {
 		gotKind, ok := exports[name]
 		if !ok {
@@ -47,9 +44,16 @@ func validateImportExportSurface(wasmBytes []byte) error {
 			return fmt.Errorf("WASM generator export %q has wrong kind", name)
 		}
 	}
-	for name := range exports {
-		if _, ok := requiredExports[name]; !ok {
+	for name, kind := range exports {
+		if _, ok := requiredExports[name]; ok {
+			continue
+		}
+		allowedKind, ok := allowedBoundaryExports[name]
+		if !ok {
 			return fmt.Errorf("unsupported WASM generator export %q", name)
+		}
+		if kind != allowedKind {
+			return fmt.Errorf("WASM generator boundary export %q has wrong kind", name)
 		}
 	}
 	return nil
