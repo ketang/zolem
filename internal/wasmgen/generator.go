@@ -31,6 +31,17 @@ var requiredExports = map[string]byte{
 	"memory":      exportKindMemory,
 }
 
+// allowedBoundaryExports lists names that rustc/lld and similar toolchains
+// emit as standard linker-defined boundary globals. They mark the end of
+// static data and the start of heap space and are not generator entry points,
+// so the validator accepts them when they appear with the global kind. Any
+// other extra export is still rejected so unintended callable surface is not
+// silently treated as supported API.
+var allowedBoundaryExports = map[string]byte{
+	"__data_end":  exportKindGlobal,
+	"__heap_base": exportKindGlobal,
+}
+
 // Generator executes a compiled, validated WASM content generator.
 type Generator struct {
 	rt       wazero.Runtime
