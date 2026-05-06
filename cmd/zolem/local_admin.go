@@ -30,6 +30,7 @@ type localProfilePayload struct {
 	ResponseModel         string                 `json:"response_model"`
 	FixtureNamespace      string                 `json:"fixture_namespace"`
 	Seed                  *int64                 `json:"seed"`
+	OllamaUpstream        string                 `json:"ollama_upstream"`
 	WASMModuleBase64      string                 `json:"wasm_module_base64"`
 	WASMGenerateTimeoutMS int                    `json:"wasm_generate_timeout_ms"`
 	StreamDelay           runtimecfg.StreamDelay `json:"stream_delay"`
@@ -138,6 +139,7 @@ func (c *localControlPlane) UpsertProfile(name string, payload localProfilePaylo
 		ResponseModel:         payload.ResponseModel,
 		FixtureNamespace:      payload.FixtureNamespace,
 		Seed:                  payload.Seed,
+		OllamaUpstream:        payload.OllamaUpstream,
 		WASMModuleBase64:      payload.WASMModuleBase64,
 		WASMGenerateTimeoutMS: payload.WASMGenerateTimeoutMS,
 		StreamDelay:           payload.StreamDelay,
