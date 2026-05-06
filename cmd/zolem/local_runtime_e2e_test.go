@@ -3,6 +3,7 @@ package main_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -711,4 +712,268 @@ func startLocalAdminServiceWithFixtures(t *testing.T, repoRoot, fixturesDir stri
 	}
 	t.Fatalf("timed out waiting for local admin readiness\nlogs:\n%s", logs.String())
 	return nil
+}
+
+// TestLocalRuntimeWASMBoundaryExports_E2E covers the wasmgen
+// boundary-export allowance (zolem-qnt) through the cross-process admin
+// API. The accept-path is otherwise only exercised by package-internal
+// tests in internal/wasmgen. The reject-path here additionally confirms
+// the validator's error message reaches the admin client.
+//
+// Determinism: the WASM bytes are constructed in pure Go from a known
+// hand-encoded base module — no rustc invocation, no checked-in
+// .wasm fixture.
+func TestLocalRuntimeWASMBoundaryExports_E2E(t *testing.T) {
+	repoRoot := repoRoot(t)
+
+	t.Run("accepts_boundary_globals", func(t *testing.T) {
+		admin := startLocalAdminService(t, repoRoot)
+		t.Cleanup(admin.Close)
+
+		moduleBytes := wasmWithBoundaryGlobals(t)
+		listenerBaseURL := createRuntimeListener(t, admin, "openai", map[string]any{
+			"backend":                  "wasm",
+			"wasm_module_base64":       base64.StdEncoding.EncodeToString(moduleBytes),
+			"wasm_generate_timeout_ms": 100,
+			"stream_delay": map[string]any{
+				"mode": "fixed",
+				"ms":   0,
+			},
+		})
+
+		resp, body := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions",
+			`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`,
+			"Content-Type: application/json", "Authorization: Bearer sk-test")
+		defer resp.Body.Close()
+
+		assertOpenAIChatCompletion(t, resp, body)
+		if got := openAICompletionContent(t, body); got != "Hello from WASM." {
+			t.Fatalf("content: got %q, want %q", got, "Hello from WASM.")
+		}
+	})
+
+	t.Run("rejects_unsupported_extra_export", func(t *testing.T) {
+		admin := startLocalAdminService(t, repoRoot)
+		t.Cleanup(admin.Close)
+
+		moduleBytes := wasmWithExtraFuncExport(t, "extra")
+		profileBody, err := json.Marshal(map[string]any{
+			"backend":                  "wasm",
+			"wasm_module_base64":       base64.StdEncoding.EncodeToString(moduleBytes),
+			"wasm_generate_timeout_ms": 100,
+		})
+		if err != nil {
+			t.Fatalf("marshal profile: %v", err)
+		}
+
+		resp, body := doRequest(t, admin.baseURL, http.MethodPut,
+			"/_zolem/profiles/openai-wasm-extra-export",
+			string(profileBody),
+			"Content-Type: application/json")
+		defer resp.Body.Close()
+
+		// writeAdminError uses StatusBadRequest for non-NotFound/Conflict
+		// errors, and the wasmgen path returns a plain validation error.
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status: got %d, want 400 (body: %s)", resp.StatusCode, body)
+		}
+
+		var payload struct {
+			Error string `json:"error"`
+		}
+		mustJSONUnmarshal(t, body, &payload)
+		// The validator must name the offending export. Pin to "extra"
+		// (hard requirement per the acceptance criteria).
+		if !strings.Contains(payload.Error, `"extra"`) {
+			t.Fatalf("error message must name the offending export %q, got %q",
+				"extra", payload.Error)
+		}
+	})
+}
+
+// localGeneratorWASMBaseE2E mirrors localGeneratorWASM in wasm_backend_test.go.
+// It is replicated here because that file lives in package main while this
+// file lives in package main_test, and both modules need to assemble validator
+// fixtures from the same hand-encoded base bytes.
+var localGeneratorWASMBaseE2E = []byte{
+	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x15, 0x04, 0x60, 0x01, 0x7f, 0x01, 0x7f,
+	0x60, 0x02, 0x7f, 0x7f, 0x00, 0x60, 0x02, 0x7f, 0x7f, 0x01, 0x7f, 0x60, 0x01, 0x7f, 0x00,
+	0x03, 0x07, 0x06, 0x00, 0x01, 0x02, 0x00, 0x00, 0x03, 0x05, 0x03, 0x01, 0x00, 0x01, 0x07,
+	0x4f, 0x07, 0x06, 0x6d, 0x65, 0x6d, 0x6f, 0x72, 0x79, 0x02, 0x00, 0x05, 0x61, 0x6c, 0x6c,
+	0x6f, 0x63, 0x00, 0x00, 0x07, 0x64, 0x65, 0x61, 0x6c, 0x6c, 0x6f, 0x63, 0x00, 0x01, 0x08,
+	0x67, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x65, 0x00, 0x02, 0x0a, 0x72, 0x65, 0x73, 0x75,
+	0x6c, 0x74, 0x5f, 0x70, 0x74, 0x72, 0x00, 0x03, 0x0a, 0x72, 0x65, 0x73, 0x75, 0x6c, 0x74,
+	0x5f, 0x6c, 0x65, 0x6e, 0x00, 0x04, 0x0b, 0x72, 0x65, 0x73, 0x75, 0x6c, 0x74, 0x5f, 0x66,
+	0x72, 0x65, 0x65, 0x00, 0x05, 0x0a, 0x1d, 0x06, 0x05, 0x00, 0x41, 0x80, 0x08, 0x0b, 0x02,
+	0x00, 0x0b, 0x04, 0x00, 0x41, 0x01, 0x0b, 0x05, 0x00, 0x41, 0x80, 0x10, 0x0b, 0x04, 0x00,
+	0x41, 0x17, 0x0b, 0x02, 0x00, 0x0b, 0x0b, 0x1e, 0x01, 0x00, 0x41, 0x80, 0x10, 0x0b, 0x17,
+	0x5b, 0x22, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x22, 0x2c, 0x22, 0x66, 0x72, 0x6f, 0x6d,
+	0x20, 0x57, 0x41, 0x53, 0x4d, 0x2e, 0x22, 0x5d,
+}
+
+// wasmModuleSection holds a parsed top-level WASM section.
+type wasmModuleSection struct {
+	id      byte
+	payload []byte
+}
+
+// parseWASMModule splits a binary WASM module into its 8-byte magic+version
+// header and an ordered list of top-level sections. It is intentionally
+// minimal: it does not understand section bodies, only the section framing.
+func parseWASMModule(t *testing.T, b []byte) ([]byte, []wasmModuleSection) {
+	t.Helper()
+	if len(b) < 8 {
+		t.Fatalf("WASM module too short: %d bytes", len(b))
+	}
+	header := append([]byte(nil), b[:8]...)
+	off := 8
+	var sections []wasmModuleSection
+	for off < len(b) {
+		id := b[off]
+		off++
+		size, n, err := decodeULEB128(b[off:])
+		if err != nil {
+			t.Fatalf("decode section size at offset %d: %v", off, err)
+		}
+		off += n
+		end := off + int(size)
+		if end < off || end > len(b) {
+			t.Fatalf("section %d extends past module end", id)
+		}
+		sections = append(sections, wasmModuleSection{
+			id:      id,
+			payload: append([]byte(nil), b[off:end]...),
+		})
+		off = end
+	}
+	return header, sections
+}
+
+// emitWASMModule re-emits a header plus an ordered list of sections into a
+// single WASM byte slice, encoding each section's size as ULEB128.
+func emitWASMModule(header []byte, sections []wasmModuleSection) []byte {
+	out := make([]byte, 0, len(header))
+	out = append(out, header...)
+	for _, s := range sections {
+		out = append(out, s.id)
+		out = append(out, encodeULEB128(uint32(len(s.payload)))...)
+		out = append(out, s.payload...)
+	}
+	return out
+}
+
+// wasmWithBoundaryGlobals returns the base generator module patched to declare
+// and export two i32-const boundary globals named "__data_end" and
+// "__heap_base" — exactly the pair the validator's allowedBoundaryExports
+// permits. The module remains runnable because the new globals do not affect
+// the existing function/code/data sections.
+func wasmWithBoundaryGlobals(t *testing.T) []byte {
+	t.Helper()
+	header, sections := parseWASMModule(t, localGeneratorWASMBaseE2E)
+
+	// Build a Global section (id=6) declaring two i32 const globals
+	// initialized to 0: count=2, then for each global the value type
+	// (0x7f=i32), mutability (0x00=const), and init expression
+	// `i32.const 0` `end` (0x41 0x00 0x0b).
+	globalsPayload := []byte{
+		0x02,
+		0x7f, 0x00, 0x41, 0x00, 0x0b,
+		0x7f, 0x00, 0x41, 0x00, 0x0b,
+	}
+
+	// Locate the export section and append "__data_end" -> global 0,
+	// "__heap_base" -> global 1.
+	exportIdx := indexOfSection(t, sections, 0x07)
+	exportPayload := sections[exportIdx].payload
+
+	count, n, err := decodeULEB128(exportPayload)
+	if err != nil {
+		t.Fatalf("decode export count: %v", err)
+	}
+	rest := append([]byte(nil), exportPayload[n:]...)
+	rest = appendExportEntry(rest, "__data_end", 0x03 /* global */, 0)
+	rest = appendExportEntry(rest, "__heap_base", 0x03 /* global */, 1)
+	newPayload := append(encodeULEB128(count+2), rest...)
+
+	// Replace the export section, then insert the global section just
+	// before it (sections must appear in canonical id order: memory(5),
+	// global(6), export(7)).
+	sections[exportIdx].payload = newPayload
+	sections = append(sections[:exportIdx], append(
+		[]wasmModuleSection{{id: 0x06, payload: globalsPayload}},
+		sections[exportIdx:]...,
+	)...)
+
+	return emitWASMModule(header, sections)
+}
+
+// wasmWithExtraFuncExport returns the base generator module patched to add an
+// extra function export whose name is not in the wasmgen required-export set.
+// The new entry points to function index 0 (alloc) so no new function or code
+// body is needed; the validator rejects on the unrecognized name before any
+// signature check.
+func wasmWithExtraFuncExport(t *testing.T, name string) []byte {
+	t.Helper()
+	header, sections := parseWASMModule(t, localGeneratorWASMBaseE2E)
+
+	exportIdx := indexOfSection(t, sections, 0x07)
+	exportPayload := sections[exportIdx].payload
+
+	count, n, err := decodeULEB128(exportPayload)
+	if err != nil {
+		t.Fatalf("decode export count: %v", err)
+	}
+	rest := append([]byte(nil), exportPayload[n:]...)
+	rest = appendExportEntry(rest, name, 0x00 /* function */, 0)
+	sections[exportIdx].payload = append(encodeULEB128(count+1), rest...)
+
+	return emitWASMModule(header, sections)
+}
+
+func indexOfSection(t *testing.T, sections []wasmModuleSection, id byte) int {
+	t.Helper()
+	for i, s := range sections {
+		if s.id == id {
+			return i
+		}
+	}
+	t.Fatalf("section id %d not found in module", id)
+	return -1
+}
+
+func appendExportEntry(buf []byte, name string, kind byte, index uint32) []byte {
+	buf = append(buf, encodeULEB128(uint32(len(name)))...)
+	buf = append(buf, []byte(name)...)
+	buf = append(buf, kind)
+	buf = append(buf, encodeULEB128(index)...)
+	return buf
+}
+
+func encodeULEB128(v uint32) []byte {
+	var out []byte
+	for {
+		b := byte(v & 0x7f)
+		v >>= 7
+		if v != 0 {
+			out = append(out, b|0x80)
+			continue
+		}
+		out = append(out, b)
+		return out
+	}
+}
+
+func decodeULEB128(b []byte) (uint32, int, error) {
+	var result uint32
+	for i := 0; i < 5; i++ {
+		if i >= len(b) {
+			return 0, 0, fmt.Errorf("ULEB128: unexpected end of input")
+		}
+		c := b[i]
+		result |= uint32(c&0x7f) << (7 * i)
+		if c&0x80 == 0 {
+			return result, i + 1, nil
+		}
+	}
+	return 0, 0, fmt.Errorf("ULEB128: value exceeds uint32")
 }
