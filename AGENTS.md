@@ -10,6 +10,44 @@
 
 - Never download Chinese LLMs for use with Ollama in this repository.
 
+## Refute
+
+Use the project-local `refute` binary for symbol-aware Go refactors:
+
+```bash
+.agents/bin/refute
+```
+
+Install or update it from the local checkout at `~/project/refute`:
+
+```bash
+./scripts/install-refute.sh
+```
+
+The upstream project is https://github.com/shatterproof-ai/refute. If the local
+checkout is somewhere else, set `REFUTE_REPO=/path/to/refute` or pass
+`--refute-repo /path/to/refute`. If the checkout is missing, clone that upstream
+repository before installing.
+
+Before refactoring:
+
+```bash
+.agents/bin/refute doctor
+```
+
+Always preview first:
+
+```bash
+.agents/bin/refute rename --dry-run --json \
+  --file <path.go> \
+  --line <line> \
+  --name <oldName> \
+  --new-name <newName>
+```
+
+If the preview is correct, apply with the same command without `--dry-run`, then
+run the relevant zolem verification gate.
+
 ## CLI Help
 
 - When changing user-facing CLI behavior, flags, configuration, local runtime

@@ -234,3 +234,33 @@ sandbox settings to Shatter and rejects host writes to the repo or `/tmp`:
 ```bash
 ./scripts/test-shatter-full-scan-sandbox.sh
 ```
+
+## Refute for agent refactors
+
+Zolem agents can use [refute](https://github.com/shatterproof-ai/refute) for
+symbol-aware Go refactors. The expected local checkout is `~/project/refute`;
+install or update the project-local binary with:
+
+```bash
+./scripts/install-refute.sh
+```
+
+The wrapper delegates to `~/project/refute/scripts/install-nightly.sh` and
+installs `.agents/bin/refute`, which is ignored by git. If the checkout is
+missing, clone `https://github.com/shatterproof-ai/refute` to `~/project/refute`
+or set `REFUTE_REPO=/path/to/refute`.
+
+Check readiness before refactoring:
+
+```bash
+.agents/bin/refute doctor
+```
+
+Agents should preview changes with `--dry-run --json`, apply only after the
+preview is correct, and then run zolem's relevant verification gate.
+
+Verify the zolem wrapper behavior with:
+
+```bash
+./scripts/test-refute-setup.sh
+```
