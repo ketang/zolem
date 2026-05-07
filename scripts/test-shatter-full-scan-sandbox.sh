@@ -7,6 +7,12 @@ REPO_ROOT=$(cd -- "${SCRIPT_DIR}/.." && pwd)
 TMP_ROOT=$(mktemp -d)
 
 cleanup() {
+  if [[ -f "${ENV_LOG:-}" ]]; then
+    repo_guard=$(sed -n 's/^repo_guard=//p' "${ENV_LOG}" | head -n1)
+    tmp_guard=$(sed -n 's/^tmp_guard=//p' "${ENV_LOG}" | head -n1)
+    [[ -n "${repo_guard}" ]] && rm -f -- "${repo_guard}"
+    [[ -n "${tmp_guard}" ]] && rm -f -- "${tmp_guard}"
+  fi
   rm -rf "${TMP_ROOT}"
 }
 trap cleanup EXIT

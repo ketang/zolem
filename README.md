@@ -216,8 +216,21 @@ By default this uses `~/project/shatter/target/release/shatter`. Set
 `SHATTER_BIN=/path/to/shatter` to use a different binary. Reports are written
 under `shatter-report/`, with generated cache and artifact state ignored by git.
 
+Full scans require Docker. The scan wrapper runs Shatter targets with
+`SHATTER_SANDBOX_BACKEND=docker` and defaults
+`SHATTER_SANDBOX_DOCKER_IMAGE` to `golang:1.26-bookworm`, so the container has
+the Go toolchain required by targets that compile code. Override
+`SHATTER_SANDBOX_DOCKER_IMAGE` if the harness needs extra runtime packages.
+
 The setup check verifies full source discovery without executing functions:
 
 ```bash
 ./scripts/test-shatter-setup.sh
+```
+
+The sandbox wrapper check verifies the full-scan invocation passes Docker
+sandbox settings to Shatter and rejects host writes to the repo or `/tmp`:
+
+```bash
+./scripts/test-shatter-full-scan-sandbox.sh
 ```
