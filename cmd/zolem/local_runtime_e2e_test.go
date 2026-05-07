@@ -153,6 +153,10 @@ func TestLocalRuntimeWASMBackend_E2E(t *testing.T) {
 	if !strings.Contains(string(streamBody), `"content":"Hello "`) || !strings.Contains(string(streamBody), `"content":"from WASM."`) {
 		t.Fatalf("stream body did not contain generated chunks:\n%s", streamBody)
 	}
+	// The bundled WASM module's data segment encodes ["Hello ", "from WASM."]
+	// — exactly 2 generator tokens — so the chunker must emit exactly that
+	// many token deltas.
+	assertOpenAIStreamShape(t, streamBody, 2)
 }
 
 type localAdminService struct {
@@ -306,17 +310,33 @@ func TestLocalRuntimeLocalBackends_E2E(t *testing.T) {
 			"backend": "lorem",
 		})
 
-		resp, body := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions",
-			`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`,
-			"Content-Type: application/json", "Authorization: Bearer sk-test")
-		defer resp.Body.Close()
+		t.Run("non-streaming", func(t *testing.T) {
+			resp, body := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions",
+				`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`,
+				"Content-Type: application/json", "Authorization: Bearer sk-test")
+			defer resp.Body.Close()
 
-		assertOpenAIChatCompletion(t, resp, body)
-		text := openAICompletionContent(t, body)
-		// The lorem generator emits a fixed dictionary; the first word is always "lorem".
-		if !strings.Contains(strings.ToLower(text), "lorem") {
-			t.Fatalf("lorem backend response did not contain a lorem token: %q", text)
-		}
+			assertOpenAIChatCompletion(t, resp, body)
+			text := openAICompletionContent(t, body)
+			// The lorem generator emits a fixed dictionary; the first word is always "lorem".
+			if !strings.Contains(strings.ToLower(text), "lorem") {
+				t.Fatalf("lorem backend response did not contain a lorem token: %q", text)
+			}
+		})
+
+		t.Run("streaming", func(t *testing.T) {
+			resp, body := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions",
+				`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hello"}]}`,
+				"Content-Type: application/json", "Authorization: Bearer sk-test")
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status: got %d, want 200: %s", resp.StatusCode, body)
+			}
+			assertSSEHeaders(t, resp.Header)
+			// Lorem backend uses Generate(30); chunker frames as 30 token deltas plus 4 framing events.
+			assertOpenAIStreamShape(t, body, 30)
+		})
 	})
 
 	t.Run("faker", func(t *testing.T) {
@@ -327,16 +347,32 @@ func TestLocalRuntimeLocalBackends_E2E(t *testing.T) {
 			"backend": "faker",
 		})
 
-		resp, body := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions",
-			`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`,
-			"Content-Type: application/json", "Authorization: Bearer sk-test")
-		defer resp.Body.Close()
+		t.Run("non-streaming", func(t *testing.T) {
+			resp, body := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions",
+				`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`,
+				"Content-Type: application/json", "Authorization: Bearer sk-test")
+			defer resp.Body.Close()
 
-		assertOpenAIChatCompletion(t, resp, body)
-		// No seed flag exists for the faker backend; assert schema + non-empty content only.
-		if text := openAICompletionContent(t, body); strings.TrimSpace(text) == "" {
-			t.Fatalf("faker backend returned empty content: %s", body)
-		}
+			assertOpenAIChatCompletion(t, resp, body)
+			// No seed flag exists for the faker backend; assert schema + non-empty content only.
+			if text := openAICompletionContent(t, body); strings.TrimSpace(text) == "" {
+				t.Fatalf("faker backend returned empty content: %s", body)
+			}
+		})
+
+		t.Run("streaming", func(t *testing.T) {
+			resp, body := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions",
+				`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hello"}]}`,
+				"Content-Type: application/json", "Authorization: Bearer sk-test")
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status: got %d, want 200: %s", resp.StatusCode, body)
+			}
+			assertSSEHeaders(t, resp.Header)
+			// Faker backend shares the openai handler's Generate(30) path with lorem.
+			assertOpenAIStreamShape(t, body, 30)
+		})
 	})
 
 	t.Run("fixture", func(t *testing.T) {
@@ -381,6 +417,11 @@ func TestLocalRuntimeLocalBackends_E2E(t *testing.T) {
 			if got != want {
 				t.Fatalf("rendered streamed content: got %q, want %q", got, want)
 			}
+			// The fixture handler tokenizes the rendered content with
+			// strings.Fields; the rendered string is 5 words
+			// ("Templated fixture for profile openai-fixture-demo."), so the
+			// chunker must emit exactly 5 token deltas.
+			assertOpenAIStreamShape(t, body, 5)
 		})
 	})
 
@@ -493,6 +534,10 @@ func TestLocalRuntimeLocalBackends_E2E(t *testing.T) {
 			if !stream {
 				t.Fatalf("upstream stream: got false, want true")
 			}
+			// Upstream stub emits exactly 3 content deltas; the ollama
+			// translator is required to forward 1:1 (no batching, no
+			// dropping) to the client.
+			assertOpenAIStreamShape(t, body, 3)
 		})
 	})
 }

@@ -368,3 +368,108 @@ type openAIStreamUsage struct {
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
 }
+
+// parseSSEDataPayloads splits an SSE response body into ordered data-event
+// payloads. Each entry is the raw bytes between `data: ` and the trailing
+// blank line, in source order, including the `[DONE]` terminator.
+func parseSSEDataPayloads(t *testing.T, body []byte) [][]byte {
+	t.Helper()
+	records := sseRecords(t, body)
+	out := make([][]byte, 0, len(records))
+	for _, rec := range records {
+		out = append(out, sseDataPayload(t, rec))
+	}
+	return out
+}
+
+// assertOpenAIStreamShape pins the exact SSE event-frame layout that zolem's
+// OpenAI streaming chunker emits: 1 role-opener + wantTokens token deltas + 1
+// finish-reason chunk + 1 usage chunk + 1 [DONE] terminator. Total event
+// count must equal wantTokens + 4, [DONE] must be the final event, and no
+// events may follow [DONE]. Pass exact wantTokens for deterministic backends
+// (lorem/faker fixed at 30, fixture = word count of the rendered string,
+// ollama = number of upstream content deltas, wasm = number of generator
+// tokens). A regression that collapses chunks, drops [DONE], emits trailing
+// events after [DONE], reorders the frame structure, or changes per-chunk
+// content shape (role on opener, finish_reason on finalChunk, usage on
+// usageChunk) fails this assertion.
+func assertOpenAIStreamShape(t *testing.T, body []byte, wantTokens int) {
+	t.Helper()
+	payloads := parseSSEDataPayloads(t, body)
+	wantTotal := wantTokens + 4
+	if len(payloads) != wantTotal {
+		t.Fatalf("event count: got %d, want %d (1 role-opener + %d token deltas + 1 finalChunk + 1 usageChunk + 1 [DONE]); body:\n%s",
+			len(payloads), wantTotal, wantTokens, body)
+	}
+
+	for i, p := range payloads {
+		if string(p) == "[DONE]" && i != len(payloads)-1 {
+			t.Fatalf("[DONE] at index %d; must be the final event (no trailing events allowed); got %d trailing", i, len(payloads)-1-i)
+		}
+	}
+	if last := payloads[len(payloads)-1]; string(last) != "[DONE]" {
+		t.Fatalf("last event must be [DONE]; got %q", last)
+	}
+
+	var first openAIStreamChunk
+	if err := json.Unmarshal(payloads[0], &first); err != nil {
+		t.Fatalf("role-opener unmarshal: %v; payload=%s", err, payloads[0])
+	}
+	if len(first.Choices) != 1 {
+		t.Fatalf("role-opener: choices len = %d, want 1; payload=%s", len(first.Choices), payloads[0])
+	}
+	if first.Choices[0].Delta.Role != "assistant" {
+		t.Fatalf("role-opener delta.role = %q, want \"assistant\"", first.Choices[0].Delta.Role)
+	}
+	if first.Choices[0].Delta.Content != "" {
+		t.Fatalf("role-opener delta.content = %q, want empty", first.Choices[0].Delta.Content)
+	}
+	if first.Choices[0].FinishReason != nil {
+		t.Fatalf("role-opener finish_reason = %q, want null", *first.Choices[0].FinishReason)
+	}
+
+	for i := 1; i <= wantTokens; i++ {
+		var c openAIStreamChunk
+		if err := json.Unmarshal(payloads[i], &c); err != nil {
+			t.Fatalf("token chunk %d unmarshal: %v; payload=%s", i, err, payloads[i])
+		}
+		if len(c.Choices) != 1 {
+			t.Fatalf("token chunk %d: choices len = %d, want 1; payload=%s", i, len(c.Choices), payloads[i])
+		}
+		if c.Choices[0].FinishReason != nil {
+			t.Fatalf("token chunk %d: finish_reason = %q, want null", i, *c.Choices[0].FinishReason)
+		}
+	}
+
+	finalIdx := wantTokens + 1
+	var fin openAIStreamChunk
+	if err := json.Unmarshal(payloads[finalIdx], &fin); err != nil {
+		t.Fatalf("finalChunk unmarshal: %v; payload=%s", err, payloads[finalIdx])
+	}
+	if len(fin.Choices) != 1 {
+		t.Fatalf("finalChunk: choices len = %d, want 1; payload=%s", len(fin.Choices), payloads[finalIdx])
+	}
+	if fin.Choices[0].FinishReason == nil || *fin.Choices[0].FinishReason != "stop" {
+		var got string
+		if fin.Choices[0].FinishReason != nil {
+			got = *fin.Choices[0].FinishReason
+		}
+		t.Fatalf("finalChunk finish_reason: got %q, want \"stop\"", got)
+	}
+	if fin.Choices[0].Delta.Content != "" || fin.Choices[0].Delta.Role != "" {
+		t.Fatalf("finalChunk delta should be empty; got role=%q content=%q",
+			fin.Choices[0].Delta.Role, fin.Choices[0].Delta.Content)
+	}
+
+	usageIdx := wantTokens + 2
+	var usage openAIStreamChunk
+	if err := json.Unmarshal(payloads[usageIdx], &usage); err != nil {
+		t.Fatalf("usageChunk unmarshal: %v; payload=%s", err, payloads[usageIdx])
+	}
+	if usage.Usage == nil {
+		t.Fatalf("usageChunk: usage missing; payload=%s", payloads[usageIdx])
+	}
+	if len(usage.Choices) != 0 {
+		t.Fatalf("usageChunk: choices len = %d, want 0; payload=%s", len(usage.Choices), payloads[usageIdx])
+	}
+}
