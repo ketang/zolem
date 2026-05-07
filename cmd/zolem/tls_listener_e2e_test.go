@@ -98,34 +98,9 @@ func TestLocalRuntimeTLSListener_E2E(t *testing.T) {
 		}
 		assertSSEHeaders(t, resp.Header)
 
-		records := sseRecords(t, body)
-		if len(records) == 0 {
-			t.Fatalf("expected SSE records, got none")
-		}
-		sawDataChunk := false
-		sawDone := false
-		for _, rec := range records {
-			data := string(sseDataPayload(t, rec))
-			if data == "[DONE]" {
-				sawDone = true
-				continue
-			}
-			sawDataChunk = true
-			// Validate at least one chunk parses as an openai stream chunk.
-			var chunk openAIStreamChunk
-			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-				continue
-			}
-			if chunk.Object == "" {
-				continue
-			}
-		}
-		if !sawDataChunk {
-			t.Fatalf("expected at least one openai data chunk in stream; body:\n%s", body)
-		}
-		if !sawDone {
-			t.Fatalf("expected terminating [DONE] event in SSE stream; body:\n%s", body)
-		}
+		// Lorem backend uses Generate(30); the chunker frames that as
+		// 1 role-opener + 30 token deltas + 1 finalChunk + 1 usageChunk + [DONE].
+		assertOpenAIStreamShape(t, body, 30)
 	})
 
 	t.Run("wrong-ca", func(t *testing.T) {
