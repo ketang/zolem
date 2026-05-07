@@ -168,6 +168,20 @@ PROFILE_BACKEND=fixture \
 ./scripts/test-local-runtime.sh
 ```
 
+## Agent tooling
+
+Zolem agents can use [refute](https://github.com/shatterproof-ai/refute) for
+symbol-aware Go refactors. Install the repo-local binary from the expected
+local checkout at `~/project/refute`:
+
+```bash
+./scripts/setup-refute.sh
+```
+
+This writes `.agents/bin/refute` and runs `version` plus `doctor`. If the
+checkout is missing, clone `https://github.com/shatterproof-ai/refute` to
+`~/project/refute` or pass `--source /path/to/refute`.
+
 ## TLS for local development
 
 Zolem supports TLS so clients that require HTTPS work out of the box locally.
