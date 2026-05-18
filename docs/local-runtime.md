@@ -674,7 +674,7 @@ PROFILE_BACKEND=fixture ./scripts/test-local-runtime.sh
 
 ## Certificates
 
-Use [scripts/generate-certs.sh](/home/ketan/.codex/memories/worktrees/zolem-local-runtime-config-design/scripts/generate-certs.sh) to generate local certificates with `mkcert`.
+Use [scripts/generate-certs.sh](../scripts/generate-certs.sh) to generate local certificates with `mkcert`.
 
 It creates:
 

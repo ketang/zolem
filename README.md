@@ -2,20 +2,22 @@
 
 A local mock server for LLM provider APIs. Zolem validates requests against
 real OpenAPI/discovery specs and returns synthetic responses, so you can develop
-and test integrations against Anthropic, OpenAI, OpenRouter, and Gemini without
-burning tokens.
+and test integrations against Anthropic, OpenAI, and Gemini without burning
+tokens.
 
 Zolem currently has two supported local execution paths:
 
 - local runtime mode: a local admin server creates in-memory profiles and loopback listeners on demand
 - fixed-listener mode: one loopback listener is pinned to one provider/profile at startup
 
-## Supported providers
+## Supported local providers
 
 - Anthropic
 - OpenAI
-- OpenRouter
 - Gemini
+
+Zolem also tracks OpenRouter's OpenAPI source for spec parsing and validation,
+but local runtime listeners currently serve Anthropic, OpenAI, and Gemini.
 
 ## Response modes
 
@@ -25,6 +27,7 @@ Zolem currently has two supported local execution paths:
 | `faker` | Returns randomized fake data |
 | `fixture` | Returns static or templated responses defined by WASM-matched fixture files |
 | `ollama` | Forwards generation to a local Ollama instance via its HTTP API |
+| `wasm` | Runs a profile-supplied WebAssembly content generator |
 | `error` | Local runtime only; always returns a provider-native error |
 
 ## Quick start: local runtime mode
@@ -90,7 +93,7 @@ Current local runtime limitations:
 
 Local runtime also supports an `error` backend for deterministic client
 error-path testing. See
-[docs/local-runtime.md](/home/ketan/.codex/memories/worktrees/zolem-high-fidelity-errors/docs/local-runtime.md)
+[docs/local-runtime.md](docs/local-runtime.md)
 for examples and behavior.
 
 For WASM-generator profiles, pass a compiled binary module through `zolemc`:
@@ -104,6 +107,8 @@ go run ./cmd/zolemc -admin-url http://127.0.0.1:18090 \
 
 `-wasm-module-file` reads and base64-encodes the module for the admin API and
 selects the `wasm` backend when `-backend` is not set explicitly.
+The generator ABI, input shape, and runtime constraints are documented in
+[docs/local-runtime.md#wasm-backend](docs/local-runtime.md#wasm-backend).
 
 Optional local runtime TLS:
 
@@ -133,7 +138,7 @@ go run ./cmd/zolem \
 
 For fixture-backed fixed listeners, also pass `-local-fixtures-dir`.
 
-Full guide: [docs/local-runtime.md](/home/ketan/.codex/memories/worktrees/zolem-remove-static-config-mode/docs/local-runtime.md)
+Full guide: [docs/local-runtime.md](docs/local-runtime.md)
 
 ## Verification
 
@@ -211,15 +216,7 @@ to create a locally-trusted certificate covering `localhost`, `127.0.0.1`, and `
 ```
 
 This writes `certs/localhost.pem` and `certs/localhost-key.pem`, then prints the
-config snippet to add to your YAML:
-
-```yaml
-server:
-  addr: ":8443"
-  tls:
-    cert: certs/localhost.pem
-    key: certs/localhost-key.pem
-```
+local runtime flags that use those files.
 
 You can override the output directory with `CERT_DIR`:
 
