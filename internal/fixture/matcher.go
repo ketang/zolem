@@ -56,10 +56,7 @@ func (m *Matcher) Match(ctx context.Context, req MatchRequest) (*Fixture, error)
 		if f.Provider != req.Provider || f.Version != req.Version {
 			continue
 		}
-		if f.Module == nil {
-			continue
-		}
-		score, err := m.runner.Score(ctx, *f.Module, input)
+		score, err := m.score(ctx, f, req, input)
 		if err != nil || score < 0 {
 			continue
 		}
@@ -69,4 +66,15 @@ func (m *Matcher) Match(ctx context.Context, req MatchRequest) (*Fixture, error)
 		}
 	}
 	return best, nil
+}
+
+func (m *Matcher) score(ctx context.Context, f *Fixture, req MatchRequest, input []byte) (float32, error) {
+	switch {
+	case f.CELMatcher != nil:
+		return f.CELMatcher.Score(ctx, req)
+	case f.Module != nil:
+		return m.runner.Score(ctx, *f.Module, input)
+	default:
+		return -1, nil
+	}
 }

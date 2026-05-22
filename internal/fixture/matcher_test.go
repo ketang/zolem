@@ -2,6 +2,9 @@ package fixture_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strconv"
 	"testing"
 
 	"zolem.dev/zolem/internal/fixture"
@@ -132,5 +135,85 @@ func TestMatcher_SkipsWrongProviderOrVersion(t *testing.T) {
 	result, _ := m.Match(context.Background(), req)
 	if result != nil {
 		t.Error("fixture for wrong provider should not match")
+	}
+}
+
+func TestMatcher_CELMatchesRequestBodyAndLabels(t *testing.T) {
+	root := t.TempDir()
+	writeCELMatcherFixture(t, root, "low", "labels[\"tenant\"] == \"acme\"", 1)
+	writeCELMatcherFixture(t, root, "high", `body["model"] == "gpt-4o-mini" && body["messages"][0]["content"] == "refund"`, 20)
+
+	fixtures, err := fixture.NewLoader(root).Load()
+	if err != nil {
+		t.Fatalf("load fixtures: %v", err)
+	}
+
+	r := fixture.NewRunner()
+	defer r.Close()
+	m := fixture.NewMatcher(r, fixtures)
+
+	got, err := m.Match(context.Background(), fixture.MatchRequest{
+		Provider: "openai",
+		Version:  "v1",
+		Labels:   map[string]string{"tenant": "acme"},
+		Body:     []byte(`{"model":"gpt-4o-mini","messages":[{"role":"user","content":"refund"}]}`),
+	})
+	if err != nil {
+		t.Fatalf("match: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected CEL fixture match")
+	}
+	if got.ID != "high" {
+		t.Fatalf("matched fixture: got %q, want high", got.ID)
+	}
+}
+
+func TestMatcher_CELFalseDoesNotMatch(t *testing.T) {
+	root := t.TempDir()
+	writeCELMatcherFixture(t, root, "false", "false", 1)
+
+	fixtures, err := fixture.NewLoader(root).Load()
+	if err != nil {
+		t.Fatalf("load fixtures: %v", err)
+	}
+
+	r := fixture.NewRunner()
+	defer r.Close()
+	m := fixture.NewMatcher(r, fixtures)
+
+	got, err := m.Match(context.Background(), fixture.MatchRequest{
+		Provider: "openai",
+		Version:  "v1",
+		Labels:   map[string]string{},
+		Body:     []byte(`{"model":"gpt-4o-mini"}`),
+	})
+	if err != nil {
+		t.Fatalf("match: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected no match, got %q", got.ID)
+	}
+}
+
+func writeCELMatcherFixture(t *testing.T, root, id, expr string, score int) {
+	t.Helper()
+
+	dir := filepath.Join(root, id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir fixture %q: %v", id, err)
+	}
+	meta := "id: " + id + "\n" +
+		"provider: openai\n" +
+		"version: v1\n" +
+		"status: 200\n" +
+		"match:\n" +
+		"  cel: " + strconv.Quote(expr) + "\n" +
+		"  score: " + strconv.Itoa(score) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "meta.yaml"), []byte(meta), 0o644); err != nil {
+		t.Fatalf("write meta for %q: %v", id, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "response.json"), []byte(`{"id":"`+id+`"}`), 0o644); err != nil {
+		t.Fatalf("write response for %q: %v", id, err)
 	}
 }

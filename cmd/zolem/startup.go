@@ -227,8 +227,10 @@ func loadFixtures(fixturesDir string, listenerRuntime runtimecfg.ListenerRuntime
 		if err := fixture.ValidateTemplate(fixtures[i], fixture.ValidationInput{Runtime: fixture.RuntimeContext(listenerRuntime)}); err != nil {
 			return nil, warnings, fmt.Errorf("validate response for fixture %q: %w", fixtures[i].ID, err)
 		}
+		if !fixtures[i].HasMatcher() {
+			warnings = append(warnings, fmt.Sprintf("fixture %q has no matcher - will never match", fixtures[i].ID))
+		}
 		if fixtures[i].WASMPath == "" {
-			warnings = append(warnings, fmt.Sprintf("fixture %q has no match.wasm - will never match", fixtures[i].ID))
 			continue
 		}
 

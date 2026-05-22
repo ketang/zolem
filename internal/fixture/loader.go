@@ -15,6 +15,12 @@ type meta struct {
 	Stream       bool    `yaml:"stream"`
 	Status       int     `yaml:"status"`
 	TemplateSeed *uint64 `yaml:"template_seed"`
+	Match        match   `yaml:"match"`
+}
+
+type match struct {
+	CEL   string   `yaml:"cel"`
+	Score *float64 `yaml:"score"`
 }
 
 type Loader struct {
@@ -81,6 +87,9 @@ func loadOne(dir string) (Fixture, error) {
 	if _, err := os.Stat(wasmPath); os.IsNotExist(err) {
 		wasmPath = ""
 	}
+	if m.Match.CEL != "" && wasmPath != "" {
+		return Fixture{}, fmt.Errorf("only one of match.cel or match.wasm is allowed")
+	}
 
 	f := Fixture{
 		ID:           m.ID,
@@ -90,6 +99,17 @@ func loadOne(dir string) (Fixture, error) {
 		Status:       m.Status,
 		TemplateSeed: m.TemplateSeed,
 		WASMPath:     wasmPath,
+	}
+	if m.Match.CEL != "" {
+		score := float64(1)
+		if m.Match.Score != nil {
+			score = *m.Match.Score
+		}
+		matcher, err := CompileCELMatcher(m.Match.CEL, score)
+		if err != nil {
+			return Fixture{}, err
+		}
+		f.CELMatcher = matcher
 	}
 
 	if hasBody {
