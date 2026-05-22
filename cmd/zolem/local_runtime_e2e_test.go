@@ -378,6 +378,7 @@ func TestLocalRuntimeLocalBackends_E2E(t *testing.T) {
 	t.Run("fixture", func(t *testing.T) {
 		fixturesDir := t.TempDir()
 		copyTestdataFixtures(t, repoRoot, fixturesDir)
+		writeOpenAICELFixture(t, fixturesDir)
 		admin := startLocalAdminServiceWithFixtures(t, repoRoot, fixturesDir)
 		t.Cleanup(admin.Close)
 
@@ -422,6 +423,18 @@ func TestLocalRuntimeLocalBackends_E2E(t *testing.T) {
 			// ("Templated fixture for profile openai-fixture-demo."), so the
 			// chunker must emit exactly 5 token deltas.
 			assertOpenAIStreamShape(t, body, 5)
+		})
+
+		t.Run("cel", func(t *testing.T) {
+			resp, body := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions",
+				`{"model":"gpt-4o-mini","messages":[{"role":"user","content":"cel please"}]}`,
+				"Content-Type: application/json", "Authorization: Bearer sk-test")
+			defer resp.Body.Close()
+
+			assertOpenAIChatCompletion(t, resp, body)
+			if got := openAICompletionContent(t, body); got != "CEL fixture matched." {
+				t.Fatalf("CEL fixture content: got %q, want %q", got, "CEL fixture matched.")
+			}
 		})
 	})
 
@@ -692,11 +705,46 @@ func copyTestdataFixtures(t *testing.T, repoRoot, dst string) {
 				t.Fatalf("write fixture file %q: %v", f.Name(), err)
 			}
 		}
-		// Each fixture needs a match.wasm; the always-match module from
+		// These legacy fixtures use match.wasm; the always-match module from
 		// integration_helpers_test.go matches every request.
 		if err := os.WriteFile(filepath.Join(fixtureDst, "match.wasm"), alwaysMatchWASM, 0o644); err != nil {
 			t.Fatalf("write match.wasm: %v", err)
 		}
+	}
+}
+
+func writeOpenAICELFixture(t *testing.T, root string) {
+	t.Helper()
+
+	dir := filepath.Join(root, "openai-cel")
+	mustMkdir(t, dir)
+	meta := `id: openai-cel
+provider: openai
+version: v1
+status: 200
+match:
+  cel: 'body["model"] == "gpt-4o-mini" && body["messages"][0]["content"] == "cel please"'
+  score: 20
+`
+	if err := os.WriteFile(filepath.Join(dir, "meta.yaml"), []byte(meta), 0o644); err != nil {
+		t.Fatalf("write CEL meta.yaml: %v", err)
+	}
+	response := `{
+  "id": "chatcmpl-cel",
+  "object": "chat.completion",
+  "created": 1,
+  "model": "fixture-model",
+  "choices": [
+    {
+      "index": 0,
+      "message": {"role": "assistant", "content": "CEL fixture matched."},
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {"prompt_tokens": 1, "completion_tokens": 3, "total_tokens": 4}
+}`
+	if err := os.WriteFile(filepath.Join(dir, "response.json"), []byte(response), 0o644); err != nil {
+		t.Fatalf("write CEL response.json: %v", err)
 	}
 }
 
@@ -707,7 +755,6 @@ func copyTestdataFixtures(t *testing.T, repoRoot, dst string) {
 func startLocalAdminServiceWithFixtures(t *testing.T, repoRoot, fixturesDir string) *localAdminService {
 	t.Helper()
 
-	workDir := t.TempDir()
 	port := pickPort(t)
 	adminAddr := fmt.Sprintf("127.0.0.1:%d", port)
 
@@ -715,7 +762,7 @@ func startLocalAdminServiceWithFixtures(t *testing.T, repoRoot, fixturesDir stri
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, "go", "run", ".", "-local-admin-addr", adminAddr, "-local-fixtures-dir", fixturesDir)
 	cmd.Dir = filepath.Join(repoRoot, "cmd", "zolem")
-	cmd.Env = append(os.Environ(), "GOCACHE="+filepath.Join(workDir, "gocache"))
+	cmd.Env = os.Environ()
 	cmd.Stdout = &logs
 	cmd.Stderr = &logs
 

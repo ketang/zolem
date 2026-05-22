@@ -25,7 +25,7 @@ but local runtime listeners currently serve Anthropic, OpenAI, and Gemini.
 |------|-------------|
 | `lorem` | Returns lorem-ipsum placeholder text (default) |
 | `faker` | Returns randomized fake data |
-| `fixture` | Returns static or templated responses defined by WASM-matched fixture files |
+| `fixture` | Returns static or templated responses selected by CEL or WASM fixture matchers |
 | `ollama` | Forwards generation to a local Ollama instance via its HTTP API |
 | `wasm` | Runs a profile-supplied WebAssembly content generator |
 | `error` | Local runtime only; always returns a provider-native error |

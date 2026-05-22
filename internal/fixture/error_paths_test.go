@@ -319,6 +319,29 @@ match:
 	}
 }
 
+func TestLoader_RejectsInvalidCELScore(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureSpec(t, root, fixtureSpec{
+		name: "negative-score",
+		meta: `id: negative-score
+provider: openai
+version: v1
+match:
+  cel: "true"
+  score: -1
+`,
+		response: `{"id":"negative-score"}`,
+	})
+
+	_, err := fixture.NewLoader(root).Load()
+	if err == nil {
+		t.Fatal("expected loader error")
+	}
+	if !strings.Contains(err.Error(), "match.score") {
+		t.Fatalf("error %q does not mention invalid score", err)
+	}
+}
+
 func TestRunner_CompileWASM_InvalidModule(t *testing.T) {
 	r := newRunner(t)
 	_, err := r.CompileWASM(context.Background(), []byte{0x00, 0x61, 0x73, 0x6d, 0x01})

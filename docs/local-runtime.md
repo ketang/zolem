@@ -270,7 +270,7 @@ Each fixture still needs the normal files under a subdirectory:
 
 - `meta.yaml`
 - `response.json` or `response.json.tmpl`
-- `match.wasm`
+- either a `match.cel` expression in `meta.yaml` or a `match.wasm` file
 
 Minimal example:
 
@@ -278,8 +278,7 @@ Minimal example:
 my-fixtures/
 └── anthropic-demo/
     ├── meta.yaml
-    ├── response.json
-    └── match.wasm
+    └── response.json
 ```
 
 Example `meta.yaml`:
@@ -289,7 +288,37 @@ id: anthropic-demo
 provider: anthropic
 version: v1
 status: 200
+match:
+  cel: 'body["model"] == "claude-3-5-sonnet-20241022"'
+  score: 1
 ```
+
+CEL is the recommended matcher for common request predicates. `match.cel`
+must evaluate to a boolean. When it returns `true`, the fixture is a candidate
+with `match.score`; when it returns `false`, the fixture is skipped. The score
+defaults to `1`, must be finite and non-negative, and participates in the same
+highest-score selection used by WASM matchers. Ties still use fixture load
+order.
+
+CEL matchers can read:
+
+- `provider` as a string
+- `version` as a string
+- `labels` as `map(string, string)`
+- `body` as the validated request JSON
+
+Use bracket access for request JSON and labels:
+
+```cel
+body["model"] == "gpt-4o-mini" &&
+labels["tenant"] == "acme" &&
+body["messages"][0]["content"] == "refund"
+```
+
+For custom scoring or logic that does not fit CEL, use a `match.wasm` file
+instead. A fixture cannot define both `match.cel` and `match.wasm`; Zolem
+rejects that fixture at load time. A fixture with neither matcher loads but
+will never match.
 
 For a templated fixture, replace `response.json` with `response.json.tmpl`.
 Zolem parses, executes, and validates the rendered JSON when the fixture-backed
