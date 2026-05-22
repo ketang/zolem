@@ -252,6 +252,73 @@ version: v1
 	}
 }
 
+func TestLoader_RejectsInvalidCELMatcher(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureSpec(t, root, fixtureSpec{
+		name: "invalid-cel",
+		meta: `id: invalid-cel
+provider: openai
+version: v1
+match:
+  cel: "body["
+`,
+		response: `{"id":"invalid-cel"}`,
+	})
+
+	_, err := fixture.NewLoader(root).Load()
+	if err == nil {
+		t.Fatal("expected loader error")
+	}
+	if !strings.Contains(err.Error(), "compile CEL matcher") {
+		t.Fatalf("error %q does not mention CEL compile failure", err)
+	}
+}
+
+func TestLoader_RejectsNonBoolCELMatcher(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureSpec(t, root, fixtureSpec{
+		name: "non-bool-cel",
+		meta: `id: non-bool-cel
+provider: openai
+version: v1
+match:
+  cel: "body[\"model\"]"
+`,
+		response: `{"id":"non-bool-cel"}`,
+	})
+
+	_, err := fixture.NewLoader(root).Load()
+	if err == nil {
+		t.Fatal("expected loader error")
+	}
+	if !strings.Contains(err.Error(), "must return bool") {
+		t.Fatalf("error %q does not mention bool result requirement", err)
+	}
+}
+
+func TestLoader_RejectsCELMatcherWithWASM(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureSpec(t, root, fixtureSpec{
+		name: "cel-and-wasm",
+		meta: `id: cel-and-wasm
+provider: openai
+version: v1
+match:
+  cel: "true"
+`,
+		response: `{"id":"cel-and-wasm"}`,
+		wasm:     alwaysMatchWASM,
+	})
+
+	_, err := fixture.NewLoader(root).Load()
+	if err == nil {
+		t.Fatal("expected loader error")
+	}
+	if !strings.Contains(err.Error(), "only one of match.cel or match.wasm") {
+		t.Fatalf("error %q does not mention matcher exclusivity", err)
+	}
+}
+
 func TestRunner_CompileWASM_InvalidModule(t *testing.T) {
 	r := newRunner(t)
 	_, err := r.CompileWASM(context.Background(), []byte{0x00, 0x61, 0x73, 0x6d, 0x01})
