@@ -2,7 +2,8 @@ package fixture
 
 import "text/template"
 
-// Fixture represents a loaded canned response with its compiled match module.
+// Fixture represents a loaded canned response. Matching state (CEL/WASM) is
+// owned by the Selector, not by the fixture itself.
 type Fixture struct {
 	ID           string
 	Provider     string
@@ -15,7 +16,6 @@ type Fixture struct {
 	templateBody *template.Template
 	WASMPath     string          // path to match.wasm; empty if not yet loaded
 	Module       *CompiledModule // nil if no match.wasm present
-	CELMatcher   *CompiledCELMatcher
 }
 
 // SetResponseTemplate parses and stores the fixture response template.
@@ -28,8 +28,4 @@ func (f *Fixture) SetResponseTemplate(body []byte) error {
 	f.ResponseBody = body
 	f.templateBody = tmpl
 	return nil
-}
-
-func (f Fixture) HasMatcher() bool {
-	return f.Module != nil || f.WASMPath != "" || f.CELMatcher != nil
 }

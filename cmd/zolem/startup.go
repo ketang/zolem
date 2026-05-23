@@ -151,14 +151,14 @@ func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, 
 	warnings := loadSpecs(validator, deps.newFetcher(filepath.Join(os.TempDir(), "zolem-specs"), map[string]string{}))
 
 	runner := deps.newRunner()
-	fixtures, fixtureWarnings, err := loadLocalFixtures(listenerRuntime, fixturesDir, runner, deps.readFile)
+	fixtures, selector, fixtureWarnings, err := loadLocalFixtures(listenerRuntime, fixturesDir, runner, deps.readFile)
 	warnings = append(warnings, fixtureWarnings...)
 	if err != nil {
 		runner.Close()
 		return nil, warnings, err
 	}
 
-	matcher := fixture.NewMatcher(runner, fixtures)
+	matcher := fixture.NewMatcher(runner, fixtures, selector)
 	generator, err := generatorForBackend(listenerRuntime.Profile.Backend, deps)
 	if err != nil {
 		runner.Close()
@@ -185,12 +185,12 @@ func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, 
 	}, warnings, nil
 }
 
-func loadLocalFixtures(listenerRuntime runtimecfg.ListenerRuntime, fixturesDir string, runner *fixture.Runner, readFile func(string) ([]byte, error)) ([]fixture.Fixture, []string, error) {
+func loadLocalFixtures(listenerRuntime runtimecfg.ListenerRuntime, fixturesDir string, runner *fixture.Runner, readFile func(string) ([]byte, error)) ([]fixture.Fixture, fixture.Selector, []string, error) {
 	if listenerRuntime.Profile.Backend != runtimecfg.BackendFixture {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	if fixturesDir == "" {
-		return nil, nil, fmt.Errorf("local fixture backend requires -local-fixtures-dir")
+		return nil, nil, nil, fmt.Errorf("local fixture backend requires -local-fixtures-dir")
 	}
 	if listenerRuntime.Profile.FixtureNamespace != "" {
 		fixturesDir = filepath.Join(fixturesDir, filepath.FromSlash(listenerRuntime.Profile.FixtureNamespace))
@@ -214,23 +214,24 @@ func loadSpecs(validator *specs.Validator, fetcher specFetcher) []string {
 	return warnings
 }
 
-func loadFixtures(fixturesDir string, listenerRuntime runtimecfg.ListenerRuntime, runner *fixture.Runner, readFile func(string) ([]byte, error)) ([]fixture.Fixture, []string, error) {
+func loadFixtures(fixturesDir string, listenerRuntime runtimecfg.ListenerRuntime, runner *fixture.Runner, readFile func(string) ([]byte, error)) ([]fixture.Fixture, fixture.Selector, []string, error) {
 	if fixturesDir == "" {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
 	loader := fixture.NewLoader(fixturesDir)
-	fixtures, err := loader.Load()
+	fixtures, selector, err := loader.Load()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
+	legacy, isLegacy := selector.(*fixture.LegacySelector)
 	var warnings []string
 	for i := range fixtures {
 		if err := fixture.ValidateTemplate(fixtures[i], fixture.ValidationInput{Runtime: fixture.RuntimeContext(listenerRuntime)}); err != nil {
-			return nil, warnings, fmt.Errorf("validate response for fixture %q: %w", fixtures[i].ID, err)
+			return nil, nil, warnings, fmt.Errorf("validate response for fixture %q: %w", fixtures[i].ID, err)
 		}
-		if !fixtures[i].HasMatcher() {
+		if isLegacy && !legacy.HasMatcher(fixtures[i]) {
 			warnings = append(warnings, fmt.Sprintf("fixture %q has no matcher - will never match", fixtures[i].ID))
 		}
 		if fixtures[i].WASMPath == "" {
@@ -239,18 +240,18 @@ func loadFixtures(fixturesDir string, listenerRuntime runtimecfg.ListenerRuntime
 
 		wasmBytes, err := readFile(fixtures[i].WASMPath)
 		if err != nil {
-			return nil, warnings, fmt.Errorf("read wasm for fixture %q: %w", fixtures[i].ID, err)
+			return nil, nil, warnings, fmt.Errorf("read wasm for fixture %q: %w", fixtures[i].ID, err)
 		}
 
 		mod, err := runner.CompileWASM(context.Background(), wasmBytes)
 		if err != nil {
-			return nil, warnings, fmt.Errorf("compile wasm for fixture %q: %w", fixtures[i].ID, err)
+			return nil, nil, warnings, fmt.Errorf("compile wasm for fixture %q: %w", fixtures[i].ID, err)
 		}
 		fixtures[i].Module = &mod
 		warnings = append(warnings, fmt.Sprintf("loaded fixture: %s", fixtures[i].ID))
 	}
 
-	return fixtures, warnings, nil
+	return fixtures, selector, warnings, nil
 }
 
 func buildLocalHandler(listenerRuntime runtimecfg.ListenerRuntime, counters *runtimecfg.ProfileCounters, validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, wasmGenerator *wasmgen.Generator) http.Handler {

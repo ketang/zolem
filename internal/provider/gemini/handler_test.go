@@ -44,7 +44,7 @@ func newHandlerWithGenerator(t *testing.T, generator testGenerator) *gemini.Hand
 	t.Helper()
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)
-	return gemini.NewHandler(specs.NewValidator(), fixture.NewMatcher(runner, nil), response.NewLoremGenerator(), generator, nil)
+	return gemini.NewHandler(specs.NewValidator(), fixture.NewMatcher(runner, nil, nil), response.NewLoremGenerator(), generator, nil)
 }
 
 func TestGenerateContent_MissingAuth(t *testing.T) {
@@ -197,7 +197,7 @@ func (g *stubChatGenerator) Streaming(_ context.Context, _ string, _ []ollama.Ch
 func TestGenerateContent_OllamaBackend_NonStreaming(t *testing.T) {
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)
-	matcher := fixture.NewMatcher(runner, nil)
+	matcher := fixture.NewMatcher(runner, nil, nil)
 	lorem := response.NewLoremGenerator()
 	validator := specs.NewValidator()
 	chat := &stubChatGenerator{text: "Ollama says hello"}
@@ -232,7 +232,7 @@ func TestGenerateContent_OllamaBackend_NonStreaming(t *testing.T) {
 func TestGenerateContent_OllamaBackend_Error(t *testing.T) {
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)
-	matcher := fixture.NewMatcher(runner, nil)
+	matcher := fixture.NewMatcher(runner, nil, nil)
 	lorem := response.NewLoremGenerator()
 	validator := specs.NewValidator()
 	chat := &stubChatGenerator{err: errors.New("connection refused")}
@@ -259,7 +259,7 @@ func TestGenerateContent_OllamaBackend_Error(t *testing.T) {
 func TestStreamGenerateContent_OllamaBackend(t *testing.T) {
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)
-	matcher := fixture.NewMatcher(runner, nil)
+	matcher := fixture.NewMatcher(runner, nil, nil)
 	lorem := response.NewLoremGenerator()
 	validator := specs.NewValidator()
 	chat := &stubChatGenerator{text: "Hello world"}

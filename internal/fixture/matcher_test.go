@@ -76,7 +76,7 @@ func TestMatcher_MatchesHighestScore(t *testing.T) {
 		{ID: "high", Provider: "anthropic", Version: "v1", Status: 200, ResponseBody: []byte(`{"id":"high"}`), Module: &highMod},
 	}
 
-	m := fixture.NewMatcher(r, fixtures)
+	m := fixture.NewMatcher(r, fixtures, nil)
 	req := fixture.MatchRequest{Provider: "anthropic", Version: "v1", Labels: map[string]string{}, Body: []byte(`{}`)}
 
 	result, err := m.Match(context.Background(), req)
@@ -104,7 +104,7 @@ func TestMatcher_NilOnNoMatch(t *testing.T) {
 		{ID: "none", Provider: "anthropic", Version: "v1", Status: 200, ResponseBody: []byte(`{}`), Module: &noMod},
 	}
 
-	m := fixture.NewMatcher(r, fixtures)
+	m := fixture.NewMatcher(r, fixtures, nil)
 	req := fixture.MatchRequest{Provider: "anthropic", Version: "v1", Labels: map[string]string{}, Body: []byte(`{}`)}
 
 	result, err := m.Match(context.Background(), req)
@@ -129,7 +129,7 @@ func TestMatcher_SkipsWrongProviderOrVersion(t *testing.T) {
 		{ID: "openai-fixture", Provider: "openai", Version: "v1", Status: 200, ResponseBody: []byte(`{}`), Module: &alwaysMod},
 	}
 
-	m := fixture.NewMatcher(r, fixtures)
+	m := fixture.NewMatcher(r, fixtures, nil)
 	req := fixture.MatchRequest{Provider: "anthropic", Version: "v1", Labels: map[string]string{}, Body: []byte(`{}`)}
 
 	result, _ := m.Match(context.Background(), req)
@@ -143,14 +143,14 @@ func TestMatcher_CELMatchesRequestBodyAndLabels(t *testing.T) {
 	writeCELMatcherFixture(t, root, "low", "labels[\"tenant\"] == \"acme\"", 1)
 	writeCELMatcherFixture(t, root, "high", `body["model"] == "gpt-4o-mini" && body["messages"][0]["content"] == "refund"`, 20)
 
-	fixtures, err := fixture.NewLoader(root).Load()
+	fixtures, selector, err := fixture.NewLoader(root).Load()
 	if err != nil {
 		t.Fatalf("load fixtures: %v", err)
 	}
 
 	r := fixture.NewRunner()
 	defer r.Close()
-	m := fixture.NewMatcher(r, fixtures)
+	m := fixture.NewMatcher(r, fixtures, selector)
 
 	got, err := m.Match(context.Background(), fixture.MatchRequest{
 		Provider: "openai",
@@ -173,14 +173,14 @@ func TestMatcher_CELFalseDoesNotMatch(t *testing.T) {
 	root := t.TempDir()
 	writeCELMatcherFixture(t, root, "false", "false", 1)
 
-	fixtures, err := fixture.NewLoader(root).Load()
+	fixtures, selector, err := fixture.NewLoader(root).Load()
 	if err != nil {
 		t.Fatalf("load fixtures: %v", err)
 	}
 
 	r := fixture.NewRunner()
 	defer r.Close()
-	m := fixture.NewMatcher(r, fixtures)
+	m := fixture.NewMatcher(r, fixtures, selector)
 
 	got, err := m.Match(context.Background(), fixture.MatchRequest{
 		Provider: "openai",

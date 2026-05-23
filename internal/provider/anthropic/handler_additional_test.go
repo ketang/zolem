@@ -66,7 +66,7 @@ func newAnthropicHandler(t *testing.T, validator *specs.Validator, buildFixtures
 	t.Helper()
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)
-	matcher := fixture.NewMatcher(runner, buildFixtures(runner))
+	matcher := fixture.NewMatcher(runner, buildFixtures(runner), nil)
 	return anthropic.NewHandler(validator, matcher, response.NewLoremGenerator(), nil, nil)
 }
 

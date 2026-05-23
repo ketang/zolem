@@ -438,6 +438,41 @@ func TestLocalRuntimeLocalBackends_E2E(t *testing.T) {
 		})
 	})
 
+	t.Run("fixtures-yaml", func(t *testing.T) {
+		fixturesDir := t.TempDir()
+		writeFixturesYAMLNamespace(t, fixturesDir)
+		admin := startLocalAdminServiceWithFixtures(t, repoRoot, fixturesDir)
+		t.Cleanup(admin.Close)
+
+		listenerBaseURL := createRuntimeListener(t, admin, "openai", map[string]any{
+			"backend": "fixture",
+		})
+
+		t.Run("routes-mini-model", func(t *testing.T) {
+			resp, body := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions",
+				`{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}`,
+				"Content-Type: application/json", "Authorization: Bearer sk-test")
+			defer resp.Body.Close()
+
+			assertOpenAIChatCompletion(t, resp, body)
+			if got := openAICompletionContent(t, body); got != "yaml-mini matched." {
+				t.Fatalf("yaml-mini content: got %q, want yaml-mini matched.", got)
+			}
+		})
+
+		t.Run("routes-full-model", func(t *testing.T) {
+			resp, body := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions",
+				`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
+				"Content-Type: application/json", "Authorization: Bearer sk-test")
+			defer resp.Body.Close()
+
+			assertOpenAIChatCompletion(t, resp, body)
+			if got := openAICompletionContent(t, body); got != "yaml-full matched." {
+				t.Fatalf("yaml-full content: got %q, want yaml-full matched.", got)
+			}
+		})
+	})
+
 	t.Run("ollama", func(t *testing.T) {
 		var (
 			lastRequest atomicChatRequest
@@ -745,6 +780,50 @@ match:
 }`
 	if err := os.WriteFile(filepath.Join(dir, "response.json"), []byte(response), 0o644); err != nil {
 		t.Fatalf("write CEL response.json: %v", err)
+	}
+}
+
+func writeFixturesYAMLNamespace(t *testing.T, root string) {
+	t.Helper()
+	writeYAMLNamespaceFixture(t, root, "yaml-mini", "yaml-mini matched.")
+	writeYAMLNamespaceFixture(t, root, "yaml-full", "yaml-full matched.")
+	yaml := `provider: openai
+version: v1
+fixtures:
+  - expression: 'body["model"] == "gpt-4o-mini"'
+    fixture: yaml-mini
+  - expression: 'body["model"] == "gpt-4o"'
+    fixture: yaml-full
+`
+	if err := os.WriteFile(filepath.Join(root, "fixtures.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatalf("write fixtures.yaml: %v", err)
+	}
+}
+
+func writeYAMLNamespaceFixture(t *testing.T, root, id, content string) {
+	t.Helper()
+	dir := filepath.Join(root, id)
+	mustMkdir(t, dir)
+	meta := "id: " + id + "\nprovider: openai\nversion: v1\nstatus: 200\n"
+	if err := os.WriteFile(filepath.Join(dir, "meta.yaml"), []byte(meta), 0o644); err != nil {
+		t.Fatalf("write meta.yaml for %q: %v", id, err)
+	}
+	response := fmt.Sprintf(`{
+  "id": "chatcmpl-%s",
+  "object": "chat.completion",
+  "created": 1,
+  "model": "fixture-model",
+  "choices": [
+    {
+      "index": 0,
+      "message": {"role": "assistant", "content": %q},
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {"prompt_tokens": 1, "completion_tokens": 3, "total_tokens": 4}
+}`, id, content)
+	if err := os.WriteFile(filepath.Join(dir, "response.json"), []byte(response), 0o644); err != nil {
+		t.Fatalf("write response.json for %q: %v", id, err)
 	}
 }
 
