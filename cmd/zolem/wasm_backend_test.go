@@ -67,7 +67,7 @@ func TestBuildLocalStartupAppForRuntime_WASMBackendOpenAI(t *testing.T) {
 			Backend:          runtimecfg.BackendWASM,
 			WASMModuleBase64: base64.StdEncoding.EncodeToString(localGeneratorWASM),
 		},
-	}, "", runtimecfg.NewProfileCounters(), startupDeps{
+	}, "", runtimecfg.NewProfileCounters(), nil, RecordCaps{}, startupDeps{
 		newFetcher: disabledTestFetcher,
 	})
 	if err != nil {
@@ -105,7 +105,7 @@ func TestBuildLocalStartupAppForRuntime_WASMBackendStreaming(t *testing.T) {
 			Backend:          runtimecfg.BackendWASM,
 			WASMModuleBase64: base64.StdEncoding.EncodeToString(localGeneratorWASM),
 		},
-	}, "", runtimecfg.NewProfileCounters(), startupDeps{
+	}, "", runtimecfg.NewProfileCounters(), nil, RecordCaps{}, startupDeps{
 		newFetcher: disabledTestFetcher,
 	})
 	if err != nil {

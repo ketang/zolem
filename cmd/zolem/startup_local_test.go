@@ -57,7 +57,7 @@ func TestBuildLocalStartupAppForRuntime_FixtureNamespace(t *testing.T) {
 			Backend:          runtimecfg.BackendFixture,
 			FixtureNamespace: "team-a",
 		},
-	}, fixturesDir, runtimecfg.NewProfileCounters(), startupDeps{
+	}, fixturesDir, runtimecfg.NewProfileCounters(), nil, RecordCaps{}, startupDeps{
 		newFetcher: disabledTestFetcher,
 	})
 	if err != nil {
@@ -114,7 +114,7 @@ func TestBuildLocalStartupAppForRuntime_TemplatedFixtureUsesRuntimeAndCounters(t
 			Backend:      runtimecfg.BackendFixture,
 			BackendModel: "backend-template-model",
 		},
-	}, fixturesDir, counters, startupDeps{
+	}, fixturesDir, counters, nil, RecordCaps{}, startupDeps{
 		newFetcher: disabledTestFetcher,
 	})
 	if err != nil {

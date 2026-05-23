@@ -138,10 +138,10 @@ func buildLocalStartupApp(opts localOptions, deps startupDeps) (*startupApp, []s
 		return nil, nil, err
 	}
 
-	return buildLocalStartupAppForRuntime(listenerRuntime, opts.FixturesDir, runtimecfg.NewProfileCounters(), deps)
+	return buildLocalStartupAppForRuntime(listenerRuntime, opts.FixturesDir, runtimecfg.NewProfileCounters(), nil, RecordCaps{}, deps)
 }
 
-func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, fixturesDir string, counters *runtimecfg.ProfileCounters, deps startupDeps) (*startupApp, []string, error) {
+func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, fixturesDir string, counters *runtimecfg.ProfileCounters, recorder Recorder, caps RecordCaps, deps startupDeps) (*startupApp, []string, error) {
 	deps = deps.withDefaults()
 	if counters == nil {
 		counters = runtimecfg.NewProfileCounters()
@@ -171,6 +171,9 @@ func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, 
 	}
 
 	handler := buildLocalHandler(listenerRuntime, counters, validator, matcher, generator, wasmGenerator)
+	if recorder != nil {
+		handler = recordingMiddleware(recorder, caps)(handler)
+	}
 	return &startupApp{
 		handler: handler,
 		close: func() {
