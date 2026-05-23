@@ -15,7 +15,7 @@ func testdataDir() string {
 
 func TestLoader_LoadDirectory(t *testing.T) {
 	l := fixture.NewLoader(testdataDir())
-	fixtures, err := l.Load()
+	fixtures, _, err := l.Load()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -26,7 +26,7 @@ func TestLoader_LoadDirectory(t *testing.T) {
 
 func TestLoader_FixtureMetadata(t *testing.T) {
 	l := fixture.NewLoader(testdataDir())
-	fixtures, _ := l.Load()
+	fixtures, _, _ := l.Load()
 
 	var found *fixture.Fixture
 	for i := range fixtures {

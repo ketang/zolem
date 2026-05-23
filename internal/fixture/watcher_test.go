@@ -18,7 +18,7 @@ func TestWatcher_ReloadsOnFileChange(t *testing.T) {
 	r := fixture.NewRunner()
 	defer r.Close()
 
-	m := fixture.NewMatcher(r, nil)
+	m := fixture.NewMatcher(r, nil, nil)
 
 	var reloadCount atomic.Int32
 	reload := func() ([]fixture.Fixture, error) {
@@ -71,7 +71,7 @@ func TestWatcher_PreservesFixturesOnReloadFailure(t *testing.T) {
 	defer r.Close()
 
 	original := []fixture.Fixture{{ID: "original", Provider: "test", Version: "v1", Status: 200}}
-	m := fixture.NewMatcher(r, original)
+	m := fixture.NewMatcher(r, original, nil)
 
 	var reloadCount atomic.Int32
 	reload := func() ([]fixture.Fixture, error) {
@@ -130,7 +130,7 @@ func TestWatcher_CleansUpOnContextCancel(t *testing.T) {
 	r := fixture.NewRunner()
 	defer r.Close()
 
-	m := fixture.NewMatcher(r, nil)
+	m := fixture.NewMatcher(r, nil, nil)
 	reload := func() ([]fixture.Fixture, error) {
 		return nil, nil
 	}

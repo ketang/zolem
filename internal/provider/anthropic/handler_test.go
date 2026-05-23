@@ -44,7 +44,7 @@ func newHandlerWithGenerator(t *testing.T, generator testGenerator) *anthropic.H
 	t.Helper()
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)
-	matcher := fixture.NewMatcher(runner, nil)
+	matcher := fixture.NewMatcher(runner, nil, nil)
 	lorem := response.NewLoremGenerator()
 	validator := specs.NewValidator()
 	return anthropic.NewHandler(validator, matcher, lorem, generator, nil)
@@ -206,7 +206,7 @@ func (g *stubChatGenerator) Streaming(_ context.Context, _ string, _ []ollama.Ch
 func TestMessages_OllamaBackend_NonStreaming(t *testing.T) {
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)
-	matcher := fixture.NewMatcher(runner, nil)
+	matcher := fixture.NewMatcher(runner, nil, nil)
 	lorem := response.NewLoremGenerator()
 	validator := specs.NewValidator()
 	chat := &stubChatGenerator{text: "Ollama says hello"}
@@ -242,7 +242,7 @@ func TestMessages_OllamaBackend_NonStreaming(t *testing.T) {
 func TestMessages_OllamaBackend_Error(t *testing.T) {
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)
-	matcher := fixture.NewMatcher(runner, nil)
+	matcher := fixture.NewMatcher(runner, nil, nil)
 	lorem := response.NewLoremGenerator()
 	validator := specs.NewValidator()
 	chat := &stubChatGenerator{err: errors.New("connection refused")}
@@ -274,7 +274,7 @@ func TestMessages_OllamaBackend_Error(t *testing.T) {
 func TestMessages_OllamaBackend_Streaming(t *testing.T) {
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)
-	matcher := fixture.NewMatcher(runner, nil)
+	matcher := fixture.NewMatcher(runner, nil, nil)
 	lorem := response.NewLoremGenerator()
 	validator := specs.NewValidator()
 	chat := &stubChatGenerator{text: "Hello world"}

@@ -91,7 +91,7 @@ func mustCompileWASM(t *testing.T, r *fixture.Runner, wasm []byte) *fixture.Comp
 
 func TestLoader_MissingFixtureDirectory(t *testing.T) {
 	l := fixture.NewLoader(filepath.Join(t.TempDir(), "missing-fixtures"))
-	_, err := l.Load()
+	_, _, err := l.Load()
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -117,7 +117,7 @@ stream: false
 	})
 
 	l := fixture.NewLoader(root)
-	_, err := l.Load()
+	_, _, err := l.Load()
 	if err == nil {
 		t.Fatal("expected loader error")
 	}
@@ -152,7 +152,7 @@ status: 503
 		response: `{"id":"explicit-status"}`,
 	})
 
-	fixtures, err := fixture.NewLoader(root).Load()
+	fixtures, _, err := fixture.NewLoader(root).Load()
 	if err != nil {
 		t.Fatalf("load fixtures: %v", err)
 	}
@@ -180,7 +180,7 @@ stream: false
 `,
 	})
 
-	_, err := fixture.NewLoader(root).Load()
+	_, _, err := fixture.NewLoader(root).Load()
 	if err == nil {
 		t.Fatal("expected loader error")
 	}
@@ -206,7 +206,7 @@ template_seed: 123
 		templateResponse: `{"id": {{ json .Fixture.ID }}, "request_sequence": {{ json .Sequence.ProfileRequest }}}`,
 	})
 
-	fixtures, err := fixture.NewLoader(root).Load()
+	fixtures, _, err := fixture.NewLoader(root).Load()
 	if err != nil {
 		t.Fatalf("load fixtures: %v", err)
 	}
@@ -243,7 +243,7 @@ version: v1
 		templateResponse: `{"id": {{ json .Fixture.ID }}}`,
 	})
 
-	_, err := fixture.NewLoader(root).Load()
+	_, _, err := fixture.NewLoader(root).Load()
 	if err == nil {
 		t.Fatal("expected loader error")
 	}
@@ -265,7 +265,7 @@ match:
 		response: `{"id":"invalid-cel"}`,
 	})
 
-	_, err := fixture.NewLoader(root).Load()
+	_, _, err := fixture.NewLoader(root).Load()
 	if err == nil {
 		t.Fatal("expected loader error")
 	}
@@ -287,7 +287,7 @@ match:
 		response: `{"id":"non-bool-cel"}`,
 	})
 
-	_, err := fixture.NewLoader(root).Load()
+	_, _, err := fixture.NewLoader(root).Load()
 	if err == nil {
 		t.Fatal("expected loader error")
 	}
@@ -310,7 +310,7 @@ match:
 		wasm:     alwaysMatchWASM,
 	})
 
-	_, err := fixture.NewLoader(root).Load()
+	_, _, err := fixture.NewLoader(root).Load()
 	if err == nil {
 		t.Fatal("expected loader error")
 	}
@@ -333,7 +333,7 @@ match:
 		response: `{"id":"negative-score"}`,
 	})
 
-	_, err := fixture.NewLoader(root).Load()
+	_, _, err := fixture.NewLoader(root).Load()
 	if err == nil {
 		t.Fatal("expected loader error")
 	}
@@ -413,7 +413,7 @@ func TestMatcher_SkipsMissingModules(t *testing.T) {
 	m := fixture.NewMatcher(r, []fixture.Fixture{
 		{ID: "missing-module", Provider: "anthropic", Version: "v1", Status: 200, ResponseBody: []byte(`{"id":"missing-module"}`)},
 		{ID: "good", Provider: "anthropic", Version: "v1", Status: 200, ResponseBody: []byte(`{"id":"good"}`), Module: goodMod},
-	})
+	}, nil)
 
 	got, err := m.Match(context.Background(), fixture.MatchRequest{Provider: "anthropic", Version: "v1", Labels: map[string]string{}, Body: []byte(`{}`)})
 	if err != nil {
@@ -435,7 +435,7 @@ func TestMatcher_SkipsScoringErrors(t *testing.T) {
 	m := fixture.NewMatcher(r, []fixture.Fixture{
 		{ID: "bad", Provider: "anthropic", Version: "v1", Status: 200, ResponseBody: []byte(`{"id":"bad"}`), Module: badMod},
 		{ID: "good", Provider: "anthropic", Version: "v1", Status: 200, ResponseBody: []byte(`{"id":"good"}`), Module: goodMod},
-	})
+	}, nil)
 
 	got, err := m.Match(context.Background(), fixture.MatchRequest{Provider: "anthropic", Version: "v1", Labels: map[string]string{}, Body: []byte(`{}`)})
 	if err != nil {
@@ -457,7 +457,7 @@ func TestMatcher_TieBreaksByOrder(t *testing.T) {
 	m := fixture.NewMatcher(r, []fixture.Fixture{
 		{ID: "first", Provider: "anthropic", Version: "v1", Status: 200, ResponseBody: []byte(`{"id":"first"}`), Module: firstMod},
 		{ID: "second", Provider: "anthropic", Version: "v1", Status: 200, ResponseBody: []byte(`{"id":"second"}`), Module: secondMod},
-	})
+	}, nil)
 
 	got, err := m.Match(context.Background(), fixture.MatchRequest{Provider: "anthropic", Version: "v1", Labels: map[string]string{}, Body: []byte(`{}`)})
 	if err != nil {
