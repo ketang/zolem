@@ -59,10 +59,11 @@ type localServer interface {
 }
 
 type managedLocalListener struct {
-	runtime runtimecfg.ListenerRuntime
-	app     *startupApp
-	server  localServer
-	baseURL string
+	runtime  runtimecfg.ListenerRuntime
+	app      *startupApp
+	server   localServer
+	baseURL  string
+	recorder Recorder
 }
 
 type localControlPlane struct {
@@ -123,6 +124,9 @@ func (c *localControlPlane) Close() error {
 			errs = append(errs, fmt.Errorf("close listener %s: %w", name, err))
 		}
 		listener.app.close()
+		if listener.recorder != nil {
+			listener.recorder.Close()
+		}
 		delete(c.listeners, name)
 		_ = c.store.DeleteListener(name)
 	}
@@ -190,7 +194,8 @@ func (c *localControlPlane) UpsertListener(name string, payload localListenerPay
 		Profile: profile,
 	}
 
-	app, warnings, err := buildLocalStartupAppForRuntime(runtime, c.fixturesDir, c.counters, c.deps)
+	recorder := newInMemoryRecorder(name)
+	app, warnings, err := buildLocalStartupAppForRuntime(runtime, c.fixturesDir, c.counters, recorder, DefaultRecordCaps(), c.deps)
 	if err != nil {
 		return localListenerView{}, warnings, err
 	}
@@ -199,6 +204,9 @@ func (c *localControlPlane) UpsertListener(name string, payload localListenerPay
 	if existing, ok := c.listeners[name]; ok {
 		_ = existing.server.Close()
 		existing.app.close()
+		if existing.recorder != nil {
+			existing.recorder.Close()
+		}
 		delete(c.listeners, name)
 		_ = c.store.DeleteListener(name)
 	}
@@ -236,10 +244,11 @@ func (c *localControlPlane) UpsertListener(name string, payload localListenerPay
 		return localListenerView{}, warnings, err
 	}
 	c.listeners[name] = &managedLocalListener{
-		runtime: actualRuntime,
-		app:     app,
-		server:  server,
-		baseURL: view.BaseURL,
+		runtime:  actualRuntime,
+		app:      app,
+		server:   server,
+		baseURL:  view.BaseURL,
+		recorder: recorder,
 	}
 
 	return view, warnings, nil
@@ -278,6 +287,9 @@ func (c *localControlPlane) DeleteListener(name string) error {
 		return err
 	}
 	entry.app.close()
+	if entry.recorder != nil {
+		entry.recorder.Close()
+	}
 	delete(c.listeners, name)
 	return c.store.DeleteListener(name)
 }
