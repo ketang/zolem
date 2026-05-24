@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  packages: write
+  id-token: write
 
 jobs:
   nightly:
@@ -23,62 +25,29 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Compute nightly metadata
-        id: meta
-        run: |
-          stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-          echo "stamp=$stamp" >> "$GITHUB_OUTPUT"
-          echo "asset_name=zolem-linux-amd64-$stamp" >> "$GITHUB_OUTPUT"
-          echo "release_name=Nightly $(date -u +'%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Build linux-amd64 binary
-        run: |
-          mkdir -p dist
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "dist/${{ steps.meta.outputs.asset_name }}" ./cmd/zolem
-
-      - name: Delete nightly assets older than 7 days
-        uses: actions/github-script@v7
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
         with:
-          script: |
-            const cutoffMs = 7 * 24 * 60 * 60 * 1000;
-            const cutoff = Date.now() - cutoffMs;
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-            let release;
-            try {
-              const response = await github.rest.repos.getReleaseByTag({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag: "nightly",
-              });
-              release = response.data;
-            } catch (error) {
-              if (error.status === 404) {
-                core.info("nightly release does not exist yet; skipping cleanup");
-                return;
-              }
-              throw error;
-            }
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
 
-            for (const asset of release.assets) {
-              const createdAt = new Date(asset.created_at).getTime();
-              if (Number.isNaN(createdAt) || createdAt >= cutoff) {
-                core.info(`keeping asset ${asset.name}`);
-                continue;
-              }
+      - name: Force-update nightly tag
+        run: |
+          git tag -f nightly
+          git push -f origin nightly
 
-              core.info(`deleting asset ${asset.name} from ${asset.created_at}`);
-              await github.rest.repos.deleteReleaseAsset({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                asset_id: asset.id,
-              });
-            }
-
-      - name: Publish nightly prerelease
-        uses: softprops/action-gh-release@v2
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
         with:
-          tag_name: nightly
-          name: ${{ steps.meta.outputs.release_name }}
-          prerelease: true
-          make_latest: false
-          files: dist/${{ steps.meta.outputs.asset_name }}
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: nightly
