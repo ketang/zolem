@@ -30,16 +30,43 @@ type fixturesYAML struct {
 }
 
 type fixturesYAMLEntryIn struct {
-	Expression string `yaml:"expression"`
-	Fixture    string `yaml:"fixture"`
+	Expression string         `yaml:"expression"`
+	Fixture    string         `yaml:"fixture"`
+	Sequence   *sequenceBlock `yaml:"sequence"`
+}
+
+type sequenceBlock struct {
+	ID        string   `yaml:"id"`
+	OnExhaust string   `yaml:"on_exhaust"`
+	Steps     []string `yaml:"steps"`
 }
 
 type Loader struct {
-	dir string
+	dir       string
+	counters  *SequenceCounters
+	namespace string
 }
 
 func NewLoader(dir string) *Loader {
 	return &Loader{dir: dir}
+}
+
+// WithSequenceCounters injects the shared per-listener counter store used by
+// fixturesYAMLSelector for sequence entries. If counters is nil, sequence
+// entries that match will get a private counter that resets each Load — fine
+// for unit tests but not for production listeners.
+func (l *Loader) WithSequenceCounters(c *SequenceCounters) *Loader {
+	l.counters = c
+	return l
+}
+
+// WithNamespace sets the namespace discriminator used in sequence counter
+// keys. When unset, the namespace is derived from the fixtures.yaml document
+// header (provider+":"+version). Override for callers that load several
+// fixture directories sharing the same provider/version header.
+func (l *Loader) WithNamespace(ns string) *Loader {
+	l.namespace = ns
+	return l
 }
 
 // Load reads all fixture subdirectories. Each subdirectory must contain
@@ -82,7 +109,7 @@ func (l *Loader) Load() ([]Fixture, Selector, error) {
 	}
 
 	if hasYAML {
-		selector, err := loadFixturesYAML(yamlPath, fixtures)
+		selector, err := l.loadFixturesYAML(yamlPath, fixtures)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -91,7 +118,7 @@ func (l *Loader) Load() ([]Fixture, Selector, error) {
 	return fixtures, legacy, nil
 }
 
-func loadFixturesYAML(path string, fixtures []Fixture) (Selector, error) {
+func (l *Loader) loadFixturesYAML(path string, fixtures []Fixture) (Selector, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read fixtures.yaml: %w", err)
@@ -104,22 +131,65 @@ func loadFixturesYAML(path string, fixtures []Fixture) (Selector, error) {
 	for _, f := range fixtures {
 		known[f.ID] = struct{}{}
 	}
-	sel := &fixturesYAMLSelector{}
+	sel := &fixturesYAMLSelector{
+		counters:  l.counters,
+		namespace: l.namespace,
+	}
+	if sel.namespace == "" {
+		sel.namespace = doc.Provider + ":" + doc.Version
+	}
 	for i, entry := range doc.Fixtures {
 		if entry.Expression == "" {
 			return nil, fmt.Errorf("fixtures.yaml entry %d: missing expression", i)
 		}
-		if entry.Fixture == "" {
-			return nil, fmt.Errorf("fixtures.yaml entry %d: missing fixture", i)
+		hasFixture := entry.Fixture != ""
+		hasSequence := entry.Sequence != nil
+		if hasFixture && hasSequence {
+			return nil, fmt.Errorf("fixtures.yaml entry %d: fixture and sequence are mutually exclusive", i)
 		}
-		if _, ok := known[entry.Fixture]; !ok {
-			return nil, fmt.Errorf("fixtures.yaml entry %d references unknown fixture %q", i, entry.Fixture)
+		if !hasFixture && !hasSequence {
+			return nil, fmt.Errorf("fixtures.yaml entry %d: missing fixture or sequence", i)
 		}
 		m, err := CompileCELMatcher(entry.Expression, 1)
 		if err != nil {
-			return nil, fmt.Errorf("fixtures.yaml entry %d (%s): %w", i, entry.Fixture, err)
+			label := entry.Fixture
+			if label == "" && entry.Sequence != nil {
+				label = entry.Sequence.ID
+			}
+			return nil, fmt.Errorf("fixtures.yaml entry %d (%s): %w", i, label, err)
 		}
-		sel.entries = append(sel.entries, fixturesYAMLEntry{matcher: m, fixtureID: entry.Fixture})
+		if hasFixture {
+			if _, ok := known[entry.Fixture]; !ok {
+				return nil, fmt.Errorf("fixtures.yaml entry %d references unknown fixture %q", i, entry.Fixture)
+			}
+			sel.entries = append(sel.entries, fixturesYAMLEntry{matcher: m, fixtureID: entry.Fixture})
+			continue
+		}
+		// Sequence entry.
+		seq := entry.Sequence
+		if seq.ID == "" {
+			return nil, fmt.Errorf("fixtures.yaml entry %d: sequence is missing id", i)
+		}
+		if len(seq.Steps) == 0 {
+			return nil, fmt.Errorf("fixtures.yaml entry %d (sequence %q): steps is empty", i, seq.ID)
+		}
+		action, err := ParseExhaustAction(seq.OnExhaust)
+		if err != nil {
+			return nil, fmt.Errorf("fixtures.yaml entry %d (sequence %q): %w", i, seq.ID, err)
+		}
+		for j, stepID := range seq.Steps {
+			if _, ok := known[stepID]; !ok {
+				return nil, fmt.Errorf("fixtures.yaml entry %d (sequence %q): step %d references unknown fixture %q", i, seq.ID, j, stepID)
+			}
+		}
+		sel.entries = append(sel.entries, fixturesYAMLEntry{
+			matcher: m,
+			sequence: &sequenceEntry{
+				id:        seq.ID,
+				onExhaust: action,
+				steps:     append([]string(nil), seq.Steps...),
+			},
+		})
 	}
 	return sel, nil
 }
