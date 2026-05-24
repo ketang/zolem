@@ -253,9 +253,11 @@ func runProfiles(ctx context.Context, client adminClient, opts rootOptions, args
 
 func runListeners(ctx context.Context, client adminClient, opts rootOptions, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("listeners requires list, create, or delete")
+		return errors.New("listeners requires list, create, delete, or calls")
 	}
 	switch args[0] {
+	case "calls":
+		return runListenerCalls(ctx, client, opts, args[1:], stdout, stderr)
 	case "list":
 		var listeners []localListenerView
 		if err := client.getJSON(ctx, "/_zolem/listeners", &listeners); err != nil {
@@ -314,6 +316,132 @@ func runListeners(ctx context.Context, client adminClient, opts rootOptions, arg
 	default:
 		return fmt.Errorf("unknown listeners command %q", args[0])
 	}
+}
+
+func runListenerCalls(ctx context.Context, client adminClient, opts rootOptions, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("calls requires list or clear")
+	}
+	switch args[0] {
+	case "list":
+		return runListenerCallsList(ctx, client, opts, args[1:], stdout, stderr)
+	case "clear":
+		return runListenerCallsClear(ctx, client, opts, args[1:], stdout, stderr)
+	default:
+		return fmt.Errorf("unknown calls command %q", args[0])
+	}
+}
+
+type recordedCallView struct {
+	CallID     int64  `json:"call_id"`
+	ReceivedAt string `json:"received_at"`
+	LatencyMS  int64  `json:"latency_ms"`
+	Request    struct {
+		Method string `json:"method"`
+		Path   string `json:"path"`
+	} `json:"request"`
+	Response struct {
+		Status int             `json:"status"`
+		Stream json.RawMessage `json:"stream"`
+	} `json:"response"`
+}
+
+func runListenerCallsList(ctx context.Context, client adminClient, opts rootOptions, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("zolemc listeners calls list", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var since int64
+	fs.Int64Var(&since, "since", 0, "only show calls with call_id greater than this id")
+	name, flagArgs := splitOptionalLeadingName(args)
+	if err := fs.Parse(flagArgs); err != nil {
+		return err
+	}
+	if name == "" && fs.NArg() == 1 {
+		name = fs.Arg(0)
+	}
+	if name == "" || fs.NArg() > 1 {
+		return errors.New("calls list requires exactly one listener name")
+	}
+
+	var raw json.RawMessage
+	if err := client.getJSON(ctx, "/_zolem/listeners/"+url.PathEscape(name)+"/calls", &raw); err != nil {
+		return err
+	}
+	var envelope struct {
+		Calls []recordedCallView `json:"calls"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return fmt.Errorf("decode calls response: %w", err)
+	}
+
+	filtered := envelope.Calls
+	if since > 0 {
+		kept := make([]recordedCallView, 0, len(filtered))
+		for _, c := range filtered {
+			if c.CallID > since {
+				kept = append(kept, c)
+			}
+		}
+		filtered = kept
+	}
+
+	if opts.json {
+		if since > 0 {
+			return writeJSONObject(stdout, map[string]any{"calls": filtered})
+		}
+		// Pass through unmodified bytes when no client-side filter applied.
+		if len(raw) == 0 || raw[len(raw)-1] != '\n' {
+			if _, err := stdout.Write(raw); err != nil {
+				return err
+			}
+			_, err := fmt.Fprintln(stdout)
+			return err
+		}
+		_, err := stdout.Write(raw)
+		return err
+	}
+
+	if len(filtered) == 0 {
+		fmt.Fprintln(stdout, "no calls")
+		return nil
+	}
+
+	fmt.Fprintf(stdout, "%-4s %-7s %-26s %-7s %-10s %s\n", "ID", "METHOD", "PATH", "STATUS", "LATENCY_MS", "RECEIVED_AT")
+	for _, c := range filtered {
+		status := fmt.Sprintf("%d", c.Response.Status)
+		if len(c.Response.Stream) > 0 && string(c.Response.Stream) != "null" {
+			status = "~" + status
+		}
+		fmt.Fprintf(stdout, "%-4d %-7s %-26s %-7s %-10d %s\n",
+			c.CallID, c.Request.Method, c.Request.Path, status, c.LatencyMS, c.ReceivedAt)
+	}
+	return nil
+}
+
+func runListenerCallsClear(ctx context.Context, client adminClient, opts rootOptions, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("zolemc listeners calls clear", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	name, flagArgs := splitOptionalLeadingName(args)
+	if err := fs.Parse(flagArgs); err != nil {
+		return err
+	}
+	if name == "" && fs.NArg() == 1 {
+		name = fs.Arg(0)
+	}
+	if name == "" || fs.NArg() > 1 {
+		return errors.New("calls clear requires exactly one listener name")
+	}
+
+	var resp struct {
+		Cleared int `json:"cleared"`
+	}
+	if err := client.doJSON(ctx, http.MethodDelete, "/_zolem/listeners/"+url.PathEscape(name)+"/calls", nil, &resp); err != nil {
+		return err
+	}
+	if opts.json {
+		return writeJSONObject(stdout, map[string]int{"cleared": resp.Cleared})
+	}
+	fmt.Fprintf(stdout, "Cleared %d calls from listener %s.\n", resp.Cleared, name)
+	return nil
 }
 
 func runListener(ctx context.Context, opts rootOptions, args []string, stdout, stderr io.Writer) error {
@@ -572,6 +700,8 @@ Commands:
   listeners list
   listeners create <name> -provider openai|anthropic|gemini -profile <name> [-addr 127.0.0.1:0] [-tls]
   listeners delete <name>
+  listeners calls list <name> [-since <id>]
+  listeners calls clear <name>
   listener health
   listener state
   request -method POST -path /v1/chat/completions [-H 'Name: value'] [-json-body JSON|-body-file PATH]`)
