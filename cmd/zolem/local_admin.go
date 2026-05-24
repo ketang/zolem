@@ -37,20 +37,26 @@ type localProfilePayload struct {
 }
 
 type localListenerPayload struct {
-	Addr     string `json:"addr"`
-	Provider string `json:"provider"`
-	Profile  string `json:"profile"`
-	TLS      bool   `json:"tls,omitempty"`
+	Addr                       string `json:"addr"`
+	Provider                   string `json:"provider"`
+	Profile                    string `json:"profile"`
+	TLS                        bool   `json:"tls,omitempty"`
+	RecordRequestBodyCapBytes  *int   `json:"record_request_body_cap_bytes,omitempty"`
+	RecordResponseBodyCapBytes *int   `json:"record_response_body_cap_bytes,omitempty"`
+	RecordStreamEventCap       *int   `json:"record_stream_event_cap,omitempty"`
 }
 
 type localListenerView struct {
-	Name     string `json:"name"`
-	Addr     string `json:"addr"`
-	Provider string `json:"provider"`
-	Profile  string `json:"profile"`
-	Backend  string `json:"backend"`
-	TLS      bool   `json:"tls,omitempty"`
-	BaseURL  string `json:"base_url"`
+	Name                       string `json:"name"`
+	Addr                       string `json:"addr"`
+	Provider                   string `json:"provider"`
+	Profile                    string `json:"profile"`
+	Backend                    string `json:"backend"`
+	TLS                        bool   `json:"tls,omitempty"`
+	BaseURL                    string `json:"base_url"`
+	RecordRequestBodyCapBytes  int    `json:"record_request_body_cap_bytes"`
+	RecordResponseBodyCapBytes int    `json:"record_response_body_cap_bytes"`
+	RecordStreamEventCap       int    `json:"record_stream_event_cap"`
 }
 
 type localServer interface {
@@ -64,6 +70,7 @@ type managedLocalListener struct {
 	server   localServer
 	baseURL  string
 	recorder Recorder
+	caps     RecordCaps
 }
 
 type localControlPlane struct {
@@ -194,8 +201,28 @@ func (c *localControlPlane) UpsertListener(name string, payload localListenerPay
 		Profile: profile,
 	}
 
+	caps := DefaultRecordCaps()
+	if payload.RecordRequestBodyCapBytes != nil {
+		if *payload.RecordRequestBodyCapBytes <= 0 {
+			return localListenerView{}, nil, errors.New("record_request_body_cap_bytes must be positive")
+		}
+		caps.RequestBodyCapBytes = *payload.RecordRequestBodyCapBytes
+	}
+	if payload.RecordResponseBodyCapBytes != nil {
+		if *payload.RecordResponseBodyCapBytes <= 0 {
+			return localListenerView{}, nil, errors.New("record_response_body_cap_bytes must be positive")
+		}
+		caps.ResponseBodyCapBytes = *payload.RecordResponseBodyCapBytes
+	}
+	if payload.RecordStreamEventCap != nil {
+		if *payload.RecordStreamEventCap <= 0 {
+			return localListenerView{}, nil, errors.New("record_stream_event_cap must be positive")
+		}
+		caps.StreamEventCap = *payload.RecordStreamEventCap
+	}
+
 	recorder := newInMemoryRecorder(name)
-	app, warnings, err := buildLocalStartupAppForRuntime(runtime, c.fixturesDir, c.counters, recorder, DefaultRecordCaps(), c.deps)
+	app, warnings, err := buildLocalStartupAppForRuntime(runtime, c.fixturesDir, c.counters, recorder, caps, c.deps)
 	if err != nil {
 		return localListenerView{}, warnings, err
 	}
@@ -226,13 +253,16 @@ func (c *localControlPlane) UpsertListener(name string, payload localListenerPay
 	}
 
 	view := localListenerView{
-		Name:     actualSpec.Name,
-		Addr:     actualSpec.Addr,
-		Provider: actualSpec.Provider,
-		Profile:  actualSpec.Profile,
-		Backend:  profile.Backend,
-		TLS:      actualSpec.TLS,
-		BaseURL:  localBaseURL(actualSpec),
+		Name:                       actualSpec.Name,
+		Addr:                       actualSpec.Addr,
+		Provider:                   actualSpec.Provider,
+		Profile:                    actualSpec.Profile,
+		Backend:                    profile.Backend,
+		TLS:                        actualSpec.TLS,
+		BaseURL:                    localBaseURL(actualSpec),
+		RecordRequestBodyCapBytes:  caps.RequestBodyCapBytes,
+		RecordResponseBodyCapBytes: caps.ResponseBodyCapBytes,
+		RecordStreamEventCap:       caps.StreamEventCap,
 	}
 
 	c.mu.Lock()
@@ -249,6 +279,7 @@ func (c *localControlPlane) UpsertListener(name string, payload localListenerPay
 		server:   server,
 		baseURL:  view.BaseURL,
 		recorder: recorder,
+		caps:     caps,
 	}
 
 	return view, warnings, nil
@@ -263,13 +294,16 @@ func (c *localControlPlane) ListListeners() []localListenerView {
 	for _, spec := range specs {
 		entry := c.listeners[spec.Name]
 		out = append(out, localListenerView{
-			Name:     spec.Name,
-			Addr:     spec.Addr,
-			Provider: spec.Provider,
-			Profile:  spec.Profile,
-			Backend:  entry.runtime.Profile.Backend,
-			TLS:      spec.TLS,
-			BaseURL:  entry.baseURL,
+			Name:                       spec.Name,
+			Addr:                       spec.Addr,
+			Provider:                   spec.Provider,
+			Profile:                    spec.Profile,
+			Backend:                    entry.runtime.Profile.Backend,
+			TLS:                        spec.TLS,
+			BaseURL:                    entry.baseURL,
+			RecordRequestBodyCapBytes:  entry.caps.RequestBodyCapBytes,
+			RecordResponseBodyCapBytes: entry.caps.ResponseBodyCapBytes,
+			RecordStreamEventCap:       entry.caps.StreamEventCap,
 		})
 	}
 	return out
@@ -294,6 +328,32 @@ func (c *localControlPlane) DeleteListener(name string) error {
 	return c.store.DeleteListener(name)
 }
 
+func (c *localControlPlane) ListCalls(name string) ([]RecordedCall, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.listeners[name]
+	if !ok {
+		return nil, runtimecfg.ErrListenerNotFound
+	}
+	if entry.recorder == nil {
+		return []RecordedCall{}, nil
+	}
+	return entry.recorder.List(), nil
+}
+
+func (c *localControlPlane) ClearCalls(name string) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.listeners[name]
+	if !ok {
+		return 0, runtimecfg.ErrListenerNotFound
+	}
+	if entry.recorder == nil {
+		return 0, nil
+	}
+	return entry.recorder.Clear(), nil
+}
+
 func buildLocalAdminHandler(control *localControlPlane) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch {
@@ -309,6 +369,10 @@ func buildLocalAdminHandler(control *localControlPlane) http.Handler {
 		case strings.HasPrefix(req.URL.Path, "/_zolem/profiles/"):
 			handleProfileResource(w, req, control)
 			return
+		case strings.HasPrefix(req.URL.Path, "/_zolem/listeners/") &&
+			strings.HasSuffix(req.URL.Path, "/calls"):
+			handleListenerCalls(w, req, control)
+			return
 		case strings.HasPrefix(req.URL.Path, "/_zolem/listeners/"):
 			handleListenerResource(w, req, control)
 			return
@@ -316,6 +380,46 @@ func buildLocalAdminHandler(control *localControlPlane) http.Handler {
 			http.NotFound(w, req)
 		}
 	})
+}
+
+func handleListenerCalls(w http.ResponseWriter, req *http.Request, control *localControlPlane) {
+	rest := strings.TrimPrefix(req.URL.Path, "/_zolem/listeners/")
+	name := strings.TrimSuffix(rest, "/calls")
+	if name == "" || strings.Contains(name, "/") {
+		http.NotFound(w, req)
+		return
+	}
+
+	switch req.Method {
+	case http.MethodGet:
+		calls, err := control.ListCalls(name)
+		if err != nil {
+			if errors.Is(err, runtimecfg.ErrListenerNotFound) {
+				writeAdminError(w, http.StatusNotFound, err.Error())
+				return
+			}
+			writeAdminError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if calls == nil {
+			calls = []RecordedCall{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"calls": calls})
+	case http.MethodDelete:
+		cleared, err := control.ClearCalls(name)
+		if err != nil {
+			if errors.Is(err, runtimecfg.ErrListenerNotFound) {
+				writeAdminError(w, http.StatusNotFound, err.Error())
+				return
+			}
+			writeAdminError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"cleared": cleared})
+	default:
+		w.Header().Set("Allow", "GET, DELETE")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func handleProfileResource(w http.ResponseWriter, req *http.Request, control *localControlPlane) {
