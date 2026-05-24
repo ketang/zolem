@@ -14,8 +14,9 @@ type Fixture struct {
 	Templated    bool
 	TemplateSeed *uint64
 	templateBody *template.Template
-	WASMPath     string          // path to match.wasm; empty if not yet loaded
-	Module       *CompiledModule // nil if no match.wasm present
+	WASMPath     string            // path to match.wasm; empty if not yet loaded
+	Module       *CompiledModule   // nil if no match.wasm present
+	Tags         map[string]string // arbitrary tags from meta.yaml; empty (never nil) after Load
 }
 
 // SetResponseTemplate parses and stores the fixture response template.
