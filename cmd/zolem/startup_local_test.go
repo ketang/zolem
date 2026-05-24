@@ -80,6 +80,111 @@ func TestBuildLocalStartupAppForRuntime_FixtureNamespace(t *testing.T) {
 	}
 }
 
+func TestBuildLocalStartupAppForRuntime_DeprecationWarnings(t *testing.T) {
+	fixturesDir := t.TempDir()
+	// Fixture with match.wasm only (per-fixture WASM matcher).
+	writeLocalFixture(t, filepath.Join(fixturesDir, "team-a"), "wasm-only", "anthropic", "v1", []byte(`{"id":"wasm-only","type":"message","role":"assistant","content":[{"type":"text","text":"x"}],"model":"claude-3-5-sonnet-20241022","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2}}`), localAlwaysMatchWASM)
+	// Fixture with match.cel only.
+	celDir := filepath.Join(fixturesDir, "team-a", "cel-only")
+	if err := os.MkdirAll(celDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	celMeta := []byte("id: cel-only\nprovider: anthropic\nversion: v1\nstatus: 200\nmatch:\n  cel: 'true'\n")
+	if err := os.WriteFile(filepath.Join(celDir, "meta.yaml"), celMeta, 0o644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(celDir, "response.json"), []byte(`{"id":"cel-only","type":"message","role":"assistant","content":[{"type":"text","text":"y"}],"model":"claude-3-5-sonnet-20241022","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2}}`), 0o644); err != nil {
+		t.Fatalf("write body: %v", err)
+	}
+
+	app, warnings, err := buildLocalStartupAppForRuntime(runtimecfg.ListenerRuntime{
+		Spec: runtimecfg.ListenerSpec{
+			Name:     "anthropic-demo",
+			Addr:     "127.0.0.1:12001",
+			Provider: "anthropic",
+			Profile:  "demo",
+		},
+		Profile: runtimecfg.RuntimeProfile{
+			Name:             "demo",
+			Backend:          runtimecfg.BackendFixture,
+			FixtureNamespace: "team-a",
+		},
+	}, fixturesDir, runtimecfg.NewProfileCounters(), nil, RecordCaps{}, startupDeps{
+		newFetcher: disabledTestFetcher,
+	})
+	if err != nil {
+		t.Fatalf("buildLocalStartupAppForRuntime: %v", err)
+	}
+	defer app.close()
+
+	joined := strings.Join(warnings, "\n")
+	if !strings.Contains(joined, `fixture "cel-only": match.cel is deprecated`) {
+		t.Errorf("expected match.cel deprecation warning, got: %v", warnings)
+	}
+	if !strings.Contains(joined, `fixture "wasm-only": match.wasm is deprecated`) {
+		t.Errorf("expected match.wasm deprecation warning, got: %v", warnings)
+	}
+	if !strings.Contains(joined, "docs/local-runtime.md") {
+		t.Errorf("warning should reference docs/local-runtime.md, got: %v", warnings)
+	}
+
+	// Fixture still serves.
+	req := httptestRequest(http.MethodPost, "/v1/messages", bytes.NewBufferString(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("x-api-key", "test-key")
+	resp := doRequest(t, app.handler, req)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestBuildLocalStartupAppForRuntime_NoDeprecationWithFixturesYAML(t *testing.T) {
+	fixturesDir := t.TempDir()
+	nsDir := filepath.Join(fixturesDir, "team-a")
+	// Fixture with no per-fixture matcher (namespace has fixtures.yaml).
+	dir := filepath.Join(nsDir, "plain")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	meta := []byte("id: plain\nprovider: anthropic\nversion: v1\nstatus: 200\n")
+	if err := os.WriteFile(filepath.Join(dir, "meta.yaml"), meta, 0o644); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "response.json"), []byte(`{"id":"plain","type":"message","role":"assistant","content":[{"type":"text","text":"z"}],"model":"claude-3-5-sonnet-20241022","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2}}`), 0o644); err != nil {
+		t.Fatalf("write body: %v", err)
+	}
+	yaml := []byte("provider: anthropic\nversion: v1\nfixtures:\n  - expression: 'true'\n    fixture: plain\n")
+	if err := os.WriteFile(filepath.Join(nsDir, "fixtures.yaml"), yaml, 0o644); err != nil {
+		t.Fatalf("write fixtures.yaml: %v", err)
+	}
+
+	app, warnings, err := buildLocalStartupAppForRuntime(runtimecfg.ListenerRuntime{
+		Spec: runtimecfg.ListenerSpec{
+			Name:     "anthropic-demo",
+			Addr:     "127.0.0.1:12001",
+			Provider: "anthropic",
+			Profile:  "demo",
+		},
+		Profile: runtimecfg.RuntimeProfile{
+			Name:             "demo",
+			Backend:          runtimecfg.BackendFixture,
+			FixtureNamespace: "team-a",
+		},
+	}, fixturesDir, runtimecfg.NewProfileCounters(), nil, RecordCaps{}, startupDeps{
+		newFetcher: disabledTestFetcher,
+	})
+	if err != nil {
+		t.Fatalf("buildLocalStartupAppForRuntime: %v", err)
+	}
+	defer app.close()
+
+	for _, w := range warnings {
+		if strings.Contains(w, "deprecated") {
+			t.Errorf("did not expect deprecation warning, got: %q", w)
+		}
+	}
+}
+
 func TestBuildLocalStartupAppForRuntime_TemplatedFixtureUsesRuntimeAndCounters(t *testing.T) {
 	fixturesDir := t.TempDir()
 	writeLocalTemplateFixture(t, fixturesDir, "openai-template", "openai", "v1", `{
