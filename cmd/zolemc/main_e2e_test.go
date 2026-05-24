@@ -78,6 +78,90 @@ func TestZolemcLocalRuntimeE2E(t *testing.T) {
 	runZolemc(t, repoRoot, "-admin-url", admin.baseURL, "profiles", "delete", "demo")
 }
 
+func TestZolemcCallsE2E(t *testing.T) {
+	repoRoot := repoRoot(t)
+	admin := startLocalAdminService(t, repoRoot)
+	t.Cleanup(admin.Close)
+
+	runZolemc(t, repoRoot, "-admin-url", admin.baseURL, "profiles", "create", "demo", "-backend", "lorem")
+	listener := runZolemc(t, repoRoot, "-json", "-admin-url", admin.baseURL, "listeners", "create", "calls-demo", "-addr", "127.0.0.1:0", "-provider", "openai", "-profile", "demo")
+	var listenerPayload struct {
+		BaseURL string `json:"base_url"`
+	}
+	if err := json.Unmarshal([]byte(listener.stdout), &listenerPayload); err != nil {
+		t.Fatalf("decode listener: %v\n%s", err, listener.stdout)
+	}
+
+	for i := 0; i < 3; i++ {
+		runZolemc(t, repoRoot, "-base-url", listenerPayload.BaseURL, "request", "-method", "POST", "-path", "/v1/chat/completions", "-H", "Authorization: Bearer sk-test", "-json-body", `{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`)
+	}
+
+	t.Run("calls_list_human", func(t *testing.T) {
+		result := runZolemc(t, repoRoot, "-admin-url", admin.baseURL, "listeners", "calls", "list", "calls-demo")
+		out := result.stdout
+		for _, want := range []string{"ID", "METHOD", "PATH", "STATUS"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("human output missing %q:\n%s", want, out)
+			}
+		}
+		if !strings.Contains(out, "POST") || !strings.Contains(out, "/v1/chat/completions") || !strings.Contains(out, "200") {
+			t.Fatalf("human output missing call data:\n%s", out)
+		}
+	})
+
+	t.Run("calls_list_json", func(t *testing.T) {
+		result := runZolemc(t, repoRoot, "-json", "-admin-url", admin.baseURL, "listeners", "calls", "list", "calls-demo")
+		var envelope struct {
+			Calls []struct {
+				CallID int64 `json:"call_id"`
+			} `json:"calls"`
+		}
+		if err := json.Unmarshal([]byte(result.stdout), &envelope); err != nil {
+			t.Fatalf("decode JSON: %v\n%s", err, result.stdout)
+		}
+		if len(envelope.Calls) != 3 {
+			t.Fatalf("expected 3 calls, got %d", len(envelope.Calls))
+		}
+	})
+
+	t.Run("calls_list_since", func(t *testing.T) {
+		result := runZolemc(t, repoRoot, "-json", "-admin-url", admin.baseURL, "listeners", "calls", "list", "calls-demo", "-since", "2")
+		var envelope struct {
+			Calls []struct {
+				CallID int64 `json:"call_id"`
+			} `json:"calls"`
+		}
+		if err := json.Unmarshal([]byte(result.stdout), &envelope); err != nil {
+			t.Fatalf("decode JSON: %v\n%s", err, result.stdout)
+		}
+		if len(envelope.Calls) != 1 || envelope.Calls[0].CallID != 3 {
+			t.Fatalf("-since 2 should return only call_id=3, got %v", envelope.Calls)
+		}
+	})
+
+	t.Run("calls_clear", func(t *testing.T) {
+		result := runZolemc(t, repoRoot, "-admin-url", admin.baseURL, "listeners", "calls", "clear", "calls-demo")
+		if !strings.Contains(result.stdout, "Cleared 3 calls") {
+			t.Fatalf("clear output: %q", result.stdout)
+		}
+	})
+
+	t.Run("calls_clear_json", func(t *testing.T) {
+		runZolemc(t, repoRoot, "-base-url", listenerPayload.BaseURL, "request", "-method", "POST", "-path", "/v1/chat/completions", "-H", "Authorization: Bearer sk-test", "-json-body", `{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`)
+		result := runZolemc(t, repoRoot, "-json", "-admin-url", admin.baseURL, "listeners", "calls", "clear", "calls-demo")
+		if strings.TrimSpace(result.stdout) != `{"cleared":1}` {
+			t.Fatalf("clear -json output: %q", result.stdout)
+		}
+	})
+
+	t.Run("nonexistent_listener", func(t *testing.T) {
+		result := runZolemcFail(t, repoRoot, "-admin-url", admin.baseURL, "listeners", "calls", "list", "no-such-listener")
+		if !strings.Contains(result.stderr, "zolem:") && !strings.Contains(result.stderr, "404") {
+			t.Fatalf("expected zolem: prefixed error or 404, got:\n%s", result.stderr)
+		}
+	})
+}
+
 func TestProfilesCreateSendsWASMFields(t *testing.T) {
 	wasmPath := filepath.Join(t.TempDir(), "generator.wasm")
 	wasmBytes := []byte("test wasm module")
