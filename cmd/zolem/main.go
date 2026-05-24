@@ -14,6 +14,10 @@ func main() {
 	localFixturesDir := flag.String("local-fixtures-dir", "", "fixtures directory for local runtime fixture backend; fixtures may use response.json or response.json.tmpl")
 	localTLSCert := flag.String("local-tls-cert", "", "certificate file for local admin or fixed-listener TLS")
 	localTLSKey := flag.String("local-tls-key", "", "key file for local admin or fixed-listener TLS")
+	localCallsFile := flag.String("local-calls-file", "", "append JSONL records of captured request/response pairs to this file; empty disables recording")
+	localRecordRequestBodyCap := flag.Int("local-record-request-body-cap-bytes", 262144, "maximum bytes of request body to record per call; excess is counted but dropped")
+	localRecordResponseBodyCap := flag.Int("local-record-response-body-cap-bytes", 262144, "maximum bytes of response body to record per call; excess is counted but dropped")
+	localRecordStreamEventCap := flag.Int("local-record-stream-event-cap", 1024, "maximum SSE events to record per streamed response; excess is counted but dropped")
 	flag.Parse()
 
 	if *localAdminAddr != "" {
@@ -41,6 +45,10 @@ func main() {
 				CertFile: *localTLSCert,
 				KeyFile:  *localTLSKey,
 			},
+			CallsFile:                  *localCallsFile,
+			RecordRequestBodyCapBytes:  *localRecordRequestBodyCap,
+			RecordResponseBodyCapBytes: *localRecordResponseBodyCap,
+			RecordStreamEventCap:       *localRecordStreamEventCap,
 		}, startupDeps{}); err != nil {
 			log.Fatal(err)
 		}

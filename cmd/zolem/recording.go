@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -164,6 +167,71 @@ func (r *inMemoryRecorder) Clear() int {
 }
 
 func (r *inMemoryRecorder) Close() {}
+
+// jsonlRecorder appends each completed call as a single JSON object followed
+// by a newline to an open file. It is safe for concurrent use; writes are
+// serialized through a mutex and fsynced before returning to the caller.
+type jsonlRecorder struct {
+	mu   sync.Mutex
+	file *os.File
+	next atomic.Int64
+}
+
+func newJSONLRecorder(path string) (*jsonlRecorder, error) {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("open calls file %q: %w", path, err)
+	}
+	return &jsonlRecorder{file: f}, nil
+}
+
+func (r *jsonlRecorder) NextCallID() int64 {
+	return r.next.Add(1)
+}
+
+func (r *jsonlRecorder) Record(call RecordedCall) {
+	buf, err := json.Marshal(call)
+	if err != nil {
+		return
+	}
+	buf = append(buf, '\n')
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, err := r.file.Write(buf); err != nil {
+		return
+	}
+	_ = r.file.Sync()
+}
+
+func (r *jsonlRecorder) List() []RecordedCall { return nil }
+
+func (r *jsonlRecorder) Clear() int { return 0 }
+
+func (r *jsonlRecorder) Close() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.file != nil {
+		_ = r.file.Close()
+		r.file = nil
+	}
+}
+
+// noopRecorder discards every call. It exists so the recording middleware can
+// be wired unconditionally without branching on whether recording is enabled.
+type noopRecorder struct{}
+
+func (noopRecorder) NextCallID() int64      { return 0 }
+func (noopRecorder) Record(RecordedCall)    {}
+func (noopRecorder) List() []RecordedCall   { return nil }
+func (noopRecorder) Clear() int             { return 0 }
+func (noopRecorder) Close()                 {}
+
+// Compile-time interface assertions.
+var (
+	_ Recorder = (*inMemoryRecorder)(nil)
+	_ Recorder = (*jsonlRecorder)(nil)
+	_ Recorder = noopRecorder{}
+)
 
 // recordingMiddleware wraps an http.Handler so that every request/response is
 // captured into the provided Recorder. The middleware:

@@ -266,6 +266,33 @@ go run ./cmd/zolem \
   -local-fixtures-dir ./testdata/fixtures
 ```
 
+### Call Recording
+
+In fixed-listener mode the runtime can append every captured request/response
+pair to a JSONL file. One JSON object per line; the file is opened with
+`O_APPEND|O_CREATE`, fsynced after each record, and re-opening an existing
+file appends rather than truncates.
+
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `-local-calls-file <path>` | `""` (disabled) | Path to the JSONL file. Empty disables recording. |
+| `-local-record-request-body-cap-bytes <n>` | `262144` | Maximum bytes of request body recorded per call. Excess is counted in `body_truncated_bytes`. |
+| `-local-record-response-body-cap-bytes <n>` | `262144` | Maximum bytes of response body recorded per call. Same truncation semantics. |
+| `-local-record-stream-event-cap <n>` | `1024` | Maximum SSE events recorded per streamed response. Excess is counted in `events_truncated`. |
+
+Example:
+
+```bash
+go run ./cmd/zolem \
+  -local-provider anthropic \
+  -local-addr 127.0.0.1:8080 \
+  -local-calls-file ./zolem-calls.jsonl
+```
+
+Each line is a `RecordedCall` (see `cmd/zolem/recording.go`) with monotonic
+`call_id`, listener identity, timing, request, and response. Caps only bound
+what is recorded — the full request/response is still served to the caller.
+
 Each fixture still needs the normal files under a subdirectory:
 
 - `meta.yaml`
