@@ -1,6 +1,7 @@
 package fixture
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,13 +10,14 @@ import (
 )
 
 type meta struct {
-	ID           string  `yaml:"id"`
-	Provider     string  `yaml:"provider"`
-	Version      string  `yaml:"version"`
-	Stream       bool    `yaml:"stream"`
-	Status       int     `yaml:"status"`
-	TemplateSeed *uint64 `yaml:"template_seed"`
-	Match        match   `yaml:"match"`
+	ID           string            `yaml:"id"`
+	Provider     string            `yaml:"provider"`
+	Version      string            `yaml:"version"`
+	Stream       bool              `yaml:"stream"`
+	Status       int               `yaml:"status"`
+	TemplateSeed *uint64           `yaml:"template_seed"`
+	Match        match             `yaml:"match"`
+	Tags         map[string]string `yaml:"tags"`
 }
 
 type match struct {
@@ -45,6 +47,7 @@ type Loader struct {
 	dir       string
 	counters  *SequenceCounters
 	namespace string
+	runner    *Runner
 }
 
 func NewLoader(dir string) *Loader {
@@ -69,6 +72,14 @@ func (l *Loader) WithNamespace(ns string) *Loader {
 	return l
 }
 
+// WithRunner attaches the WASM runner used to compile selector.wasm. Required
+// when a namespace contains selector.wasm; Load returns a load-time error if
+// selector.wasm is present without a runner.
+func (l *Loader) WithRunner(r *Runner) *Loader {
+	l.runner = r
+	return l
+}
+
 // Load reads all fixture subdirectories. Each subdirectory must contain
 // meta.yaml and response.json. match.wasm is optional. If the namespace
 // root contains fixtures.yaml, a fixturesYAMLSelector is returned and per
@@ -83,6 +94,15 @@ func (l *Loader) Load() ([]Fixture, Selector, error) {
 	hasYAML, err := fileExists(yamlPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("stat fixtures.yaml: %w", err)
+	}
+
+	selectorWASMPath := filepath.Join(l.dir, "selector.wasm")
+	hasSelectorWASM, err := fileExists(selectorWASMPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("stat selector.wasm: %w", err)
+	}
+	if hasYAML && hasSelectorWASM {
+		return nil, nil, fmt.Errorf("namespace %q: selector.wasm and fixtures.yaml are mutually exclusive", l.dir)
 	}
 
 	legacy := &LegacySelector{cel: map[string]*CompiledCELMatcher{}}
@@ -102,6 +122,13 @@ func (l *Loader) Load() ([]Fixture, Selector, error) {
 			if hasWASMFile {
 				return nil, nil, fmt.Errorf("fixture %q: match.wasm is not allowed when fixtures.yaml is present", e.Name())
 			}
+		} else if hasSelectorWASM {
+			if celMatcher != nil {
+				return nil, nil, fmt.Errorf("fixture %q: match.cel is not allowed when selector.wasm is present", e.Name())
+			}
+			if hasWASMFile {
+				return nil, nil, fmt.Errorf("fixture %q: match.wasm is not allowed when selector.wasm is present", e.Name())
+			}
 		} else if celMatcher != nil {
 			legacy.cel[f.ID] = celMatcher
 		}
@@ -115,7 +142,34 @@ func (l *Loader) Load() ([]Fixture, Selector, error) {
 		}
 		return fixtures, selector, nil
 	}
+	if hasSelectorWASM {
+		selector, err := l.loadSelectorWASM(selectorWASMPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		return fixtures, selector, nil
+	}
 	return fixtures, legacy, nil
+}
+
+func (l *Loader) loadSelectorWASM(path string) (Selector, error) {
+	if l.runner == nil {
+		return nil, fmt.Errorf("selector.wasm requires a WASM runner; call Loader.WithRunner")
+	}
+	bytes, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read selector.wasm: %w", err)
+	}
+	ctx := context.Background()
+	mod, err := l.runner.CompileWASM(ctx, bytes)
+	if err != nil {
+		return nil, fmt.Errorf("compile selector.wasm: %w", err)
+	}
+	sel, err := newWASMSelector(ctx, l.runner, mod)
+	if err != nil {
+		return nil, fmt.Errorf("instantiate selector.wasm: %w", err)
+	}
+	return sel, nil
 }
 
 func (l *Loader) loadFixturesYAML(path string, fixtures []Fixture) (Selector, error) {
@@ -239,6 +293,10 @@ func loadOne(dir string) (Fixture, *CompiledCELMatcher, bool, error) {
 		return Fixture{}, nil, false, fmt.Errorf("only one of match.cel or match.wasm is allowed")
 	}
 
+	tags := m.Tags
+	if tags == nil {
+		tags = map[string]string{}
+	}
 	f := Fixture{
 		ID:           m.ID,
 		Provider:     m.Provider,
@@ -247,6 +305,7 @@ func loadOne(dir string) (Fixture, *CompiledCELMatcher, bool, error) {
 		Status:       m.Status,
 		TemplateSeed: m.TemplateSeed,
 		WASMPath:     wasmPath,
+		Tags:         tags,
 	}
 	var celMatcher *CompiledCELMatcher
 	if m.Match.CEL != "" {

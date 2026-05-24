@@ -266,7 +266,7 @@ func loadFixtures(fixturesDir string, listenerRuntime runtimecfg.ListenerRuntime
 		return nil, nil, nil, nil
 	}
 
-	loader := fixture.NewLoader(fixturesDir).WithSequenceCounters(sequenceCounters)
+	loader := fixture.NewLoader(fixturesDir).WithSequenceCounters(sequenceCounters).WithRunner(runner)
 	fixtures, selector, err := loader.Load()
 	if err != nil {
 		return nil, nil, nil, err
