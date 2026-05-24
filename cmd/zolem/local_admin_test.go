@@ -243,6 +243,158 @@ func TestLocalAdminHandler_ProfileRejectsErrorTypeWithoutErrorBackend(t *testing
 	}
 }
 
+func TestLocalAdminHandler_ListenerCapsDefaultAndOverride(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	handler := buildLocalAdminHandler(control)
+
+	profileReq := httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"lorem"}`))
+	doRequest(t, handler, profileReq).Body.Close()
+
+	// Default caps.
+	listenerReq := httptestRequest(http.MethodPut, "/_zolem/listeners/openai-demo", bytes.NewBufferString(`{"addr":"127.0.0.1:0","provider":"openai","profile":"demo"}`))
+	listenerResp := doRequest(t, handler, listenerReq)
+	defer listenerResp.Body.Close()
+	if listenerResp.StatusCode != http.StatusOK {
+		t.Fatalf("listener put status: got %d, want 200", listenerResp.StatusCode)
+	}
+	var view map[string]any
+	decodeJSON(t, listenerResp.Body, &view)
+	want := DefaultRecordCaps()
+	if int(view["record_request_body_cap_bytes"].(float64)) != want.RequestBodyCapBytes {
+		t.Fatalf("default req cap: got %v, want %d", view["record_request_body_cap_bytes"], want.RequestBodyCapBytes)
+	}
+	if int(view["record_response_body_cap_bytes"].(float64)) != want.ResponseBodyCapBytes {
+		t.Fatalf("default resp cap: got %v, want %d", view["record_response_body_cap_bytes"], want.ResponseBodyCapBytes)
+	}
+	if int(view["record_stream_event_cap"].(float64)) != want.StreamEventCap {
+		t.Fatalf("default stream cap: got %v, want %d", view["record_stream_event_cap"], want.StreamEventCap)
+	}
+
+	// Override caps.
+	overrideReq := httptestRequest(http.MethodPut, "/_zolem/listeners/openai-demo", bytes.NewBufferString(`{"addr":"127.0.0.1:0","provider":"openai","profile":"demo","record_request_body_cap_bytes":42,"record_response_body_cap_bytes":99,"record_stream_event_cap":7}`))
+	overrideResp := doRequest(t, handler, overrideReq)
+	defer overrideResp.Body.Close()
+	if overrideResp.StatusCode != http.StatusOK {
+		t.Fatalf("override put status: got %d, want 200", overrideResp.StatusCode)
+	}
+	var view2 map[string]any
+	decodeJSON(t, overrideResp.Body, &view2)
+	if int(view2["record_request_body_cap_bytes"].(float64)) != 42 {
+		t.Fatalf("override req cap: got %v, want 42", view2["record_request_body_cap_bytes"])
+	}
+	if int(view2["record_response_body_cap_bytes"].(float64)) != 99 {
+		t.Fatalf("override resp cap: got %v, want 99", view2["record_response_body_cap_bytes"])
+	}
+	if int(view2["record_stream_event_cap"].(float64)) != 7 {
+		t.Fatalf("override stream cap: got %v, want 7", view2["record_stream_event_cap"])
+	}
+}
+
+func TestLocalAdminHandler_ListenerCapsRejectNonPositive(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	handler := buildLocalAdminHandler(control)
+
+	profileReq := httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"lorem"}`))
+	doRequest(t, handler, profileReq).Body.Close()
+
+	req := httptestRequest(http.MethodPut, "/_zolem/listeners/openai-demo", bytes.NewBufferString(`{"addr":"127.0.0.1:0","provider":"openai","profile":"demo","record_request_body_cap_bytes":0}`))
+	resp := doRequest(t, handler, req)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestLocalAdminHandler_ListenerCalls_GetAndDelete(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	handler := buildLocalAdminHandler(control)
+
+	doRequest(t, handler, httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"lorem"}`))).Body.Close()
+	doRequest(t, handler, httptestRequest(http.MethodPut, "/_zolem/listeners/openai-demo", bytes.NewBufferString(`{"addr":"127.0.0.1:0","provider":"openai","profile":"demo"}`))).Body.Close()
+
+	// Seed recorder directly.
+	control.mu.Lock()
+	rec := control.listeners["openai-demo"].recorder
+	control.mu.Unlock()
+	rec.NextCallID()
+	rec.Record(RecordedCall{CallID: 1, Listener: "openai-demo"})
+	rec.NextCallID()
+	rec.Record(RecordedCall{CallID: 2, Listener: "openai-demo"})
+
+	// GET returns the calls.
+	getResp := doRequest(t, handler, httptestRequest(http.MethodGet, "/_zolem/listeners/openai-demo/calls", bytes.NewBuffer(nil)))
+	defer getResp.Body.Close()
+	if getResp.StatusCode != http.StatusOK {
+		t.Fatalf("get status: got %d, want 200", getResp.StatusCode)
+	}
+	var body map[string]any
+	decodeJSON(t, getResp.Body, &body)
+	calls, ok := body["calls"].([]any)
+	if !ok || len(calls) != 2 {
+		t.Fatalf("calls: got %#v, want 2", body["calls"])
+	}
+
+	// DELETE clears and returns count.
+	delResp := doRequest(t, handler, httptestRequest(http.MethodDelete, "/_zolem/listeners/openai-demo/calls", bytes.NewBuffer(nil)))
+	defer delResp.Body.Close()
+	if delResp.StatusCode != http.StatusOK {
+		t.Fatalf("delete status: got %d, want 200", delResp.StatusCode)
+	}
+	var delBody map[string]any
+	decodeJSON(t, delResp.Body, &delBody)
+	if int(delBody["cleared"].(float64)) != 2 {
+		t.Fatalf("cleared: got %v, want 2", delBody["cleared"])
+	}
+
+	// DELETE on empty returns 0.
+	delResp2 := doRequest(t, handler, httptestRequest(http.MethodDelete, "/_zolem/listeners/openai-demo/calls", bytes.NewBuffer(nil)))
+	defer delResp2.Body.Close()
+	var delBody2 map[string]any
+	decodeJSON(t, delResp2.Body, &delBody2)
+	if int(delBody2["cleared"].(float64)) != 0 {
+		t.Fatalf("cleared on empty: got %v, want 0", delBody2["cleared"])
+	}
+}
+
+func TestLocalAdminHandler_ListenerCalls_NotFound(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	handler := buildLocalAdminHandler(control)
+
+	getResp := doRequest(t, handler, httptestRequest(http.MethodGet, "/_zolem/listeners/missing/calls", bytes.NewBuffer(nil)))
+	defer getResp.Body.Close()
+	if getResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("get status: got %d, want 404", getResp.StatusCode)
+	}
+	var body map[string]any
+	decodeJSON(t, getResp.Body, &body)
+	if _, ok := body["error"]; !ok {
+		t.Fatalf("body missing error: %#v", body)
+	}
+
+	delResp := doRequest(t, handler, httptestRequest(http.MethodDelete, "/_zolem/listeners/missing/calls", bytes.NewBuffer(nil)))
+	defer delResp.Body.Close()
+	if delResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("delete status: got %d, want 404", delResp.StatusCode)
+	}
+}
+
+func TestLocalAdminHandler_ListenerCalls_MethodNotAllowed(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	handler := buildLocalAdminHandler(control)
+
+	doRequest(t, handler, httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"lorem"}`))).Body.Close()
+	doRequest(t, handler, httptestRequest(http.MethodPut, "/_zolem/listeners/openai-demo", bytes.NewBufferString(`{"addr":"127.0.0.1:0","provider":"openai","profile":"demo"}`))).Body.Close()
+
+	resp := doRequest(t, handler, httptestRequest(http.MethodPost, "/_zolem/listeners/openai-demo/calls", bytes.NewBuffer(nil)))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("status: got %d, want 405", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Allow"); got != "GET, DELETE" {
+		t.Fatalf("Allow: got %q, want %q", got, "GET, DELETE")
+	}
+}
+
 func TestRunLocalAdmin_RejectsNonLoopbackAddr(t *testing.T) {
 	var listenCalled bool
 	err := runLocalAdmin(localAdminOptions{Addr: "0.0.0.0:8090"}, startupDeps{
