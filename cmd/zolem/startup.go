@@ -60,12 +60,16 @@ type localTLSConfig struct {
 }
 
 type localOptions struct {
-	Addr        string
-	Provider    string
-	Profile     string
-	Backend     string
-	FixturesDir string
-	TLS         localTLSConfig
+	Addr                       string
+	Provider                   string
+	Profile                    string
+	Backend                    string
+	FixturesDir                string
+	TLS                        localTLSConfig
+	CallsFile                  string
+	RecordRequestBodyCapBytes  int
+	RecordResponseBodyCapBytes int
+	RecordStreamEventCap       int
 }
 
 func (d startupDeps) withDefaults() startupDeps {
@@ -113,7 +117,23 @@ func runLocal(opts localOptions, deps startupDeps) error {
 		return err
 	}
 
-	app, warnings, err := buildLocalStartupApp(opts, deps)
+	var recorder Recorder = noopRecorder{}
+	if opts.CallsFile != "" {
+		jsonl, err := newJSONLRecorder(opts.CallsFile)
+		if err != nil {
+			return err
+		}
+		defer jsonl.Close()
+		recorder = jsonl
+	}
+
+	caps := RecordCaps{
+		RequestBodyCapBytes:  opts.RecordRequestBodyCapBytes,
+		ResponseBodyCapBytes: opts.RecordResponseBodyCapBytes,
+		StreamEventCap:       opts.RecordStreamEventCap,
+	}
+
+	app, warnings, err := buildLocalStartupAppWithRecorder(opts, recorder, caps, deps)
 	if err != nil {
 		return err
 	}
@@ -139,6 +159,32 @@ func buildLocalStartupApp(opts localOptions, deps startupDeps) (*startupApp, []s
 	}
 
 	return buildLocalStartupAppForRuntime(listenerRuntime, opts.FixturesDir, runtimecfg.NewProfileCounters(), nil, RecordCaps{}, deps)
+}
+
+func buildLocalStartupAppWithRecorder(opts localOptions, recorder Recorder, caps RecordCaps, deps startupDeps) (*startupApp, []string, error) {
+	deps = deps.withDefaults()
+
+	listenerRuntime, err := opts.runtime()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if caps.RequestBodyCapBytes == 0 && caps.ResponseBodyCapBytes == 0 && caps.StreamEventCap == 0 {
+		caps = DefaultRecordCaps()
+	} else {
+		defaults := DefaultRecordCaps()
+		if caps.RequestBodyCapBytes == 0 {
+			caps.RequestBodyCapBytes = defaults.RequestBodyCapBytes
+		}
+		if caps.ResponseBodyCapBytes == 0 {
+			caps.ResponseBodyCapBytes = defaults.ResponseBodyCapBytes
+		}
+		if caps.StreamEventCap == 0 {
+			caps.StreamEventCap = defaults.StreamEventCap
+		}
+	}
+
+	return buildLocalStartupAppForRuntime(listenerRuntime, opts.FixturesDir, runtimecfg.NewProfileCounters(), recorder, caps, deps)
 }
 
 func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, fixturesDir string, counters *runtimecfg.ProfileCounters, recorder Recorder, caps RecordCaps, deps startupDeps) (*startupApp, []string, error) {
