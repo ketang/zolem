@@ -124,6 +124,148 @@ func TestProfilesCreateSendsWASMFields(t *testing.T) {
 	}
 }
 
+func TestListenersCallsList(t *testing.T) {
+	respBody := `{"calls":[` +
+		`{"call_id":1,"received_at":"2026-05-22T16:34:12Z","latency_ms":12,"request":{"method":"POST","path":"/v1/chat/completions"},"response":{"status":200,"stream":null}},` +
+		`{"call_id":2,"received_at":"2026-05-22T16:34:14Z","latency_ms":8,"request":{"method":"POST","path":"/v1/chat/completions"},"response":{"status":200,"stream":{"event_count":3}}},` +
+		`{"call_id":3,"received_at":"2026-05-22T16:34:18Z","latency_ms":4,"request":{"method":"GET","path":"/v1/models"},"response":{"status":404,"stream":null}}` +
+		`]}`
+	var gotPath, gotMethod string
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		gotPath = req.URL.Path
+		gotMethod = req.Method
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, respBody)
+	}))
+	t.Cleanup(admin.Close)
+
+	// Human table output.
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(), []string{"-admin-url", admin.URL, "listeners", "calls", "list", "openai-demo"}, &stdout, &stderr); err != nil {
+		t.Fatalf("list failed: %v\nstderr:\n%s", err, stderr.String())
+	}
+	if gotMethod != http.MethodGet || gotPath != "/_zolem/listeners/openai-demo/calls" {
+		t.Fatalf("request: got %s %s", gotMethod, gotPath)
+	}
+	out := stdout.String()
+	for _, want := range []string{"ID", "METHOD", "PATH", "STATUS", "LATENCY_MS", "RECEIVED_AT", "200", "~200", "404", "POST", "GET"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("human output missing %q:\n%s", want, out)
+		}
+	}
+
+	// JSON passthrough.
+	stdout.Reset()
+	stderr.Reset()
+	if err := run(context.Background(), []string{"-json", "-admin-url", admin.URL, "listeners", "calls", "list", "openai-demo"}, &stdout, &stderr); err != nil {
+		t.Fatalf("list -json failed: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"calls"`) || !strings.Contains(stdout.String(), `"call_id":1`) {
+		t.Fatalf("json output missing fields:\n%s", stdout.String())
+	}
+
+	// -since filter (human).
+	stdout.Reset()
+	stderr.Reset()
+	if err := run(context.Background(), []string{"-admin-url", admin.URL, "listeners", "calls", "list", "openai-demo", "-since", "1"}, &stdout, &stderr); err != nil {
+		t.Fatalf("list -since failed: %v", err)
+	}
+	out = stdout.String()
+	if strings.Contains(out, "POST    /v1/chat/completions") && strings.Count(out, "POST") != 1 {
+		// expect only call_id 2 to remain (POST/streaming)
+	}
+	if !strings.Contains(out, "~200") || strings.Contains(out, "  1  ") {
+		t.Fatalf("-since 1 should filter to call_id>1:\n%s", out)
+	}
+
+	// -since filter (json) keeps wrapping shape with filtered list.
+	stdout.Reset()
+	stderr.Reset()
+	if err := run(context.Background(), []string{"-json", "-admin-url", admin.URL, "listeners", "calls", "list", "openai-demo", "-since", "2"}, &stdout, &stderr); err != nil {
+		t.Fatalf("list -json -since failed: %v", err)
+	}
+	var parsed struct {
+		Calls []struct {
+			CallID int64 `json:"call_id"`
+		} `json:"calls"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
+		t.Fatalf("decode -json -since: %v\n%s", err, stdout.String())
+	}
+	if len(parsed.Calls) != 1 || parsed.Calls[0].CallID != 3 {
+		t.Fatalf("-since 2 filter: got %#v", parsed.Calls)
+	}
+}
+
+func TestListenersCallsListEmpty(t *testing.T) {
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"calls":[]}`)
+	}))
+	t.Cleanup(admin.Close)
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(), []string{"-admin-url", admin.URL, "listeners", "calls", "list", "openai-demo"}, &stdout, &stderr); err != nil {
+		t.Fatalf("list empty failed: %v", err)
+	}
+	if strings.TrimSpace(stdout.String()) != "no calls" {
+		t.Fatalf("empty human output: got %q, want \"no calls\"", stdout.String())
+	}
+}
+
+func TestListenersCallsListMissingName(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{"-admin-url", "http://127.0.0.1:1", "listeners", "calls", "list"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatalf("list without name unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "calls list requires exactly one listener name") {
+		t.Fatalf("error: got %q", err)
+	}
+}
+
+func TestListenersCallsClear(t *testing.T) {
+	var gotMethod, gotPath string
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		gotMethod = req.Method
+		gotPath = req.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"cleared":7}`)
+	}))
+	t.Cleanup(admin.Close)
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(), []string{"-admin-url", admin.URL, "listeners", "calls", "clear", "openai-demo"}, &stdout, &stderr); err != nil {
+		t.Fatalf("clear failed: %v", err)
+	}
+	if gotMethod != http.MethodDelete || gotPath != "/_zolem/listeners/openai-demo/calls" {
+		t.Fatalf("request: got %s %s", gotMethod, gotPath)
+	}
+	if !strings.Contains(stdout.String(), "Cleared 7 calls from listener openai-demo.") {
+		t.Fatalf("clear human output: %q", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := run(context.Background(), []string{"-json", "-admin-url", admin.URL, "listeners", "calls", "clear", "openai-demo"}, &stdout, &stderr); err != nil {
+		t.Fatalf("clear -json failed: %v", err)
+	}
+	if strings.TrimSpace(stdout.String()) != `{"cleared":7}` {
+		t.Fatalf("clear json output: %q", stdout.String())
+	}
+}
+
+func TestListenersCallsClearMissingName(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{"-admin-url", "http://127.0.0.1:1", "listeners", "calls", "clear"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatalf("clear without name unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "calls clear requires exactly one listener name") {
+		t.Fatalf("error: got %q", err)
+	}
+}
+
 func TestProfilesCreateRejectsWASMFieldsWithNonWASMBackend(t *testing.T) {
 	wasmPath := filepath.Join(t.TempDir(), "generator.wasm")
 	if err := os.WriteFile(wasmPath, []byte("test wasm module"), 0o644); err != nil {
