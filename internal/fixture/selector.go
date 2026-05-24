@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	runtimecfg "zolem.dev/zolem/internal/runtime"
 )
 
 // Selector picks at most one fixture from candidates filtered by provider/version.
@@ -73,13 +75,24 @@ func (s *LegacySelector) HasMatcher(f Fixture) bool {
 
 type fixturesYAMLEntry struct {
 	matcher   *CompiledCELMatcher
-	fixtureID string
+	fixtureID string         // populated for single-fixture entries
+	sequence  *sequenceEntry // populated for sequence entries; mutually exclusive with fixtureID
+}
+
+type sequenceEntry struct {
+	id        string
+	onExhaust ExhaustAction
+	steps     []string // fixture IDs, in order
 }
 
 // fixturesYAMLSelector evaluates entries from fixtures.yaml in declared order
 // and returns the first fixture whose expression matches the request.
+// Sequence entries advance a per-(profile, namespace, id) counter on each
+// match.
 type fixturesYAMLSelector struct {
-	entries []fixturesYAMLEntry
+	entries   []fixturesYAMLEntry
+	counters  *SequenceCounters
+	namespace string
 }
 
 func (s *fixturesYAMLSelector) Select(ctx context.Context, req MatchRequest, candidates []Fixture) (*Fixture, error) {
@@ -87,17 +100,48 @@ func (s *fixturesYAMLSelector) Select(ctx context.Context, req MatchRequest, can
 	for i := range candidates {
 		byID[candidates[i].ID] = &candidates[i]
 	}
+	profile := profileFromContext(ctx)
 	for _, e := range s.entries {
 		score, err := e.matcher.Score(ctx, req)
 		if err != nil {
-			return nil, fmt.Errorf("evaluate selector entry for fixture %q: %w", e.fixtureID, err)
+			return nil, fmt.Errorf("evaluate selector entry for fixture %q: %w", e.label(), err)
 		}
 		if score < 0 {
 			continue
 		}
-		if f, ok := byID[e.fixtureID]; ok {
+		if e.sequence == nil {
+			if f, ok := byID[e.fixtureID]; ok {
+				return f, nil
+			}
+			continue
+		}
+		idx, exhausted := s.counters.Step(profile, s.namespace, e.sequence.id, len(e.sequence.steps), e.sequence.onExhaust)
+		if exhausted {
+			switch e.sequence.onExhaust {
+			case ExhaustErrorAction:
+				return nil, &ExhaustError{SequenceID: e.sequence.id, Namespace: s.namespace}
+			case ExhaustFallthrough:
+				continue
+			}
+		}
+		stepID := e.sequence.steps[idx]
+		if f, ok := byID[stepID]; ok {
 			return f, nil
 		}
 	}
 	return nil, nil
+}
+
+func (e fixturesYAMLEntry) label() string {
+	if e.sequence != nil {
+		return "sequence:" + e.sequence.id
+	}
+	return e.fixtureID
+}
+
+func profileFromContext(ctx context.Context) string {
+	if rt, ok := runtimecfg.ListenerRuntimeFromContext(ctx); ok {
+		return rt.Profile.Name
+	}
+	return ""
 }

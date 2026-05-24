@@ -146,12 +146,13 @@ func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, 
 	if counters == nil {
 		counters = runtimecfg.NewProfileCounters()
 	}
+	sequenceCounters := fixture.NewSequenceCounters()
 
 	validator := deps.newValidator()
 	warnings := loadSpecs(validator, deps.newFetcher(filepath.Join(os.TempDir(), "zolem-specs"), map[string]string{}))
 
 	runner := deps.newRunner()
-	fixtures, selector, fixtureWarnings, err := loadLocalFixtures(listenerRuntime, fixturesDir, runner, deps.readFile)
+	fixtures, selector, fixtureWarnings, err := loadLocalFixtures(listenerRuntime, fixturesDir, runner, deps.readFile, sequenceCounters)
 	warnings = append(warnings, fixtureWarnings...)
 	if err != nil {
 		runner.Close()
@@ -185,7 +186,7 @@ func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, 
 	}, warnings, nil
 }
 
-func loadLocalFixtures(listenerRuntime runtimecfg.ListenerRuntime, fixturesDir string, runner *fixture.Runner, readFile func(string) ([]byte, error)) ([]fixture.Fixture, fixture.Selector, []string, error) {
+func loadLocalFixtures(listenerRuntime runtimecfg.ListenerRuntime, fixturesDir string, runner *fixture.Runner, readFile func(string) ([]byte, error), sequenceCounters *fixture.SequenceCounters) ([]fixture.Fixture, fixture.Selector, []string, error) {
 	if listenerRuntime.Profile.Backend != runtimecfg.BackendFixture {
 		return nil, nil, nil, nil
 	}
@@ -195,7 +196,7 @@ func loadLocalFixtures(listenerRuntime runtimecfg.ListenerRuntime, fixturesDir s
 	if listenerRuntime.Profile.FixtureNamespace != "" {
 		fixturesDir = filepath.Join(fixturesDir, filepath.FromSlash(listenerRuntime.Profile.FixtureNamespace))
 	}
-	return loadFixtures(fixturesDir, listenerRuntime, runner, readFile)
+	return loadFixtures(fixturesDir, listenerRuntime, runner, readFile, sequenceCounters)
 }
 
 func loadSpecs(validator *specs.Validator, fetcher specFetcher) []string {
@@ -214,12 +215,12 @@ func loadSpecs(validator *specs.Validator, fetcher specFetcher) []string {
 	return warnings
 }
 
-func loadFixtures(fixturesDir string, listenerRuntime runtimecfg.ListenerRuntime, runner *fixture.Runner, readFile func(string) ([]byte, error)) ([]fixture.Fixture, fixture.Selector, []string, error) {
+func loadFixtures(fixturesDir string, listenerRuntime runtimecfg.ListenerRuntime, runner *fixture.Runner, readFile func(string) ([]byte, error), sequenceCounters *fixture.SequenceCounters) ([]fixture.Fixture, fixture.Selector, []string, error) {
 	if fixturesDir == "" {
 		return nil, nil, nil, nil
 	}
 
-	loader := fixture.NewLoader(fixturesDir)
+	loader := fixture.NewLoader(fixturesDir).WithSequenceCounters(sequenceCounters)
 	fixtures, selector, err := loader.Load()
 	if err != nil {
 		return nil, nil, nil, err
