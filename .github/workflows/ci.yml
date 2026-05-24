@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
   test:
@@ -23,3 +24,6 @@ jobs:
 
       - name: Build zolem
         run: go build ./cmd/zolem
+
+      - name: Smoke test
+        run: ./scripts/smoke.sh
