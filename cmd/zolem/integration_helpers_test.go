@@ -473,3 +473,73 @@ func assertOpenAIStreamShape(t *testing.T, body []byte, wantTokens int) {
 		t.Fatalf("usageChunk: choices len = %d, want 0; payload=%s", len(usage.Choices), payloads[usageIdx])
 	}
 }
+
+type recordedCall struct {
+	CallID      int64          `json:"call_id"`
+	Listener    string         `json:"listener"`
+	ReceivedAt  string         `json:"received_at"`
+	CompletedAt string         `json:"completed_at"`
+	LatencyMS   int64          `json:"latency_ms"`
+	Request     recordedReq    `json:"request"`
+	Response    recordedResp   `json:"response"`
+}
+
+type recordedReq struct {
+	Method             string              `json:"method"`
+	Path               string              `json:"path"`
+	Query              string              `json:"query"`
+	Headers            map[string][]string  `json:"headers"`
+	RemoteAddr         string              `json:"remote_addr"`
+	Body               string              `json:"body,omitempty"`
+	BodyBase64         string              `json:"body_base64,omitempty"`
+	BodyTruncatedBytes int                 `json:"body_truncated_bytes"`
+}
+
+type recordedResp struct {
+	Status             int                 `json:"status"`
+	Headers            map[string][]string `json:"headers"`
+	Body               string              `json:"body,omitempty"`
+	BodyBase64         string              `json:"body_base64,omitempty"`
+	BodyTruncatedBytes int                 `json:"body_truncated_bytes"`
+	Stream             *streamRecord       `json:"stream"`
+}
+
+type streamRecord struct {
+	EventCount      int           `json:"event_count"`
+	Events          []streamEvent `json:"events"`
+	EventsTruncated int           `json:"events_truncated"`
+}
+
+type streamEvent struct {
+	ReceivedAt string `json:"received_at"`
+	Event      string `json:"event"`
+	Data       string `json:"data"`
+}
+
+func getCalls(t *testing.T, adminBaseURL, listenerName string) []recordedCall {
+	t.Helper()
+	resp, body := doRequest(t, adminBaseURL, http.MethodGet, "/_zolem/listeners/"+listenerName+"/calls", "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("getCalls %s: status %d: %s", listenerName, resp.StatusCode, body)
+	}
+	var envelope struct {
+		Calls []recordedCall `json:"calls"`
+	}
+	mustJSONUnmarshal(t, body, &envelope)
+	return envelope.Calls
+}
+
+func clearCalls(t *testing.T, adminBaseURL, listenerName string) int {
+	t.Helper()
+	resp, body := doRequest(t, adminBaseURL, http.MethodDelete, "/_zolem/listeners/"+listenerName+"/calls", "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("clearCalls %s: status %d: %s", listenerName, resp.StatusCode, body)
+	}
+	var result struct {
+		Cleared int `json:"cleared"`
+	}
+	mustJSONUnmarshal(t, body, &result)
+	return result.Cleared
+}
