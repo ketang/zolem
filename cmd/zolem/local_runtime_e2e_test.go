@@ -1148,3 +1148,323 @@ func decodeULEB128(b []byte) (uint32, int, error) {
 	}
 	return 0, 0, fmt.Errorf("ULEB128: value exceeds uint32")
 }
+
+func TestLocalRuntimeCallHistory_E2E(t *testing.T) {
+	repoRoot := repoRoot(t)
+	admin := startLocalAdminService(t, repoRoot)
+	t.Cleanup(admin.Close)
+
+	t.Run("basic_recording", func(t *testing.T) {
+		listenerName := "openai-lorem-listener"
+		listenerBaseURL := createRuntimeListener(t, admin, "openai", map[string]any{
+			"backend": "lorem",
+		})
+		clearCalls(t, admin.baseURL, listenerName)
+
+		resp, _ := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions",
+			`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`,
+			"Content-Type: application/json", "Authorization: Bearer sk-test")
+		resp.Body.Close()
+
+		calls := getCalls(t, admin.baseURL, listenerName)
+		if len(calls) != 1 {
+			t.Fatalf("expected 1 call, got %d", len(calls))
+		}
+		c := calls[0]
+		if c.CallID != 1 {
+			t.Fatalf("call_id: got %d, want 1", c.CallID)
+		}
+		if c.Request.Method != "POST" {
+			t.Fatalf("method: got %q, want POST", c.Request.Method)
+		}
+		if c.Request.Path != "/v1/chat/completions" {
+			t.Fatalf("path: got %q, want /v1/chat/completions", c.Request.Path)
+		}
+		if c.Response.Status != 200 {
+			t.Fatalf("status: got %d, want 200", c.Response.Status)
+		}
+		if c.Request.Body == "" {
+			t.Fatal("request.body is empty")
+		}
+		if c.Response.Body == "" {
+			t.Fatal("response.body is empty")
+		}
+	})
+
+	t.Run("body_cap", func(t *testing.T) {
+		profileName := "openai-capped-profile"
+		listenerName := "openai-capped-listener"
+		profileBody := `{"backend":"lorem"}`
+		profileResp, body := doRequest(t, admin.baseURL, http.MethodPut, "/_zolem/profiles/"+profileName, profileBody, "Content-Type: application/json")
+		profileResp.Body.Close()
+		if profileResp.StatusCode != http.StatusOK {
+			t.Fatalf("profile: %d: %s", profileResp.StatusCode, body)
+		}
+		t.Cleanup(func() {
+			r, _, _ := doRequestRaw(&http.Client{Timeout: 5 * time.Second}, admin.baseURL, http.MethodDelete, "/_zolem/profiles/"+profileName, "")
+			if r != nil {
+				r.Body.Close()
+			}
+		})
+
+		cap := 10
+		listenerPayload := fmt.Sprintf(`{"addr":"127.0.0.1:0","provider":"openai","profile":"%s","record_request_body_cap_bytes":%d}`, profileName, cap)
+		listenerResp, listenerBody := doRequest(t, admin.baseURL, http.MethodPut, "/_zolem/listeners/"+listenerName, listenerPayload, "Content-Type: application/json")
+		listenerResp.Body.Close()
+		if listenerResp.StatusCode != http.StatusOK {
+			t.Fatalf("listener: %d: %s", listenerResp.StatusCode, listenerBody)
+		}
+		t.Cleanup(func() {
+			r, _, _ := doRequestRaw(&http.Client{Timeout: 5 * time.Second}, admin.baseURL, http.MethodDelete, "/_zolem/listeners/"+listenerName, "")
+			if r != nil {
+				r.Body.Close()
+			}
+		})
+		var lv struct {
+			BaseURL string `json:"base_url"`
+		}
+		mustJSONUnmarshal(t, listenerBody, &lv)
+
+		longBody := `{"model":"gpt-4o","messages":[{"role":"user","content":"this is a much longer body than 10 bytes"}]}`
+		resp, _ := doRequest(t, lv.BaseURL, http.MethodPost, "/v1/chat/completions", longBody,
+			"Content-Type: application/json", "Authorization: Bearer sk-test")
+		resp.Body.Close()
+
+		calls := getCalls(t, admin.baseURL, listenerName)
+		if len(calls) != 1 {
+			t.Fatalf("expected 1 call, got %d", len(calls))
+		}
+		if calls[0].Request.BodyTruncatedBytes <= 0 {
+			t.Fatalf("body_truncated_bytes: got %d, want > 0", calls[0].Request.BodyTruncatedBytes)
+		}
+		if len(calls[0].Request.Body) != cap {
+			t.Fatalf("request body len: got %d, want %d", len(calls[0].Request.Body), cap)
+		}
+	})
+
+	t.Run("streaming", func(t *testing.T) {
+		listenerName := "openai-lorem-listener"
+		listenerBaseURL := createRuntimeListener(t, admin, "openai", map[string]any{
+			"backend": "lorem",
+		})
+		clearCalls(t, admin.baseURL, listenerName)
+
+		resp, _ := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions",
+			`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hello"}]}`,
+			"Content-Type: application/json", "Authorization: Bearer sk-test")
+		resp.Body.Close()
+
+		calls := getCalls(t, admin.baseURL, listenerName)
+		if len(calls) != 1 {
+			t.Fatalf("expected 1 call, got %d", len(calls))
+		}
+		c := calls[0]
+		if c.Response.Stream == nil {
+			t.Fatal("response.stream is nil for streaming request")
+		}
+		if len(c.Response.Stream.Events) == 0 {
+			t.Fatal("response.stream.events is empty")
+		}
+		if c.Response.Body != "" {
+			t.Fatalf("response.body should be empty for streaming, got %d bytes", len(c.Response.Body))
+		}
+	})
+
+	t.Run("reset", func(t *testing.T) {
+		listenerName := "openai-lorem-listener"
+		listenerBaseURL := createRuntimeListener(t, admin, "openai", map[string]any{
+			"backend": "lorem",
+		})
+		clearCalls(t, admin.baseURL, listenerName)
+
+		for i := 0; i < 2; i++ {
+			resp, _ := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions",
+				`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`,
+				"Content-Type: application/json", "Authorization: Bearer sk-test")
+			resp.Body.Close()
+		}
+
+		cleared := clearCalls(t, admin.baseURL, listenerName)
+		if cleared != 2 {
+			t.Fatalf("cleared: got %d, want 2", cleared)
+		}
+
+		calls := getCalls(t, admin.baseURL, listenerName)
+		if len(calls) != 0 {
+			t.Fatalf("expected 0 calls after clear, got %d", len(calls))
+		}
+
+		resp, _ := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions",
+			`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`,
+			"Content-Type: application/json", "Authorization: Bearer sk-test")
+		resp.Body.Close()
+
+		calls = getCalls(t, admin.baseURL, listenerName)
+		if len(calls) != 1 || calls[0].CallID != 1 {
+			t.Fatalf("after clear: expected call_id=1, got %v", calls)
+		}
+	})
+
+	t.Run("idempotent_clear", func(t *testing.T) {
+		listenerName := "openai-lorem-listener"
+		createRuntimeListener(t, admin, "openai", map[string]any{
+			"backend": "lorem",
+		})
+		clearCalls(t, admin.baseURL, listenerName)
+
+		cleared := clearCalls(t, admin.baseURL, listenerName)
+		if cleared != 0 {
+			t.Fatalf("cleared on empty: got %d, want 0", cleared)
+		}
+	})
+
+	t.Run("listener_deletion_drops_history", func(t *testing.T) {
+		profileName := "openai-del-profile"
+		listenerName := "openai-del-listener"
+		profileBody := `{"backend":"lorem"}`
+		profileResp, _ := doRequest(t, admin.baseURL, http.MethodPut, "/_zolem/profiles/"+profileName, profileBody, "Content-Type: application/json")
+		profileResp.Body.Close()
+		t.Cleanup(func() {
+			r, _, _ := doRequestRaw(&http.Client{Timeout: 5 * time.Second}, admin.baseURL, http.MethodDelete, "/_zolem/profiles/"+profileName, "")
+			if r != nil {
+				r.Body.Close()
+			}
+		})
+
+		listenerPayload := fmt.Sprintf(`{"addr":"127.0.0.1:0","provider":"openai","profile":"%s"}`, profileName)
+		listenerResp, listenerBody := doRequest(t, admin.baseURL, http.MethodPut, "/_zolem/listeners/"+listenerName, listenerPayload, "Content-Type: application/json")
+		listenerResp.Body.Close()
+		var lv struct {
+			BaseURL string `json:"base_url"`
+		}
+		mustJSONUnmarshal(t, listenerBody, &lv)
+
+		resp, _ := doRequest(t, lv.BaseURL, http.MethodPost, "/v1/chat/completions",
+			`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`,
+			"Content-Type: application/json", "Authorization: Bearer sk-test")
+		resp.Body.Close()
+
+		delResp, _ := doRequest(t, admin.baseURL, http.MethodDelete, "/_zolem/listeners/"+listenerName, "")
+		delResp.Body.Close()
+
+		listenerResp2, listenerBody2 := doRequest(t, admin.baseURL, http.MethodPut, "/_zolem/listeners/"+listenerName, listenerPayload, "Content-Type: application/json")
+		listenerResp2.Body.Close()
+		mustJSONUnmarshal(t, listenerBody2, &lv)
+		t.Cleanup(func() {
+			r, _, _ := doRequestRaw(&http.Client{Timeout: 5 * time.Second}, admin.baseURL, http.MethodDelete, "/_zolem/listeners/"+listenerName, "")
+			if r != nil {
+				r.Body.Close()
+			}
+		})
+
+		calls := getCalls(t, admin.baseURL, listenerName)
+		if len(calls) != 0 {
+			t.Fatalf("expected 0 calls after delete+recreate, got %d", len(calls))
+		}
+	})
+
+	t.Run("upsert_resets_history", func(t *testing.T) {
+		profileName1 := "openai-upsert-lorem"
+		profileName2 := "openai-upsert-faker"
+		listenerName := "openai-upsert-listener"
+		doRequest(t, admin.baseURL, http.MethodPut, "/_zolem/profiles/"+profileName1, `{"backend":"lorem"}`, "Content-Type: application/json")
+		doRequest(t, admin.baseURL, http.MethodPut, "/_zolem/profiles/"+profileName2, `{"backend":"faker"}`, "Content-Type: application/json")
+		t.Cleanup(func() {
+			c := &http.Client{Timeout: 5 * time.Second}
+			r, _, _ := doRequestRaw(c, admin.baseURL, http.MethodDelete, "/_zolem/listeners/"+listenerName, "")
+			if r != nil {
+				r.Body.Close()
+			}
+			r, _, _ = doRequestRaw(c, admin.baseURL, http.MethodDelete, "/_zolem/profiles/"+profileName1, "")
+			if r != nil {
+				r.Body.Close()
+			}
+			r, _, _ = doRequestRaw(c, admin.baseURL, http.MethodDelete, "/_zolem/profiles/"+profileName2, "")
+			if r != nil {
+				r.Body.Close()
+			}
+		})
+
+		listenerPayload := fmt.Sprintf(`{"addr":"127.0.0.1:0","provider":"openai","profile":"%s"}`, profileName1)
+		listenerResp, listenerBody := doRequest(t, admin.baseURL, http.MethodPut, "/_zolem/listeners/"+listenerName, listenerPayload, "Content-Type: application/json")
+		listenerResp.Body.Close()
+		var lv struct {
+			BaseURL string `json:"base_url"`
+		}
+		mustJSONUnmarshal(t, listenerBody, &lv)
+
+		resp, _ := doRequest(t, lv.BaseURL, http.MethodPost, "/v1/chat/completions",
+			`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`,
+			"Content-Type: application/json", "Authorization: Bearer sk-test")
+		resp.Body.Close()
+
+		calls := getCalls(t, admin.baseURL, listenerName)
+		if len(calls) != 1 {
+			t.Fatalf("before upsert: expected 1 call, got %d", len(calls))
+		}
+
+		upsertPayload := fmt.Sprintf(`{"addr":"127.0.0.1:0","provider":"openai","profile":"%s"}`, profileName2)
+		upsertResp, _ := doRequest(t, admin.baseURL, http.MethodPut, "/_zolem/listeners/"+listenerName, upsertPayload, "Content-Type: application/json")
+		upsertResp.Body.Close()
+
+		calls = getCalls(t, admin.baseURL, listenerName)
+		if len(calls) != 0 {
+			t.Fatalf("after upsert: expected 0 calls (history reset on upsert), got %d", len(calls))
+		}
+	})
+
+	t.Run("concurrent_requests", func(t *testing.T) {
+		listenerName := "openai-lorem-listener"
+		listenerBaseURL := createRuntimeListener(t, admin, "openai", map[string]any{
+			"backend": "lorem",
+		})
+		clearCalls(t, admin.baseURL, listenerName)
+
+		const n = 10
+		var wg sync.WaitGroup
+		wg.Add(n)
+		for i := 0; i < n; i++ {
+			go func() {
+				defer wg.Done()
+				resp, _ := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions",
+					`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`,
+					"Content-Type: application/json", "Authorization: Bearer sk-test")
+				resp.Body.Close()
+			}()
+		}
+		wg.Wait()
+
+		calls := getCalls(t, admin.baseURL, listenerName)
+		if len(calls) != n {
+			t.Fatalf("expected %d calls, got %d", n, len(calls))
+		}
+		seen := make(map[int64]bool)
+		for _, c := range calls {
+			if seen[c.CallID] {
+				t.Fatalf("duplicate call_id: %d", c.CallID)
+			}
+			seen[c.CallID] = true
+		}
+	})
+
+	t.Run("404_on_nonexistent_listener", func(t *testing.T) {
+		client := &http.Client{Timeout: 5 * time.Second}
+		getResp, _, err := doRequestRaw(client, admin.baseURL, http.MethodGet, "/_zolem/listeners/no-such-listener/calls", "")
+		if err != nil {
+			t.Fatalf("GET calls: %v", err)
+		}
+		getResp.Body.Close()
+		if getResp.StatusCode != 404 {
+			t.Fatalf("GET status: got %d, want 404", getResp.StatusCode)
+		}
+
+		delResp, _, err := doRequestRaw(client, admin.baseURL, http.MethodDelete, "/_zolem/listeners/no-such-listener/calls", "")
+		if err != nil {
+			t.Fatalf("DELETE calls: %v", err)
+		}
+		delResp.Body.Close()
+		if delResp.StatusCode != 404 {
+			t.Fatalf("DELETE status: got %d, want 404", delResp.StatusCode)
+		}
+	})
+}
