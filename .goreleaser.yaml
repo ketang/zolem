@@ -1,0 +1,152 @@
+# GoReleaser config for zolem.
+# Docs: https://goreleaser.com
+version: 2
+
+project_name: zolem
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: zolem
+    main: ./cmd/zolem
+    binary: zolem
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: darwin
+        goarch: amd64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
+
+archives:
+  - id: zolem
+    ids:
+      - zolem
+    formats:
+      - tar.gz
+    name_template: "zolem-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    files:
+      - LICENSE*
+      - README*
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+sboms:
+  - artifacts: archive
+    documents:
+      - "{{ .ArtifactName }}.sbom"
+
+signs:
+  - artifacts: all
+    cmd: cosign
+    args:
+      - sign-blob
+      - --yes
+      - "--bundle=${signature}"
+      - "${artifact}"
+    signature: "${artifact}.bundle"
+
+dockers:
+  - id: zolem-amd64
+    ids:
+      - zolem
+    image_templates:
+      - "ghcr.io/ketang/zolem:{{ .Version }}-amd64"
+    goos: linux
+    goarch: amd64
+    use: buildx
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.source=https://github.com/ketang/zolem"
+
+  - id: zolem-amd64-mutable
+    ids:
+      - zolem
+    image_templates:
+      - "ghcr.io/ketang/zolem:{{ if .IsSnapshot }}nightly{{ else }}latest{{ end }}-amd64"
+    goos: linux
+    goarch: amd64
+    use: buildx
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.source=https://github.com/ketang/zolem"
+
+  - id: zolem-arm64
+    ids:
+      - zolem
+    image_templates:
+      - "ghcr.io/ketang/zolem:{{ .Version }}-arm64"
+    goos: linux
+    goarch: arm64
+    use: buildx
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.source=https://github.com/ketang/zolem"
+
+docker_manifests:
+  - name_template: "ghcr.io/ketang/zolem:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/ketang/zolem:{{ .Version }}-amd64"
+      - "ghcr.io/ketang/zolem:{{ .Version }}-arm64"
+
+  - name_template: "ghcr.io/ketang/zolem:{{ if .IsSnapshot }}nightly{{ else }}latest{{ end }}"
+    image_templates:
+      - "ghcr.io/ketang/zolem:{{ if .IsSnapshot }}nightly{{ else }}latest{{ end }}-amd64"
+      - "ghcr.io/ketang/zolem:{{ .Version }}-arm64"
+
+docker_signs:
+  - artifacts: all
+    args:
+      - sign
+      - --yes
+      - "${artifact}"
+
+snapshot:
+  version_template: "{{ .Version }}-nightly"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+      - "Merge branch"
+
+release:
+  github:
+    owner: ketang
+    name: zolem
+  draft: false
+  prerelease: auto
