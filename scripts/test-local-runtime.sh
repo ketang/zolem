@@ -72,6 +72,7 @@ esac
 
 ADMIN_BASE_URL="$ADMIN_SCHEME://$ADMIN_ADDR"
 LOG_FILE="$(mktemp)"
+SERVER_BIN="$(mktemp)"
 SERVER_PID=""
 
 cleanup() {
@@ -86,6 +87,7 @@ cleanup() {
     cat "$LOG_FILE" || true
   fi
   rm -f "$LOG_FILE"
+  rm -f "$SERVER_BIN"
   if [[ -n "$TEMP_FIXTURES_DIR" ]]; then
     rm -rf "$TEMP_FIXTURES_DIR"
   fi
@@ -108,8 +110,11 @@ go test ./cmd/zolem
 go test ./internal/provider/... ./internal/response/... ./internal/runtime/...
 
 echo
+echo "==> Building local admin server"
+go build -o "$SERVER_BIN" ./cmd/zolem
+
 echo "==> Starting local admin server"
-go run ./cmd/zolem -local-admin-addr "$ADMIN_ADDR" -local-fixtures-dir "$FIXTURES_DIR" "${TLS_FLAGS[@]}" >"$LOG_FILE" 2>&1 &
+"$SERVER_BIN" -local-admin-addr "$ADMIN_ADDR" -local-fixtures-dir "$FIXTURES_DIR" "${TLS_FLAGS[@]}" >"$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 
 for _ in $(seq 1 40); do
