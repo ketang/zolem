@@ -1,6 +1,7 @@
 .claude/
 .agents/bin/
 /zolem
+/zolemc
 certs/
 .tmp/
 .shatter/cache/
