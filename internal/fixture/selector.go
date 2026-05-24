@@ -73,6 +73,14 @@ func (s *LegacySelector) HasMatcher(f Fixture) bool {
 	return f.Module != nil || f.WASMPath != ""
 }
 
+// HasCEL reports whether the fixture with the given ID has a per-fixture
+// match.cel matcher registered with this legacy selector. Used by startup to
+// emit deprecation warnings for legacy per-fixture matchers.
+func (s *LegacySelector) HasCEL(id string) bool {
+	_, ok := s.cel[id]
+	return ok
+}
+
 type fixturesYAMLEntry struct {
 	matcher   *CompiledCELMatcher
 	fixtureID string         // populated for single-fixture entries

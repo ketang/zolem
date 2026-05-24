@@ -297,7 +297,13 @@ Each fixture still needs the normal files under a subdirectory:
 
 - `meta.yaml`
 - `response.json` or `response.json.tmpl`
-- either a `match.cel` expression in `meta.yaml` or a `match.wasm` file
+
+Selection is configured at the namespace level via `fixtures.yaml` (recommended)
+or a namespace-level `selector.wasm`. The historical per-fixture `match.cel`
+expression inside `meta.yaml` and per-fixture `match.wasm` file are deprecated
+(see "Deprecated: per-fixture matchers" below) but continue to work and emit a
+startup warning when a namespace has neither `fixtures.yaml` nor
+`selector.wasm`.
 
 Minimal example:
 
@@ -319,6 +325,54 @@ match:
   cel: 'body["model"] == "claude-3-5-sonnet-20241022"'
   score: 1
 ```
+
+### Deprecated: per-fixture matchers
+
+Per-fixture `match.cel` (inside `meta.yaml`) and `match.wasm` are deprecated.
+They still load and serve traffic, but Zolem prints a startup warning for each
+fixture that uses them when the namespace has no `fixtures.yaml` and no
+`selector.wasm`. New fixtures should use a namespace-level `fixtures.yaml`
+entry; complex routing logic that does not fit CEL should use a namespace-level
+`selector.wasm`.
+
+Migration example. A fixture directory whose `meta.yaml` used to embed a CEL
+matcher:
+
+```yaml
+# my-fixtures/team-a/anthropic-demo/meta.yaml (deprecated)
+id: anthropic-demo
+provider: anthropic
+version: v1
+status: 200
+match:
+  cel: 'body["model"] == "claude-3-5-sonnet-20241022"'
+  score: 1
+```
+
+becomes a fixture with no per-fixture matcher plus a namespace-level
+`fixtures.yaml`:
+
+```yaml
+# my-fixtures/team-a/anthropic-demo/meta.yaml
+id: anthropic-demo
+provider: anthropic
+version: v1
+status: 200
+```
+
+```yaml
+# my-fixtures/team-a/fixtures.yaml
+provider: anthropic
+version: v1
+fixtures:
+  - expression: 'body["model"] == "claude-3-5-sonnet-20241022"'
+    fixture: anthropic-demo
+```
+
+Per-fixture `match.wasm` migrates the same way: remove `match.wasm` from the
+fixture directory, then either add the routing expression to `fixtures.yaml`
+or, for logic that requires WASM, drop a namespace-level `selector.wasm` next
+to the fixture subdirectories.
 
 CEL is the recommended matcher for common request predicates. `match.cel`
 must evaluate to a boolean. When it returns `true`, the fixture is a candidate
@@ -342,10 +396,11 @@ labels["tenant"] == "acme" &&
 body["messages"][0]["content"] == "refund"
 ```
 
-For custom scoring or logic that does not fit CEL, use a `match.wasm` file
-instead. A fixture cannot define both `match.cel` and `match.wasm`; Zolem
-rejects that fixture at load time. A fixture with neither matcher loads but
-will never match.
+For custom scoring or logic that does not fit CEL, the deprecated path is a
+per-fixture `match.wasm` file. A fixture cannot define both `match.cel` and
+`match.wasm`; Zolem rejects that fixture at load time. A fixture with neither
+matcher loads but will never match. New configurations should prefer a
+namespace-level `selector.wasm` instead.
 
 For a templated fixture, replace `response.json` with `response.json.tmpl`.
 Zolem parses, executes, and validates the rendered JSON when the fixture-backed
