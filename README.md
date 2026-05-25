@@ -30,6 +30,60 @@ but local runtime listeners currently serve Anthropic, OpenAI, and Gemini.
 | `wasm` | Runs a profile-supplied WebAssembly content generator |
 | `error` | Local runtime only; always returns a provider-native error |
 
+## Installation
+
+**Supported platforms:**
+| | linux/amd64 | linux/arm64 | darwin/arm64 |
+|---|---|---|---|
+| Binary | ✓ | ✓ | ✓ |
+| Docker | ✓ | ✓ | — |
+
+### Binary (recommended)
+
+Download the archive for your platform from
+[github.com/ketang/zolem/releases/latest](https://github.com/ketang/zolem/releases/latest).
+
+| Platform | Archive |
+|----------|---------|
+| Linux amd64 | `zolem-<version>-linux-amd64.tar.gz` |
+| Linux arm64 | `zolem-<version>-linux-arm64.tar.gz` |
+| macOS arm64 | `zolem-<version>-darwin-arm64.tar.gz` |
+
+Extract and place both binaries on your `PATH`:
+
+```bash
+tar -xzf zolem-<version>-<os>-<arch>.tar.gz
+sudo mv zolem zolemc /usr/local/bin/
+```
+
+Verify checksums:
+
+```bash
+sha256sum -c checksums.txt
+```
+
+See [Artifact verification](#artifact-verification) for cosign signature and SBOM instructions.
+
+### Docker
+
+```bash
+docker pull ghcr.io/ketang/zolem:v0.1.0   # pinned
+docker pull ghcr.io/ketang/zolem:latest    # latest release
+```
+
+Available platforms: `linux/amd64`, `linux/arm64`.
+
+See [Docker examples](#docker-examples) below for `docker run` usage.
+
+### From source
+
+Requires Go 1.26+.
+
+```bash
+go install github.com/ketang/zolem/cmd/zolem@latest
+go install github.com/ketang/zolem/cmd/zolemc@latest
+```
+
 ## Quick start: local runtime mode
 
 Local runtime mode is for local development when you want to create or switch
@@ -38,20 +92,21 @@ mock behavior at runtime without editing a config file or restarting Zolem.
 Start the local admin server:
 
 ```bash
-go run ./cmd/zolem -local-admin-addr 127.0.0.1:18090
+zolem -local-admin-addr 127.0.0.1:18090
+# If running from source: go run ./cmd/zolem -local-admin-addr 127.0.0.1:18090
 ```
 
 Create a profile:
 
 ```bash
-go run ./cmd/zolemc -admin-url http://127.0.0.1:18090 \
+zolemc -admin-url http://127.0.0.1:18090 \
   profiles create demo -backend lorem
 ```
 
 Create a listener bound to a provider and profile:
 
 ```bash
-go run ./cmd/zolemc -admin-url http://127.0.0.1:18090 \
+zolemc -admin-url http://127.0.0.1:18090 \
   listeners create openai-demo -addr 127.0.0.1:0 -provider openai -profile demo
 ```
 
@@ -61,19 +116,19 @@ provider path, method, body, and auth headers unchanged.
 Inspect the listener:
 
 ```bash
-go run ./cmd/zolemc -base-url http://127.0.0.1:19001 listener state
+zolemc -base-url http://127.0.0.1:19001 listener state
 ```
 
 Health check the listener:
 
 ```bash
-go run ./cmd/zolemc -base-url http://127.0.0.1:19001 listener health
+zolemc -base-url http://127.0.0.1:19001 listener health
 ```
 
 Call a provider-compatible endpoint:
 
 ```bash
-go run ./cmd/zolemc -base-url http://127.0.0.1:19001 \
+zolemc -base-url http://127.0.0.1:19001 \
   request -method POST \
   -path /v1/chat/completions \
   -H 'Authorization: Bearer sk-test' \
@@ -99,7 +154,7 @@ for examples and behavior.
 For WASM-generator profiles, pass a compiled binary module through `zolemc`:
 
 ```bash
-go run ./cmd/zolemc -admin-url http://127.0.0.1:18090 \
+zolemc -admin-url http://127.0.0.1:18090 \
   profiles create wasm-demo \
   -wasm-module-file ./generator.wasm \
   -wasm-timeout-ms 250
@@ -117,7 +172,7 @@ Optional local runtime TLS:
 ```bash
 ./scripts/generate-certs.sh
 
-go run ./cmd/zolem \
+zolem \
   -local-admin-addr 127.0.0.1:18443 \
   -local-tls-cert certs/localhost.pem \
   -local-tls-key certs/localhost-key.pem
@@ -131,7 +186,7 @@ data-plane listeners by including `"tls": true` in the listener payload.
 Start one loopback listener pinned to a provider and backend:
 
 ```bash
-go run ./cmd/zolem \
+zolem \
   -local-addr 127.0.0.1:18080 \
   -local-provider anthropic \
   -local-profile demo \
@@ -262,3 +317,85 @@ sandbox settings to Shatter and rejects host writes to the repo or `/tmp`:
 ```bash
 ./scripts/test-shatter-full-scan-sandbox.sh
 ```
+
+## Docker examples
+
+Basic local runtime mode (admin server):
+
+```bash
+docker run --rm -p 18090:18090 \
+  ghcr.io/ketang/zolem:v0.1.0 \
+  -local-admin-addr 0.0.0.0:18090
+```
+
+With a fixture directory mounted:
+
+```bash
+docker run --rm -p 18090:18090 \
+  -v $PWD/fixtures:/fixtures \
+  ghcr.io/ketang/zolem:v0.1.0 \
+  -local-admin-addr 0.0.0.0:18090 \
+  -local-fixtures-dir /fixtures
+```
+
+With TLS certs mounted:
+
+```bash
+docker run --rm -p 18443:18443 \
+  -v $PWD/certs:/certs \
+  ghcr.io/ketang/zolem:v0.1.0 \
+  -local-admin-addr 0.0.0.0:18443 \
+  -local-tls-cert /certs/localhost.pem \
+  -local-tls-key /certs/localhost-key.pem
+```
+
+Fixed-listener mode in a container:
+
+```bash
+docker run --rm -p 18080:18080 \
+  ghcr.io/ketang/zolem:v0.1.0 \
+  -local-addr 0.0.0.0:18080 \
+  -local-provider openai \
+  -local-backend lorem
+```
+
+Run `zolemc` against a containerized admin server from the host:
+
+```bash
+zolemc -admin-url http://127.0.0.1:18090 profiles create demo -backend lorem
+```
+
+## Artifact verification
+
+<details>
+<summary>Checksum, cosign signature, and SBOM verification</summary>
+
+### Checksums
+
+```bash
+sha256sum -c checksums.txt
+```
+
+### Cosign signature
+
+Archives are signed via GitHub Actions OIDC. Verify with [cosign](https://github.com/sigstore/cosign):
+
+```bash
+cosign verify-blob \
+  --bundle zolem-<version>-<os>-<arch>.tar.gz.bundle \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp "https://github.com/ketang/zolem/.github/workflows/release.yml@refs/tags/.*" \
+  zolem-<version>-<os>-<arch>.tar.gz
+```
+
+Exit code `0` means the signature is valid.
+
+### SBOMs
+
+Each archive has a paired `.sbom` file in [CycloneDX](https://cyclonedx.org/) format. Inspect with [syft](https://github.com/anchore/syft):
+
+```bash
+syft zolem-<version>-<os>-<arch>.tar.gz.sbom
+```
+
+</details>
