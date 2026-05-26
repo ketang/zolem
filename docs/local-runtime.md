@@ -400,7 +400,8 @@ For custom scoring or logic that does not fit CEL, the deprecated path is a
 per-fixture `match.wasm` file. A fixture cannot define both `match.cel` and
 `match.wasm`; Zolem rejects that fixture at load time. A fixture with neither
 matcher loads but will never match. New configurations should prefer a
-namespace-level `selector.wasm` instead.
+namespace-level `selector.wasm` instead. Selector and legacy matcher ABIs are
+documented in [wasm-modules.md](wasm-modules.md).
 
 For a templated fixture, replace `response.json` with `response.json.tmpl`.
 Zolem parses, executes, and validates the rendered JSON when the fixture-backed
@@ -589,6 +590,10 @@ Constraints:
 - decoded result arrays are capped at 4096 strings
 - empty arrays and empty strings are valid
 - WASM validation, runtime, timeout, or result-shape failures return a Zolem internal error response
+
+Zolem does not require source headers or generated bindings for WASM modules.
+Build instructions and examples for Rust, C, and fixture selection modules are
+in [wasm-modules.md](wasm-modules.md).
 
 ## Ollama Backend
 
