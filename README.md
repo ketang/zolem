@@ -152,6 +152,9 @@ error-path testing. See
 [docs/local-runtime.md](docs/local-runtime.md)
 for examples and behavior.
 
+For no-egress Codex and Claude client smoke tests with Bubblewrap, see
+[docs/local-runtime.md#no-egress-client-smoke-tests-with-bubblewrap](docs/local-runtime.md#no-egress-client-smoke-tests-with-bubblewrap).
+
 For WASM-generator profiles, pass a compiled binary module through `zolemc`:
 
 ```bash

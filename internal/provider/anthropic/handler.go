@@ -269,8 +269,8 @@ func estimateInputTokens(req MessagesRequest) int {
 
 func promptFromRequest(req MessagesRequest) string {
 	var lines []string
-	if req.System != "" {
-		lines = append(lines, "system: "+strings.TrimSpace(req.System))
+	if system := strings.TrimSpace(req.System.PlainText()); system != "" {
+		lines = append(lines, "system: "+system)
 	}
 	for _, msg := range req.Messages {
 		line := strings.TrimSpace(msg.Role + ": " + msg.Content.PlainText())
@@ -414,8 +414,8 @@ func (h *Handler) handleOllamaStream(w http.ResponseWriter, ctx context.Context,
 
 func anthropicToChatMessages(req MessagesRequest) []ollama.ChatMessage {
 	var messages []ollama.ChatMessage
-	if req.System != "" {
-		messages = append(messages, ollama.ChatMessage{Role: "system", Content: strings.TrimSpace(req.System)})
+	if system := strings.TrimSpace(req.System.PlainText()); system != "" {
+		messages = append(messages, ollama.ChatMessage{Role: "system", Content: system})
 	}
 	for _, msg := range req.Messages {
 		text := msg.Content.PlainText()

@@ -7,11 +7,11 @@ import (
 )
 
 type MessagesRequest struct {
-	Model     string    `json:"model"`
-	MaxTokens int       `json:"max_tokens"`
-	Messages  []Message `json:"messages"`
-	System    string    `json:"system,omitempty"`
-	Stream    bool      `json:"stream,omitempty"`
+	Model     string         `json:"model"`
+	MaxTokens int            `json:"max_tokens"`
+	Messages  []Message      `json:"messages"`
+	System    MessageContent `json:"system,omitempty"`
+	Stream    bool           `json:"stream,omitempty"`
 }
 
 type Message struct {

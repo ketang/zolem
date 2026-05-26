@@ -22,7 +22,17 @@
       }
     },
     "system": {
-      "type": "string"
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/message_content_block"
+          }
+        }
+      ]
     },
     "stream": {
       "type": "boolean"

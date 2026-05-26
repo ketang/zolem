@@ -112,6 +112,40 @@ func TestLocalRuntimeErrorBackend_E2E(t *testing.T) {
 	})
 }
 
+func TestLocalRuntimeAnthropicSystemContentBlocks_E2E(t *testing.T) {
+	repoRoot := repoRoot(t)
+	admin := startLocalAdminService(t, repoRoot)
+	t.Cleanup(admin.Close)
+
+	listenerBaseURL := createRuntimeListener(t, admin, "anthropic", map[string]any{
+		"backend": "lorem",
+	})
+
+	resp, body := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/messages",
+		`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"system":[{"type":"text","text":"be precise","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":"hello"}]}`,
+		"Content-Type: application/json", "x-api-key: sk-test")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d, want 200: %s", resp.StatusCode, body)
+	}
+	var payload struct {
+		Type    string `json:"type"`
+		Role    string `json:"role"`
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	mustJSONUnmarshal(t, body, &payload)
+	if payload.Type != "message" || payload.Role != "assistant" {
+		t.Fatalf("payload identity: got type=%q role=%q", payload.Type, payload.Role)
+	}
+	if len(payload.Content) == 0 || payload.Content[0].Type != "text" || payload.Content[0].Text == "" {
+		t.Fatalf("content: got %#v, want non-empty text block", payload.Content)
+	}
+}
+
 func TestLocalRuntimeWASMBackend_E2E(t *testing.T) {
 	repoRoot := repoRoot(t)
 	admin := startLocalAdminService(t, repoRoot)
