@@ -560,10 +560,11 @@ Profile shape:
 Create the same profile with `zolemc` from a binary `.wasm` file:
 
 ```bash
-go run ./cmd/zolemc -admin-url http://127.0.0.1:18090 \
+zolemc -admin-url http://127.0.0.1:18090 \
   profiles create wasm-demo \
   -wasm-module-file ./generator.wasm \
   -wasm-timeout-ms 100
+# If running from source: go run ./cmd/zolemc -admin-url http://127.0.0.1:18090 ...
 ```
 
 `-wasm-module-file` reads and base64-encodes the module for the profile payload.
