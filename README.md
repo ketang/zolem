@@ -49,11 +49,11 @@ Download the archive for your platform from
 | Linux arm64 | `zolem-<version>-linux-arm64.tar.gz` |
 | macOS arm64 | `zolem-<version>-darwin-arm64.tar.gz` |
 
-Extract and place the binary on your `PATH`:
+Extract and place both binaries on your `PATH`:
 
 ```bash
 tar -xzf zolem-<version>-<os>-<arch>.tar.gz
-sudo mv zolem /usr/local/bin/
+sudo mv zolem zolemc /usr/local/bin/
 ```
 
 Verify checksums:

@@ -43,15 +43,7 @@ sha256sum -c checksums.txt
 
 ```bash
 tar -xzf zolem-<version>-<os>-<arch>.tar.gz
-sudo mv zolem /usr/local/bin/
-```
-
-The archive contains **only the `zolem` server binary**. For `zolemc` (the
-admin CLI), see [Option 3 — From source](#option-3--from-source) or install
-it separately with `go install`:
-
-```bash
-go install github.com/ketang/zolem/cmd/zolemc@latest
+sudo mv zolem zolemc /usr/local/bin/
 ```
 
 ### Verify the cosign signature
