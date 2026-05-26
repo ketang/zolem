@@ -10,3 +10,4 @@ certs/
 .shatter-cache/
 shatter-artifacts/
 shatter-report/
+docs/stories/drift-todo.md
