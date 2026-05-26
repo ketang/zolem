@@ -46,6 +46,7 @@ func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator 
 	}
 	h.mux = chi.NewRouter()
 	h.mux.Post("/v1/chat/completions", h.handleChatCompletions)
+	h.mux.Get("/v1/responses", h.handleResponses)
 	return h
 }
 
@@ -182,13 +183,21 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 }
 
 func renderFixtureBody(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture) ([]byte, bool) {
+	body, err := renderFixtureBodyBytes(ctx, f)
+	if err != nil {
+		zolemerr.Write(w, err.Error())
+		return nil, false
+	}
+	return body, true
+}
+
+func renderFixtureBodyBytes(ctx context.Context, f *fixture.Fixture) ([]byte, error) {
 	if !f.Templated {
-		return f.ResponseBody, true
+		return f.ResponseBody, nil
 	}
 	rt, ok := runtimecfg.ListenerRuntimeFromContext(ctx)
 	if !ok {
-		zolemerr.Write(w, fmt.Sprintf("fixture %q template requires local runtime metadata", f.ID))
-		return nil, false
+		return nil, fmt.Errorf("fixture %q template requires local runtime metadata", f.ID)
 	}
 	renderSeq := runtimecfg.IncrementTemplateRenderForRequest(ctx)
 	body, err := fixture.RenderBody(*f, fixture.RenderInput{
@@ -200,10 +209,9 @@ func renderFixtureBody(w http.ResponseWriter, ctx context.Context, f *fixture.Fi
 		Now: time.Now().UTC(),
 	})
 	if err != nil {
-		zolemerr.Write(w, err.Error())
-		return nil, false
+		return nil, err
 	}
-	return body, true
+	return body, nil
 }
 
 func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture, req ChatCompletionRequest) {

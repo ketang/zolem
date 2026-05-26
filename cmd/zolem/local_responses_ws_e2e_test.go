@@ -128,7 +128,7 @@ func TestOpenAIResponsesWebSocketCallsFile_E2E(t *testing.T) {
 	_ = readUntilResponseCompleted(t, conn)
 	conn.Close()
 
-	records := readRawJSONLFile(t, callsFile)
+	records := waitRawJSONLFile(t, callsFile, 1)
 	if len(records) != 1 {
 		t.Fatalf("expected 1 JSONL record, got %d: %#v", len(records), records)
 	}
@@ -306,9 +306,32 @@ fixtures:
 
 func readRawJSONLFile(t *testing.T, path string) []map[string]any {
 	t.Helper()
+	records, err := readRawJSONLFileResult(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return records
+}
+
+func waitRawJSONLFile(t *testing.T, path string, want int) []map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var records []map[string]any
+	for time.Now().Before(deadline) {
+		var err error
+		records, err = readRawJSONLFileResult(path)
+		if err == nil && len(records) >= want {
+			return records
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return readRawJSONLFile(t, path)
+}
+
+func readRawJSONLFileResult(path string) ([]map[string]any, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		t.Fatalf("open JSONL file: %v", err)
+		return nil, err
 	}
 	defer f.Close()
 
@@ -321,12 +344,12 @@ func readRawJSONLFile(t *testing.T, path string) []map[string]any {
 		}
 		var rec map[string]any
 		if err := json.Unmarshal(line, &rec); err != nil {
-			t.Fatalf("unmarshal JSONL line: %v\nline: %s", err, line)
+			return nil, err
 		}
 		records = append(records, rec)
 	}
 	if err := scanner.Err(); err != nil {
-		t.Fatalf("scan JSONL file: %v", err)
+		return nil, err
 	}
-	return records
+	return records, nil
 }
