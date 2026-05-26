@@ -58,6 +58,11 @@ func TestSourceVerification_AnthropicV1SnapshotInvariants(t *testing.T) {
 		t.Fatalf("valid anthropic sdk-shaped request rejected: %v", err)
 	}
 
+	validSystemBlocks := []byte(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"system":[{"type":"text","text":"be precise","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":"hello"}]}`)
+	if err := validator.Validate("anthropic", "v1", validSystemBlocks); err != nil {
+		t.Fatalf("valid anthropic system-block request rejected: %v", err)
+	}
+
 	drifted := []byte(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"tool","content":"hello"}]}`)
 	if err := validator.Validate("anthropic", "v1", drifted); err == nil {
 		t.Fatal("expected anthropic drifted role to fail validation")
