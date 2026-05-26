@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -13,6 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
+
+	runtimecfg "zolem.dev/zolem/internal/runtime"
 )
 
 // Recorder is the storage abstraction for captured request/response pairs.
@@ -24,6 +28,8 @@ type Recorder interface {
 	NextCallID() int64
 	// Record persists a completed call.
 	Record(call RecordedCall)
+	// RecordWS persists a completed WebSocket connection.
+	RecordWS(call RecordedWSCall)
 	// List returns a defensive copy of all recorded calls in insertion order.
 	List() []RecordedCall
 	// Clear drops all recorded calls and resets the call_id sequence to 1.
@@ -42,6 +48,17 @@ type RecordedCall struct {
 	LatencyMS   int64            `json:"latency_ms"`
 	Request     RecordedRequest  `json:"request"`
 	Response    RecordedResponse `json:"response"`
+	WebSocket   *RecordedWSCall  `json:"websocket,omitempty"`
+}
+
+// RecordedWSCall is the compact JSONL shape used for WebSocket connections.
+type RecordedWSCall struct {
+	CallID         int64  `json:"call_id"`
+	Method         string `json:"method"`
+	Path           string `json:"path"`
+	Status         int    `json:"status"`
+	FramesSent     int    `json:"frames_sent"`
+	FramesReceived int    `json:"frames_received"`
 }
 
 // RecordedRequest is the captured request half of a call.
@@ -149,6 +166,24 @@ func (r *inMemoryRecorder) Record(call RecordedCall) {
 	r.calls = append(r.calls, call)
 }
 
+func (r *inMemoryRecorder) RecordWS(call RecordedWSCall) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	wsCall := call
+	r.calls = append(r.calls, RecordedCall{
+		CallID:   call.CallID,
+		Listener: r.listener,
+		Request: RecordedRequest{
+			Method: call.Method,
+			Path:   call.Path,
+		},
+		Response: RecordedResponse{
+			Status: call.Status,
+		},
+		WebSocket: &wsCall,
+	})
+}
+
 func (r *inMemoryRecorder) List() []RecordedCall {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -203,6 +238,20 @@ func (r *jsonlRecorder) Record(call RecordedCall) {
 	_ = r.file.Sync()
 }
 
+func (r *jsonlRecorder) RecordWS(call RecordedWSCall) {
+	buf, err := json.Marshal(call)
+	if err != nil {
+		return
+	}
+	buf = append(buf, '\n')
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, err := r.file.Write(buf); err != nil {
+		return
+	}
+	_ = r.file.Sync()
+}
+
 func (r *jsonlRecorder) List() []RecordedCall { return nil }
 
 func (r *jsonlRecorder) Clear() int { return 0 }
@@ -220,11 +269,12 @@ func (r *jsonlRecorder) Close() {
 // be wired unconditionally without branching on whether recording is enabled.
 type noopRecorder struct{}
 
-func (noopRecorder) NextCallID() int64      { return 0 }
-func (noopRecorder) Record(RecordedCall)    {}
-func (noopRecorder) List() []RecordedCall   { return nil }
-func (noopRecorder) Clear() int             { return 0 }
-func (noopRecorder) Close()                 {}
+func (noopRecorder) NextCallID() int64       { return 0 }
+func (noopRecorder) Record(RecordedCall)     {}
+func (noopRecorder) RecordWS(RecordedWSCall) {}
+func (noopRecorder) List() []RecordedCall    { return nil }
+func (noopRecorder) Clear() int              { return 0 }
+func (noopRecorder) Close()                  {}
 
 // Compile-time interface assertions.
 var (
@@ -247,6 +297,8 @@ func recordingMiddleware(recorder Recorder, caps RecordCaps) func(http.Handler) 
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			receivedAt := time.Now().UTC()
 			callID := recorder.NextCallID()
+			ctx, wsStats := runtimecfg.WithWebSocketStats(req.Context())
+			req = req.WithContext(ctx)
 
 			fullBody, _ := readAllBody(req.Body)
 			reqBody, reqTruncated := capBytes(fullBody, caps.RequestBodyCapBytes)
@@ -257,6 +309,17 @@ func recordingMiddleware(recorder Recorder, caps RecordCaps) func(http.Handler) 
 			next.ServeHTTP(rw, req)
 
 			completedAt := time.Now().UTC()
+			if wsStats.Upgraded() {
+				recorder.RecordWS(RecordedWSCall{
+					CallID:         callID,
+					Method:         req.Method,
+					Path:           req.URL.Path,
+					Status:         http.StatusSwitchingProtocols,
+					FramesSent:     wsStats.FramesSent(),
+					FramesReceived: wsStats.FramesReceived(),
+				})
+				return
+			}
 
 			call := RecordedCall{
 				CallID:      callID,
@@ -415,6 +478,14 @@ func (rw *recordingResponseWriter) Flush() {
 	}
 }
 
+func (rw *recordingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := rw.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("underlying response writer does not support hijacking")
+	}
+	return hijacker.Hijack()
+}
+
 // sseAccumulator parses concatenated SSE chunks into discrete event frames.
 // Frames are delimited by "\n\n"; within a frame, "event:" and "data:" lines
 // (and only those) are extracted. Partial frames at chunk boundaries are
@@ -469,4 +540,3 @@ func (a *sseAccumulator) parseFrame(frame []byte, ts time.Time) {
 		Data:       data,
 	})
 }
-

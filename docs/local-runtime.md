@@ -289,14 +289,24 @@ go run ./cmd/zolem \
   -local-calls-file ./zolem-calls.jsonl
 ```
 
-Each line is a `RecordedCall` (see `cmd/zolem/recording.go`) with monotonic
-`call_id`, listener identity, timing, request, and response. Caps only bound
-what is recorded — the full request/response is still served to the caller.
+HTTP lines are `RecordedCall` objects (see `cmd/zolem/recording.go`) with
+monotonic `call_id`, listener identity, timing, request, and response. OpenAI
+Responses WebSocket connections are recorded once per connection with a compact
+shape: `call_id`, `method`, `path`, `status`, `frames_sent`, and
+`frames_received`. Caps only bound what is recorded — the full
+request/response is still served to the caller.
 
 Each fixture still needs the normal files under a subdirectory:
 
 - `meta.yaml`
 - `response.json` or `response.json.tmpl`
+
+For OpenAI Responses WebSocket fixtures, set `version: v1-responses` and make
+`response.json` a JSON array of Responses API event objects. Zolem sends each
+array element as one WebSocket text frame when the client sends a generated
+`response.create` frame. Codex may send a `response.create` frame with
+`generate:false` before the first real turn; Zolem answers that warmup frame
+without advancing fixture sequences.
 
 Selection is configured at the namespace level via `fixtures.yaml` (recommended)
 or a namespace-level `selector.wasm`. The historical per-fixture `match.cel`
@@ -367,6 +377,30 @@ version: v1
 fixtures:
   - expression: 'body["model"] == "claude-3-5-sonnet-20241022"'
     fixture: anthropic-demo
+```
+
+OpenAI Responses WebSocket sequence example:
+
+```yaml
+provider: openai
+version: v1-responses
+fixtures:
+  - expression: 'true'
+    sequence:
+      id: conversation
+      on_exhaust: last
+      steps: [turn-tool, turn-end]
+```
+
+Each step directory uses `meta.yaml` with `version: v1-responses`; its
+`response.json` is an array such as:
+
+```json
+[
+  {"type": "response.created", "sequence_number": 0, "response": {"id": "resp_01", "status": "in_progress", "output": []}},
+  {"type": "response.output_text.delta", "sequence_number": 1, "item_id": "msg_01", "output_index": 0, "content_index": 0, "delta": "Done."},
+  {"type": "response.completed", "sequence_number": 2, "response": {"id": "resp_01", "status": "completed", "output": []}}
+]
 ```
 
 Per-fixture `match.wasm` migrates the same way: remove `match.wasm` from the

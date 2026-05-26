@@ -9,6 +9,7 @@ require (
 	github.com/getkin/kin-openapi v0.134.0
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/cel-go v0.28.1
+	github.com/gorilla/websocket v1.5.3
 	github.com/openai/openai-go/v3 v3.15.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/tetratelabs/wazero v1.11.0
