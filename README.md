@@ -109,6 +109,8 @@ go run ./cmd/zolemc -admin-url http://127.0.0.1:18090 \
 selects the `wasm` backend when `-backend` is not set explicitly.
 The generator ABI, input shape, and runtime constraints are documented in
 [docs/local-runtime.md#wasm-backend](docs/local-runtime.md#wasm-backend).
+Build examples for freestanding WASM modules are in
+[docs/wasm-modules.md](docs/wasm-modules.md).
 
 Optional local runtime TLS:
 
