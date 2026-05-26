@@ -31,10 +31,30 @@ builds:
       - -X main.commit={{ .Commit }}
       - -X main.date={{ .Date }}
 
+  - id: zolemc
+    main: ./cmd/zolemc
+    binary: zolemc
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: darwin
+        goarch: amd64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+
 archives:
   - id: zolem
     ids:
       - zolem
+      - zolemc
     formats:
       - tar.gz
     name_template: "zolem-{{ .Version }}-{{ .Os }}-{{ .Arch }}"

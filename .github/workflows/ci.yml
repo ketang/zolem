@@ -25,5 +25,8 @@ jobs:
       - name: Build zolem
         run: go build ./cmd/zolem
 
+      - name: Build zolemc
+        run: go build ./cmd/zolemc
+
       - name: Smoke test
         run: ./scripts/smoke.sh
