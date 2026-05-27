@@ -65,6 +65,12 @@ run the relevant zolem verification gate.
 - Local runtime features should usually be tested through the admin API plus the listener data plane together.
 - Follow [docs/testing-e2e.md](docs/testing-e2e.md) for the repo standard.
 
+## Intent Stories
+
+[docs/stories/](docs/stories/) contains storystore intent stories describing
+user-facing behavior. Consult relevant stories before changing behavior they
+cover.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
 
