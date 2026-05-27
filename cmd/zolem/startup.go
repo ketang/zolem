@@ -417,6 +417,9 @@ func (o localOptions) runtime() (runtimecfg.ListenerRuntime, error) {
 	if addr == "" {
 		addr = "127.0.0.1:8080"
 	}
+	if err := runtimecfg.ValidateLoopbackAddr(addr); err != nil {
+		return runtimecfg.ListenerRuntime{}, fmt.Errorf("invalid local addr %q: %w", addr, err)
+	}
 	profile := o.Profile
 	if profile == "" {
 		profile = "default"

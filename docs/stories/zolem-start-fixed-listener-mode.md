@@ -25,6 +25,7 @@ Only loopback addresses are accepted; non-loopback addresses are rejected. Only 
 ## Auditable Claims
 - zolem exits with log.Fatal if -local-provider is empty or not one of anthropic/openai/gemini
 - zolem defaults -local-addr to 127.0.0.1:8080 when unset
+- zolem rejects non-loopback -local-addr values (e.g. 0.0.0.0) at startup before listening
 - zolem defaults -local-backend to lorem when unset
 - TLS requires both -local-tls-cert and -local-tls-key; supplying only one is an error
 - fixture backend without -local-fixtures-dir returns a startup error

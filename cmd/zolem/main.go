@@ -7,7 +7,7 @@ import (
 
 func main() {
 	localAdminAddr := flag.String("local-admin-addr", "", "listen address for local admin control plane")
-	localAddr := flag.String("local-addr", "", "listen address for local fixed-listener mode")
+	localAddr := flag.String("local-addr", "", "loopback listen address for local fixed-listener mode (e.g. 127.0.0.1:8080); non-loopback addresses are rejected")
 	localProvider := flag.String("local-provider", "", "provider for local fixed-listener mode")
 	localProfile := flag.String("local-profile", "default", "profile name for local fixed-listener mode")
 	localBackend := flag.String("local-backend", "lorem", "backend for local fixed-listener mode")
