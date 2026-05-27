@@ -20,7 +20,7 @@ A developer wants to create and reconfigure multiple mock listeners during a tes
 When -local-admin-addr is set to a loopback address, zolem starts the admin HTTP server and logs the address. The admin API serves GET /_zolem/health (returns {status: ok}), GET /_zolem/profiles, and GET /_zolem/listeners. Profiles and listeners created via the API are held in memory. If -local-admin-addr is a non-loopback address, zolem exits with an error. If neither -local-admin-addr nor -local-provider is set, zolem exits with log.Fatal. If both flags are supplied together, zolem uses admin mode (the -local-admin-addr path) and ignores -local-provider. TLS is optional: both -local-tls-cert and -local-tls-key must be supplied together; supplying only one is a startup error.
 
 ## Boundaries
-Only loopback addresses are accepted for -local-admin-addr. All profiles and listeners are in-memory and are lost on process exit. Only one of admin mode or fixed-listener mode may be used at a time (mutually exclusive flags). TLS requires both cert and key files. If the chosen port is already in use, the OS returns a bind error and zolem exits with a network error.
+Only loopback addresses are accepted for -local-admin-addr. All profiles and listeners are in-memory and are lost on process exit. A single zolem process runs either admin mode or fixed-listener mode; when both -local-admin-addr and -local-provider are supplied, admin mode takes precedence and -local-provider is ignored. TLS requires both cert and key files. If the chosen port is already in use, the OS returns a bind error and zolem exits with a network error.
 
 ## Auditable Claims
 - zolem exits with log.Fatal if neither -local-admin-addr nor -local-provider is set
@@ -43,3 +43,6 @@ Only loopback addresses are accepted for -local-admin-addr. All profiles and lis
 
 ### Docs
 - `README.md#quick-start-local-runtime-mode`
+
+## Drift Notes
+- No focused test covering the combined -local-admin-addr plus -local-provider invocation was identified during this update; the precedence claim is currently supported by cmd/zolem/main.go branch order.
