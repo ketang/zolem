@@ -355,10 +355,13 @@ docker run --rm -p 18443:18443 \
 
 Fixed-listener mode in a container:
 
+Fixed-listener mode enforces loopback-only binding, so it cannot listen on
+`0.0.0.0` inside a container. Use admin mode for containerized deployments
+(see examples above) or run the binary directly on the host:
+
 ```bash
-docker run --rm -p 18080:18080 \
-  ghcr.io/ketang/zolem:v0.1.0 \
-  -local-addr 0.0.0.0:18080 \
+zolem \
+  -local-addr 127.0.0.1:18080 \
   -local-provider openai \
   -local-backend lorem
 ```
