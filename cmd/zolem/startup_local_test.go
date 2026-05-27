@@ -423,6 +423,38 @@ func TestRunLocal_RejectsPartialTLSConfig(t *testing.T) {
 	}
 }
 
+func TestLocalOptions_RejectsNonLoopbackAddr(t *testing.T) {
+	_, _, err := buildLocalStartupApp(localOptions{
+		Addr:     "0.0.0.0:18080",
+		Provider: "anthropic",
+		Profile:  "demo",
+		Backend:  "lorem",
+	}, startupDeps{
+		newFetcher: disabledTestFetcher,
+	})
+	if err == nil {
+		t.Fatal("expected non-loopback addr to be rejected")
+	}
+	if !strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("error should mention loopback, got: %v", err)
+	}
+}
+
+func TestLocalOptions_AcceptsLoopbackAddr(t *testing.T) {
+	app, _, err := buildLocalStartupApp(localOptions{
+		Addr:     "127.0.0.1:8080",
+		Provider: "anthropic",
+		Profile:  "demo",
+		Backend:  "lorem",
+	}, startupDeps{
+		newFetcher: disabledTestFetcher,
+	})
+	if err != nil {
+		t.Fatalf("loopback addr should be accepted: %v", err)
+	}
+	defer app.close()
+}
+
 func TestGeneratorForBackend_UsesFakerMode(t *testing.T) {
 	got, err := generatorForBackend("faker", startupDeps{
 		newLorem: func() *response.LoremGenerator {
