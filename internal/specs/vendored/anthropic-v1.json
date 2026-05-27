@@ -73,17 +73,10 @@
     "message_content_block": {
       "type": "object",
       "required": [
-        "type",
-        "text"
+        "type"
       ],
       "properties": {
         "type": {
-          "type": "string",
-          "enum": [
-            "text"
-          ]
-        },
-        "text": {
           "type": "string"
         }
       },

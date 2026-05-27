@@ -241,6 +241,10 @@ func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture
 		w.Write(f.ResponseBody)
 		return
 	}
+	if msg.Content[0].Type == "tool_use" {
+		streamToolUseResponse(ctx, w, responseModel, msg.Content[0], msg.Usage.InputTokens, msg.Usage.OutputTokens)
+		return
+	}
 	text := msg.Content[0].Text
 	tokens := tokenize(text)
 	streamResponse(ctx, w, responseModel, tokens, msg.Usage.InputTokens)
