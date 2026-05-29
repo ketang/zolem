@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"zolem.dev/zolem/internal/fixture"
 	"zolem.dev/zolem/internal/response"
@@ -550,5 +551,46 @@ func decodeJSON(t *testing.T, body io.Reader, v any) {
 	t.Helper()
 	if err := json.NewDecoder(body).Decode(v); err != nil {
 		t.Fatalf("decode response: %v", err)
+	}
+}
+
+func TestStartupSmallHelpers(t *testing.T) {
+	if got := wasmGenerateTimeout(runtimecfg.RuntimeProfile{}); got != 100*time.Millisecond {
+		t.Fatalf("default wasm timeout = %v", got)
+	}
+	if got := wasmGenerateTimeout(runtimecfg.RuntimeProfile{WASMGenerateTimeoutMS: 250}); got != 250*time.Millisecond {
+		t.Fatalf("configured wasm timeout = %v", got)
+	}
+
+	gen, err := wasmGeneratorForProfile(runtimecfg.RuntimeProfile{Backend: "lorem"})
+	if err != nil || gen != nil {
+		t.Fatalf("non-wasm generator = %v, %v; want nil nil", gen, err)
+	}
+	_, err = wasmGeneratorForProfile(runtimecfg.RuntimeProfile{Backend: runtimecfg.BackendWASM, WASMModuleBase64: "not-base64"})
+	if err == nil || !strings.Contains(err.Error(), "decode wasm_module_base64") {
+		t.Fatalf("bad wasm base64 error = %v", err)
+	}
+
+	if provider, version := splitKey("openai:v1"); provider != "openai" || version != "v1" {
+		t.Fatalf("splitKey with version = %q %q", provider, version)
+	}
+	if provider, version := splitKey("openai"); provider != "openai" || version != "" {
+		t.Fatalf("splitKey without version = %q %q", provider, version)
+	}
+
+	rr := httptest.NewRecorder()
+	writeZolemError(rr, "startup failed")
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("writeZolemError status = %d", rr.Code)
+	}
+	if rr.Header().Get("X-Zolem-Error") != "true" {
+		t.Fatalf("X-Zolem-Error = %q", rr.Header().Get("X-Zolem-Error"))
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode zolem error: %v", err)
+	}
+	if payload["zolem_error"] != "startup failed" {
+		t.Fatalf("zolem_error = %q", payload["zolem_error"])
 	}
 }

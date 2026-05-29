@@ -6,10 +6,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	runtimecfg "zolem.dev/zolem/internal/runtime"
 )
 
 func TestInMemoryRecorder_NextCallIDIsMonotonic(t *testing.T) {
@@ -76,10 +80,97 @@ func TestInMemoryRecorder_RecordListClear(t *testing.T) {
 	}
 }
 
+func TestInMemoryRecorder_RecordWS(t *testing.T) {
+	r := newInMemoryRecorder("listener-1")
+	r.RecordWS(RecordedWSCall{
+		CallID:         7,
+		Method:         http.MethodGet,
+		Path:           "/v1/responses",
+		Status:         http.StatusSwitchingProtocols,
+		FramesSent:     2,
+		FramesReceived: 1,
+	})
+
+	calls := r.List()
+	if len(calls) != 1 {
+		t.Fatalf("List len = %d, want 1", len(calls))
+	}
+	got := calls[0]
+	if got.Listener != "listener-1" || got.CallID != 7 {
+		t.Fatalf("recorded call metadata = %+v", got)
+	}
+	if got.Request.Method != http.MethodGet || got.Request.Path != "/v1/responses" {
+		t.Fatalf("request = %+v", got.Request)
+	}
+	if got.Response.Status != http.StatusSwitchingProtocols {
+		t.Fatalf("status = %d", got.Response.Status)
+	}
+	if got.WebSocket == nil || got.WebSocket.FramesSent != 2 || got.WebSocket.FramesReceived != 1 {
+		t.Fatalf("websocket record = %+v", got.WebSocket)
+	}
+}
+
 func TestInMemoryRecorder_CloseNoop(t *testing.T) {
 	r := newInMemoryRecorder("listener-1")
 	r.Close()
 	r.Close() // double close is safe
+}
+
+func TestJSONLRecorderWritesCallsAndWebSockets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "calls.jsonl")
+	r, err := newJSONLRecorder(path)
+	if err != nil {
+		t.Fatalf("newJSONLRecorder: %v", err)
+	}
+	if got := r.NextCallID(); got != 1 {
+		t.Fatalf("NextCallID = %d, want 1", got)
+	}
+	r.Record(RecordedCall{CallID: 1, Listener: "listener-1", Request: RecordedRequest{Method: http.MethodPost, Path: "/v1/chat/completions"}})
+	r.RecordWS(RecordedWSCall{CallID: 2, Method: http.MethodGet, Path: "/v1/responses", Status: http.StatusSwitchingProtocols})
+	if list := r.List(); list != nil {
+		t.Fatalf("JSONL List = %+v, want nil", list)
+	}
+	if cleared := r.Clear(); cleared != 0 {
+		t.Fatalf("JSONL Clear = %d, want 0", cleared)
+	}
+	r.Close()
+	r.Close()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read jsonl: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("jsonl line count = %d, want 2\n%s", len(lines), data)
+	}
+	if !strings.Contains(lines[0], `"listener":"listener-1"`) || !strings.Contains(lines[1], `"status":101`) {
+		t.Fatalf("unexpected jsonl contents:\n%s", data)
+	}
+}
+
+func TestJSONLRecorderOpenError(t *testing.T) {
+	dir := t.TempDir()
+	_, err := newJSONLRecorder(filepath.Join(dir, "missing", "calls.jsonl"))
+	if err == nil || !strings.Contains(err.Error(), "open calls file") {
+		t.Fatalf("newJSONLRecorder error = %v", err)
+	}
+}
+
+func TestNoopRecorder(t *testing.T) {
+	r := noopRecorder{}
+	if got := r.NextCallID(); got != 0 {
+		t.Fatalf("NextCallID = %d, want 0", got)
+	}
+	r.Record(RecordedCall{CallID: 1})
+	r.RecordWS(RecordedWSCall{CallID: 2})
+	if got := r.List(); got != nil {
+		t.Fatalf("List = %+v, want nil", got)
+	}
+	if got := r.Clear(); got != 0 {
+		t.Fatalf("Clear = %d, want 0", got)
+	}
+	r.Close()
 }
 
 func TestRecordedRequest_BodyVsBodyBase64JSON(t *testing.T) {
@@ -103,6 +194,20 @@ func TestRecordedRequest_BodyVsBodyBase64JSON(t *testing.T) {
 	}
 	if !strings.Contains(string(b2), `"body_base64":"//79"`) {
 		t.Fatalf("missing body_base64 field: %s", b2)
+	}
+}
+
+func TestRecordedResponse_BodyVsBodyBase64JSON(t *testing.T) {
+	rr := RecordedResponse{}
+	rr.setBody([]byte("ok"), 3)
+	if rr.Body != "ok" || rr.BodyBase64 != "" || rr.BodyTruncatedBytes != 3 {
+		t.Fatalf("utf8 response body fields = %+v", rr)
+	}
+
+	rr = RecordedResponse{}
+	rr.setBody([]byte{0xff, 0x00}, 0)
+	if rr.Body != "" || rr.BodyBase64 != "/wA=" {
+		t.Fatalf("binary response body fields = %+v", rr)
 	}
 }
 
@@ -312,6 +417,44 @@ func TestRecordingMiddleware_SSEEventCap(t *testing.T) {
 	}
 	if c.Response.Stream.EventsTruncated != 3 {
 		t.Fatalf("EventsTruncated = %d, want 3", c.Response.Stream.EventsTruncated)
+	}
+}
+
+func TestRecordingMiddleware_WebSocketStatsRecordsWSCall(t *testing.T) {
+	r := newInMemoryRecorder("listener-1")
+	next := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if _, ok := runtimecfg.WebSocketStatsFromContext(req.Context()); !ok {
+			t.Fatal("missing websocket stats in request context")
+		}
+		runtimecfg.MarkWebSocketUpgraded(req.Context())
+		runtimecfg.RecordWebSocketFrameSent(req.Context())
+		runtimecfg.RecordWebSocketFrameReceived(req.Context())
+		w.WriteHeader(http.StatusOK)
+	})
+	h := recordingMiddleware(r, DefaultRecordCaps())(next)
+
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/responses", nil))
+
+	calls := r.List()
+	if len(calls) != 1 || calls[0].WebSocket == nil {
+		t.Fatalf("calls = %+v, want one websocket call", calls)
+	}
+	if calls[0].Response.Status != http.StatusSwitchingProtocols {
+		t.Fatalf("response status = %d, want 101", calls[0].Response.Status)
+	}
+	if calls[0].WebSocket.FramesSent != 1 || calls[0].WebSocket.FramesReceived != 1 {
+		t.Fatalf("websocket stats = %+v", calls[0].WebSocket)
+	}
+}
+
+func TestRecordingResponseWriterHijackUnsupported(t *testing.T) {
+	rw := newRecordingResponseWriter(httptest.NewRecorder(), DefaultRecordCaps())
+	conn, bufrw, err := rw.Hijack()
+	if err == nil {
+		t.Fatalf("Hijack unexpectedly succeeded with conn=%v bufrw=%v", conn, bufrw)
+	}
+	if !strings.Contains(err.Error(), "does not support hijacking") {
+		t.Fatalf("Hijack error = %v", err)
 	}
 }
 

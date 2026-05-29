@@ -25,7 +25,7 @@ func buildZolemBinary(t *testing.T) string {
 		repoRoot := repoRoot(t)
 		tmp := os.TempDir()
 		zolemBinaryPath = filepath.Join(tmp, "zolem-e2e-test-bin")
-		cmd := exec.Command("go", "build", "-o", zolemBinaryPath, ".")
+		cmd := exec.Command("go", "build", "-buildvcs=false", "-o", zolemBinaryPath, ".")
 		cmd.Dir = filepath.Join(repoRoot, "cmd", "zolem")
 		cmd.Env = os.Environ()
 		out, err := cmd.CombinedOutput()

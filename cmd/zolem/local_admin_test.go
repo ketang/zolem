@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	runtimecfg "zolem.dev/zolem/internal/runtime"
@@ -12,6 +13,7 @@ import (
 type fakeLocalServer struct {
 	addr   string
 	closed bool
+	err    error
 }
 
 func (s *fakeLocalServer) Addr() string {
@@ -20,7 +22,7 @@ func (s *fakeLocalServer) Addr() string {
 
 func (s *fakeLocalServer) Close() error {
 	s.closed = true
-	return nil
+	return s.err
 }
 
 func newTestLocalControlPlane(t *testing.T, opts localAdminOptions) *localControlPlane {
@@ -489,5 +491,160 @@ func TestLocalAdminHandler_TLSListenerRequiresTLSConfig(t *testing.T) {
 	defer listenerResp.Body.Close()
 	if listenerResp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("listener put status: got %d, want 400", listenerResp.StatusCode)
+	}
+}
+
+func TestLocalAdminHandler_InvalidResourceNamesAndMethods(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	handler := buildLocalAdminHandler(control)
+
+	tests := []struct {
+		method string
+		path   string
+		status int
+		allow  string
+	}{
+		{method: http.MethodGet, path: "/_zolem/profiles/nested/name", status: http.StatusNotFound},
+		{method: http.MethodGet, path: "/_zolem/profiles/demo", status: http.StatusMethodNotAllowed, allow: "PUT, DELETE"},
+		{method: http.MethodGet, path: "/_zolem/listeners/nested/name", status: http.StatusNotFound},
+		{method: http.MethodGet, path: "/_zolem/listeners/demo", status: http.StatusMethodNotAllowed, allow: "PUT, DELETE"},
+		{method: http.MethodGet, path: "/_zolem/listeners/nested/name/calls", status: http.StatusNotFound},
+		{method: http.MethodGet, path: "/_zolem/missing", status: http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		resp := doRequest(t, handler, httptestRequest(tt.method, tt.path, bytes.NewBuffer(nil)))
+		resp.Body.Close()
+		if resp.StatusCode != tt.status {
+			t.Fatalf("%s %s status = %d, want %d", tt.method, tt.path, resp.StatusCode, tt.status)
+		}
+		if tt.allow != "" && resp.Header.Get("Allow") != tt.allow {
+			t.Fatalf("%s %s Allow = %q, want %q", tt.method, tt.path, resp.Header.Get("Allow"), tt.allow)
+		}
+	}
+}
+
+func TestLocalAdminHandler_DecodeRequestJSONRejectsUnknownAndExtraObjects(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	handler := buildLocalAdminHandler(control)
+
+	tests := []string{
+		`{"backend":"lorem","unexpected":true}`,
+		`{"backend":"lorem"} {"backend":"faker"}`,
+		`{`,
+	}
+	for _, body := range tests {
+		resp := doRequest(t, handler, httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(body)))
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("body %q status = %d, want 400", body, resp.StatusCode)
+		}
+	}
+}
+
+func TestLocalControlPlaneListenerErrorBranches(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	if _, err := control.UpsertProfile("demo", localProfilePayload{Backend: "lorem"}); err != nil {
+		t.Fatalf("upsert profile: %v", err)
+	}
+
+	zero := 0
+	for _, payload := range []localListenerPayload{
+		{Addr: "127.0.0.1:0", Provider: "openai", Profile: "missing"},
+		{Addr: "127.0.0.1:0", Provider: "bogus", Profile: "demo"},
+		{Addr: "127.0.0.1:0", Provider: "openai", Profile: "demo", RecordResponseBodyCapBytes: &zero},
+		{Addr: "127.0.0.1:0", Provider: "openai", Profile: "demo", RecordStreamEventCap: &zero},
+	} {
+		if _, _, err := control.UpsertListener("bad", payload); err == nil {
+			t.Fatalf("UpsertListener(%+v) unexpectedly succeeded", payload)
+		}
+	}
+
+	startErr := errors.New("listen failed")
+	control.startServer = func(runtimecfg.ListenerSpec, localTLSConfig, http.Handler) (localServer, error) {
+		return nil, startErr
+	}
+	if _, _, err := control.UpsertListener("bad", localListenerPayload{Addr: "127.0.0.1:0", Provider: "openai", Profile: "demo"}); !errors.Is(err, startErr) {
+		t.Fatalf("start server error = %v, want %v", err, startErr)
+	}
+}
+
+func TestLocalControlPlaneListAndClearCallsWithoutRecorder(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	if _, err := control.UpsertProfile("demo", localProfilePayload{Backend: "lorem"}); err != nil {
+		t.Fatalf("upsert profile: %v", err)
+	}
+	if _, _, err := control.UpsertListener("openai-demo", localListenerPayload{Addr: "127.0.0.1:0", Provider: "openai", Profile: "demo"}); err != nil {
+		t.Fatalf("upsert listener: %v", err)
+	}
+	control.mu.Lock()
+	control.listeners["openai-demo"].recorder = nil
+	control.mu.Unlock()
+
+	calls, err := control.ListCalls("openai-demo")
+	if err != nil {
+		t.Fatalf("ListCalls: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("calls = %+v, want empty", calls)
+	}
+	cleared, err := control.ClearCalls("openai-demo")
+	if err != nil {
+		t.Fatalf("ClearCalls: %v", err)
+	}
+	if cleared != 0 {
+		t.Fatalf("cleared = %d, want 0", cleared)
+	}
+}
+
+func TestLocalControlPlaneCloseAndDeleteListenerPropagateServerErrors(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	closeErr := errors.New("close failed")
+	if _, err := control.UpsertProfile("demo", localProfilePayload{Backend: "lorem"}); err != nil {
+		t.Fatalf("upsert profile: %v", err)
+	}
+	control.startServer = func(spec runtimecfg.ListenerSpec, _ localTLSConfig, _ http.Handler) (localServer, error) {
+		return &fakeLocalServer{addr: spec.Addr, err: closeErr}, nil
+	}
+	if _, _, err := control.UpsertListener("openai-demo", localListenerPayload{Addr: "127.0.0.1:19002", Provider: "openai", Profile: "demo"}); err != nil {
+		t.Fatalf("upsert listener: %v", err)
+	}
+	if err := control.DeleteListener("openai-demo"); !errors.Is(err, closeErr) {
+		t.Fatalf("DeleteListener error = %v, want %v", err, closeErr)
+	}
+
+	if _, _, err := control.UpsertListener("openai-demo", localListenerPayload{Addr: "127.0.0.1:19002", Provider: "openai", Profile: "demo"}); err != nil {
+		t.Fatalf("upsert listener again: %v", err)
+	}
+	if err := control.Close(); !errors.Is(err, closeErr) {
+		t.Fatalf("Close error = %v, want %v", err, closeErr)
+	}
+}
+
+func TestStartLocalServerHTTPAndTLSMissingConfig(t *testing.T) {
+	server, err := startLocalServer(runtimecfg.ListenerSpec{Name: "plain", Addr: "127.0.0.1:0"}, localTLSConfig{}, http.NewServeMux())
+	if err != nil {
+		t.Fatalf("startLocalServer HTTP: %v", err)
+	}
+	if server.Addr() == "" {
+		t.Fatal("HTTP server Addr is empty")
+	}
+	if err := server.Close(); err != nil {
+		t.Fatalf("close HTTP server: %v", err)
+	}
+
+	_, err = startLocalServer(runtimecfg.ListenerSpec{Name: "tls", Addr: "127.0.0.1:0", TLS: true}, localTLSConfig{}, http.NewServeMux())
+	if err == nil || !strings.Contains(err.Error(), "requires local TLS cert and key") {
+		t.Fatalf("TLS missing config error = %v", err)
+	}
+}
+
+func TestLocalBaseURL(t *testing.T) {
+	plain := localBaseURL(runtimecfg.ListenerSpec{Addr: "127.0.0.1:19001"})
+	if plain != "http://127.0.0.1:19001" {
+		t.Fatalf("plain base URL = %q", plain)
+	}
+	tls := localBaseURL(runtimecfg.ListenerSpec{Addr: "127.0.0.1:19001", TLS: true})
+	if tls != "https://127.0.0.1:19001" {
+		t.Fatalf("TLS base URL = %q", tls)
 	}
 }

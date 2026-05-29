@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -368,6 +369,351 @@ func TestProfilesCreateRejectsWASMFieldsWithNonWASMBackend(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "-wasm-module-file requires -backend wasm") {
 		t.Fatalf("error: got %q", err)
+	}
+}
+
+func TestRunRootUsageAndUnknownCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "missing", args: nil, want: "missing command"},
+		{name: "unknown", args: []string{"bogus"}, want: `unknown command "bogus"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := run(context.Background(), tt.args, &stdout, &stderr)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want %q", err, tt.want)
+			}
+			if !strings.Contains(stderr.String(), "usage: zolemc") {
+				t.Fatalf("stderr missing usage:\n%s", stderr.String())
+			}
+		})
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(), []string{"help"}, &stdout, &stderr); err != nil {
+		t.Fatalf("help failed: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "profiles create") {
+		t.Fatalf("help output missing commands:\n%s", stdout.String())
+	}
+}
+
+func TestAdminHealthOutputModes(t *testing.T) {
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodGet || req.URL.Path != "/_zolem/health" {
+			t.Fatalf("request = %s %s", req.Method, req.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"ok"}`)
+	}))
+	t.Cleanup(admin.Close)
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(), []string{"-admin-url", admin.URL, "health"}, &stdout, &stderr); err != nil {
+		t.Fatalf("health failed: %v", err)
+	}
+	if strings.TrimSpace(stdout.String()) != "admin health: ok" {
+		t.Fatalf("human health output = %q", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := run(context.Background(), []string{"-json", "-admin-url", admin.URL, "health"}, &stdout, &stderr); err != nil {
+		t.Fatalf("health -json failed: %v", err)
+	}
+	if strings.TrimSpace(stdout.String()) != `{"status":"ok"}` {
+		t.Fatalf("json health output = %q", stdout.String())
+	}
+}
+
+func TestProfilesListAndDeleteOutputModes(t *testing.T) {
+	var gotMethod, gotPath string
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		gotMethod, gotPath = req.Method, req.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case req.Method == http.MethodGet && req.URL.Path == "/_zolem/profiles":
+			fmt.Fprint(w, `[{"name":"demo","backend":"lorem"},{"name":"fixture","backend":"fixture"}]`)
+		case req.Method == http.MethodDelete && req.URL.Path == "/_zolem/profiles/demo":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
+		}
+	}))
+	t.Cleanup(admin.Close)
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(), []string{"-admin-url", admin.URL, "profiles", "list"}, &stdout, &stderr); err != nil {
+		t.Fatalf("profiles list failed: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "demo\tbackend=lorem") || !strings.Contains(stdout.String(), "fixture\tbackend=fixture") {
+		t.Fatalf("profiles human output:\n%s", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := run(context.Background(), []string{"-json", "-admin-url", admin.URL, "profiles", "list"}, &stdout, &stderr); err != nil {
+		t.Fatalf("profiles list -json failed: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"name":"demo"`) {
+		t.Fatalf("profiles json output:\n%s", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := run(context.Background(), []string{"-admin-url", admin.URL, "profiles", "delete", "demo"}, &stdout, &stderr); err != nil {
+		t.Fatalf("profiles delete failed: %v", err)
+	}
+	if gotMethod != http.MethodDelete || gotPath != "/_zolem/profiles/demo" {
+		t.Fatalf("delete request = %s %s", gotMethod, gotPath)
+	}
+	if !strings.Contains(stdout.String(), "profile demo deleted") {
+		t.Fatalf("delete human output = %q", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := run(context.Background(), []string{"-json", "-admin-url", admin.URL, "profiles", "delete", "demo"}, &stdout, &stderr); err != nil {
+		t.Fatalf("profiles delete -json failed: %v", err)
+	}
+	if strings.TrimSpace(stdout.String()) != `{"deleted":"demo"}` {
+		t.Fatalf("delete json output = %q", stdout.String())
+	}
+}
+
+func TestProfilesListEmptyAndCreateValidation(t *testing.T) {
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `[]`)
+	}))
+	t.Cleanup(admin.Close)
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(), []string{"-admin-url", admin.URL, "profiles", "list"}, &stdout, &stderr); err != nil {
+		t.Fatalf("profiles list empty failed: %v", err)
+	}
+	if strings.TrimSpace(stdout.String()) != "no profiles" {
+		t.Fatalf("empty profiles output = %q", stdout.String())
+	}
+
+	err := run(context.Background(), []string{"profiles"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "profiles requires list") {
+		t.Fatalf("profiles missing subcommand error = %v", err)
+	}
+	err = run(context.Background(), []string{"profiles", "bogus"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), `unknown profiles command "bogus"`) {
+		t.Fatalf("profiles unknown error = %v", err)
+	}
+	err = run(context.Background(), []string{"profiles", "create"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "requires exactly one profile name") {
+		t.Fatalf("profiles create missing name error = %v", err)
+	}
+	err = run(context.Background(), []string{"profiles", "create", "demo", "-wasm-timeout-ms", "-1", "-backend", "wasm"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "must be non-negative") {
+		t.Fatalf("negative wasm timeout error = %v", err)
+	}
+	err = run(context.Background(), []string{"profiles", "create", "demo", "-wasm-timeout-ms", "10"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "requires -backend wasm") {
+		t.Fatalf("wasm timeout backend error = %v", err)
+	}
+}
+
+func TestListenersListCreateDeleteAndValidation(t *testing.T) {
+	var createPayload localListenerPayload
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case req.Method == http.MethodGet && req.URL.Path == "/_zolem/listeners":
+			fmt.Fprint(w, `[{"name":"openai-demo","provider":"openai","profile":"demo","backend":"lorem","base_url":"http://127.0.0.1:19001"}]`)
+		case req.Method == http.MethodPut && req.URL.Path == "/_zolem/listeners/openai-demo":
+			if err := json.NewDecoder(req.Body).Decode(&createPayload); err != nil {
+				t.Fatalf("decode create payload: %v", err)
+			}
+			fmt.Fprint(w, `{"name":"openai-demo","provider":"openai","profile":"demo","backend":"lorem","base_url":"http://127.0.0.1:19001","tls":true}`)
+		case req.Method == http.MethodDelete && req.URL.Path == "/_zolem/listeners/openai-demo":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
+		}
+	}))
+	t.Cleanup(admin.Close)
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(), []string{"-admin-url", admin.URL, "listeners", "list"}, &stdout, &stderr); err != nil {
+		t.Fatalf("listeners list failed: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "openai-demo\topenai\tprofile=demo") {
+		t.Fatalf("listeners list output:\n%s", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := run(context.Background(), []string{"-admin-url", admin.URL, "listeners", "create", "openai-demo", "-provider", "openai", "-profile", "demo", "-addr", "127.0.0.1:0", "-tls"}, &stdout, &stderr); err != nil {
+		t.Fatalf("listeners create failed: %v", err)
+	}
+	if createPayload.Provider != "openai" || createPayload.Profile != "demo" || !createPayload.TLS {
+		t.Fatalf("create payload = %+v", createPayload)
+	}
+	if !strings.Contains(stdout.String(), "listener openai-demo created") {
+		t.Fatalf("listeners create output = %q", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := run(context.Background(), []string{"-json", "-admin-url", admin.URL, "listeners", "delete", "openai-demo"}, &stdout, &stderr); err != nil {
+		t.Fatalf("listeners delete failed: %v", err)
+	}
+	if strings.TrimSpace(stdout.String()) != `{"deleted":"openai-demo"}` {
+		t.Fatalf("listeners delete json output = %q", stdout.String())
+	}
+
+	for _, args := range [][]string{
+		{"listeners"},
+		{"listeners", "bogus"},
+		{"listeners", "create"},
+		{"listeners", "delete"},
+		{"listeners", "calls"},
+		{"listeners", "calls", "bogus"},
+	} {
+		stdout.Reset()
+		stderr.Reset()
+		err := run(context.Background(), append([]string{"-admin-url", admin.URL}, args...), &stdout, &stderr)
+		if err == nil {
+			t.Fatalf("run %v unexpectedly succeeded", args)
+		}
+	}
+}
+
+func TestListenerHealthStateAndRequestValidation(t *testing.T) {
+	listener := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch req.URL.Path {
+		case "/_zolem/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/_zolem/state":
+			fmt.Fprint(w, `{"provider":"openai","profile":"demo","backend":"lorem","listener":"openai-demo","tls":false}`)
+		case "/v1/models":
+			if req.Header.Get("Authorization") != "Bearer sk-test" {
+				t.Fatalf("Authorization header = %q", req.Header.Get("Authorization"))
+			}
+			fmt.Fprint(w, `{"object":"list","data":[]}`)
+		case "/v1/error":
+			w.WriteHeader(http.StatusBadGateway)
+			fmt.Fprint(w, `{"error":"bad"}`)
+		default:
+			t.Fatalf("unexpected listener path: %s", req.URL.Path)
+		}
+	}))
+	t.Cleanup(listener.Close)
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(), []string{"-base-url", listener.URL, "listener", "health"}, &stdout, &stderr); err != nil {
+		t.Fatalf("listener health failed: %v", err)
+	}
+	if strings.TrimSpace(stdout.String()) != "listener health: ok" {
+		t.Fatalf("listener health output = %q", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := run(context.Background(), []string{"-json", "-base-url", listener.URL, "listener", "state"}, &stdout, &stderr); err != nil {
+		t.Fatalf("listener state failed: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"listener":"openai-demo"`) {
+		t.Fatalf("listener state json = %q", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := run(context.Background(), []string{"-base-url", listener.URL, "request", "-path", "/v1/models", "-H", "Authorization: Bearer sk-test"}, &stdout, &stderr); err != nil {
+		t.Fatalf("provider request failed: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"object":"list"`) {
+		t.Fatalf("provider request output = %q", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := run(context.Background(), []string{"-json", "-base-url", listener.URL, "request", "-path", "/v1/models", "-H", "Authorization: Bearer sk-test"}, &stdout, &stderr); err != nil {
+		t.Fatalf("provider request json failed: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"status":200`) {
+		t.Fatalf("provider request json output = %q", stdout.String())
+	}
+
+	err := run(context.Background(), []string{"listener", "health"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "commands require -base-url") {
+		t.Fatalf("listener missing base-url error = %v", err)
+	}
+	err = run(context.Background(), []string{"-base-url", listener.URL, "listener", "bogus"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), `unknown listener command "bogus"`) {
+		t.Fatalf("listener unknown error = %v", err)
+	}
+	err = run(context.Background(), []string{"request"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "request requires -base-url") {
+		t.Fatalf("request missing base-url error = %v", err)
+	}
+	err = run(context.Background(), []string{"-base-url", listener.URL, "request"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "request requires -path") {
+		t.Fatalf("request missing path error = %v", err)
+	}
+	err = run(context.Background(), []string{"-base-url", listener.URL, "request", "-path", "/v1/models", "-H", "bad-header"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "invalid header") {
+		t.Fatalf("bad header error = %v", err)
+	}
+	err = run(context.Background(), []string{"-base-url", listener.URL, "request", "-path", "/v1/error"}, &stdout, &stderr)
+	var apiErr *apiError
+	if !errors.As(err, &apiErr) || !strings.Contains(apiErr.Error(), "502") || !strings.Contains(apiErr.Error(), "bad") {
+		t.Fatalf("api error = %v", err)
+	}
+}
+
+func TestRequestBodyJoinBaseAndRepeatedStrings(t *testing.T) {
+	bodyFile := filepath.Join(t.TempDir(), "body.json")
+	if err := os.WriteFile(bodyFile, []byte(`{"ok":true}`), 0o644); err != nil {
+		t.Fatalf("write body file: %v", err)
+	}
+	body, err := requestBody("", bodyFile)
+	if err != nil {
+		t.Fatalf("requestBody file: %v", err)
+	}
+	if string(body) != `{"ok":true}` {
+		t.Fatalf("file body = %s", body)
+	}
+	body, err = requestBody(`{"inline":true}`, "")
+	if err != nil || string(body) != `{"inline":true}` {
+		t.Fatalf("inline body = %s err=%v", body, err)
+	}
+	if body, err = requestBody("", ""); err != nil || body != nil {
+		t.Fatalf("empty body = %s err=%v, want nil nil", body, err)
+	}
+	if _, err = requestBody("{}", bodyFile); err == nil {
+		t.Fatal("requestBody with both sources unexpectedly succeeded")
+	}
+
+	got, err := joinBaseAndPath("http://example.test/api/", "v1/models?limit=1")
+	if err != nil {
+		t.Fatalf("joinBaseAndPath: %v", err)
+	}
+	if got != "http://example.test/api/v1/models?limit=1" {
+		t.Fatalf("joined URL = %q", got)
+	}
+	for _, bad := range []struct {
+		base string
+		path string
+	}{
+		{base: "", path: "/v1/models"},
+		{base: "://bad", path: "/v1/models"},
+		{base: "http://example.test", path: "https://evil.test/v1/models"},
+	} {
+		if _, err := joinBaseAndPath(bad.base, bad.path); err == nil {
+			t.Fatalf("joinBaseAndPath(%q, %q) unexpectedly succeeded", bad.base, bad.path)
+		}
+	}
+
+	var values repeatedStrings
+	if err := values.Set("A: 1"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	_ = values.Set("B: 2")
+	if values.String() != "A: 1, B: 2" {
+		t.Fatalf("String = %q", values.String())
 	}
 }
 
