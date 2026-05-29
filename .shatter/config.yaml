@@ -6,3 +6,12 @@
 defaults:
   max_iterations: 100
   timeout: 60
+
+llm:
+  enabled: true
+  adapter: local
+  local:
+    command: ["ollama", "serve"]
+    model: gemma3:1b
+    port: 11434
+    startup_timeout_seconds: 60
