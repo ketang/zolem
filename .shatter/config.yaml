@@ -7,6 +7,26 @@ defaults:
   max_iterations: 100
   timeout: 60
 
+go_runtime_values:
+  # Shatter owns these scan-only values for the lifetime of the generated Go
+  # frontend process. The compiled module depends on its Runner's wazero runtime,
+  # so process-lifetime ownership keeps the runtime alive for all generated calls.
+  "fixture.CompiledModule":
+    expression: |
+      func() CompiledModule {
+        runner := NewRunner()
+        mod, err := runner.CompileWASM(context.Background(), []byte{
+          0x00, 0x61, 0x73, 0x6d,
+          0x01, 0x00, 0x00, 0x00,
+        })
+        if err != nil {
+          panic(err)
+        }
+        return mod
+      }()
+    imports:
+      - context
+
 llm:
   enabled: true
   adapter: local
