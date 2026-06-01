@@ -26,6 +26,14 @@ go_runtime_values:
       }()
     imports:
       - context
+  # These scan-only helpers keep the wazero runtime, compiled module, and
+  # instantiated module alive for the lifetime of the generated frontend
+  # process. They are intentionally package-local to internal/wasmgen because
+  # Shatter pastes configured expressions into the target package.
+  "api.FunctionDefinition":
+    expression: newShatterFunctionDefinition()
+  "api.Function":
+    expression: newShatterFunction()
 
 llm:
   enabled: true
