@@ -484,6 +484,39 @@ func TestSpecSourceMap_CanonicalSourceInvariants(t *testing.T) {
 	}
 }
 
+func TestNewScanStartupDeps_DoesNotBind(t *testing.T) {
+	deps := newScanStartupDeps()
+
+	// The scan listeners accept the handler and return nil without binding.
+	if err := deps.listen("127.0.0.1:0", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})); err != nil {
+		t.Fatalf("scan listen returned error: %v", err)
+	}
+	if err := deps.listenTLS("127.0.0.1:0", "cert.pem", "key.pem", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})); err != nil {
+		t.Fatalf("scan listenTLS returned error: %v", err)
+	}
+
+	// The bounded fetcher performs no network/filesystem access.
+	fetcher := deps.newFetcher("", nil)
+	data, err := fetcher.Get("anthropic", "v1")
+	if err != nil {
+		t.Fatalf("scan fetcher returned error: %v", err)
+	}
+	if data != nil {
+		t.Fatalf("scan fetcher returned data: %q", data)
+	}
+
+	// runLocal drives full startup but never binds a real socket, returning
+	// the no-op listener's nil.
+	if err := runLocal(localOptions{
+		Addr:     "127.0.0.1:8080",
+		Provider: "anthropic",
+		Profile:  "demo",
+		Backend:  "lorem",
+	}, newScanStartupDeps()); err != nil {
+		t.Fatalf("runLocal with scan deps: %v", err)
+	}
+}
+
 func disabledTestFetcher(string, map[string]string) specFetcher {
 	return fakeFetcher{
 		"anthropic:v1":  {err: errors.New("fetch disabled")},

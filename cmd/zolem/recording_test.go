@@ -16,6 +16,30 @@ import (
 	runtimecfg "zolem.dev/zolem/internal/runtime"
 )
 
+func TestNewInMemoryRecorder_RecordsWithoutFileIO(t *testing.T) {
+	r := NewInMemoryRecorder("listener-1")
+	r.Record(RecordedCall{CallID: r.NextCallID()})
+	calls := r.List()
+	if len(calls) != 1 {
+		t.Fatalf("List: got %d calls, want 1", len(calls))
+	}
+	if calls[0].Listener != "" {
+		// Listener is populated by the middleware, not Record; an empty value
+		// here is expected for a direct Record call.
+		t.Fatalf("unexpected listener label: %q", calls[0].Listener)
+	}
+	r.Close()
+}
+
+func TestNewNoopRecorder_DiscardsCalls(t *testing.T) {
+	r := NewNoopRecorder()
+	r.Record(RecordedCall{CallID: r.NextCallID()})
+	if got := r.List(); got != nil {
+		t.Fatalf("noop recorder List: got %v, want nil", got)
+	}
+	r.Close()
+}
+
 func TestInMemoryRecorder_NextCallIDIsMonotonic(t *testing.T) {
 	r := newInMemoryRecorder("listener-1")
 	if got := r.NextCallID(); got != 1 {
