@@ -156,6 +156,15 @@ func newInMemoryRecorder(listener string) *inMemoryRecorder {
 	return &inMemoryRecorder{listener: listener}
 }
 
+// NewInMemoryRecorder returns a Recorder that buffers calls in memory with no
+// file I/O, suitable for scans and tests. The listener label is attached to
+// each recorded call.
+func NewInMemoryRecorder(listener string) Recorder { return newInMemoryRecorder(listener) }
+
+// NewNoopRecorder returns a Recorder that discards every call. It performs no
+// file I/O and holds no resources.
+func NewNoopRecorder() Recorder { return noopRecorder{} }
+
 func (r *inMemoryRecorder) NextCallID() int64 {
 	return r.nextID.Add(1)
 }

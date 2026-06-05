@@ -72,6 +72,32 @@ type localOptions struct {
 	RecordStreamEventCap       int
 }
 
+// scanFetcher is a no-op specFetcher for scan/test startup deps. Every lookup
+// returns no data and no error, so spec loading performs no network or
+// filesystem access.
+type scanFetcher struct{}
+
+func (scanFetcher) Get(string, string) ([]byte, error) { return nil, nil }
+
+// newScanStartupDeps returns startupDeps wired for scan/test execution: the
+// listeners never bind a socket (they accept the handler and return nil), spec
+// fetching is a bounded no-op, and the deterministic response generators are
+// used. This lets Shatter exercise local runtime startup without starting real
+// listeners or touching persistent resources. The remaining fields are left
+// nil and filled by withDefaults with their in-memory production defaults
+// (validator, fixture runner, file reads). Production startup is unaffected: it
+// constructs startupDeps{} and relies on withDefaults.
+func newScanStartupDeps() startupDeps {
+	return startupDeps{
+		newFetcher: func(string, map[string]string) specFetcher { return scanFetcher{} },
+		newLorem:   response.NewLoremGenerator,
+		newFaker:   response.NewFakerGenerator,
+		listen:     func(string, http.Handler) error { return nil },
+		listenTLS:  func(string, string, string, http.Handler) error { return nil },
+		logf:       func(string, ...any) {},
+	}
+}
+
 func (d startupDeps) withDefaults() startupDeps {
 	if d.newValidator == nil {
 		d.newValidator = specs.NewValidator
