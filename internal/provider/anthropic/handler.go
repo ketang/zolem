@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"zolem.dev/zolem/internal/fixture"
 	"zolem.dev/zolem/internal/ollama"
+	"zolem.dev/zolem/internal/provider/backend"
 	"zolem.dev/zolem/internal/response"
 	"zolem.dev/zolem/internal/router"
 	runtimecfg "zolem.dev/zolem/internal/runtime"
@@ -25,21 +26,12 @@ type Handler struct {
 	matcher       *fixture.Matcher
 	generator     response.Generator
 	wasmGenerator *wasmgen.Generator
-	ollamaClient  textGenerator
-	ollamaHTTP    chatGenerator
+	ollamaClient  backend.TextGenerator
+	ollamaHTTP    backend.ChatGenerator
 	mux           *chi.Mux
 }
 
-type textGenerator interface {
-	Generate(context.Context, string) (string, error)
-}
-
-type chatGenerator interface {
-	NonStreaming(ctx context.Context, upstream string, messages []ollama.ChatMessage, model string) (string, error)
-	Streaming(ctx context.Context, upstream string, messages []ollama.ChatMessage, model string, fn func(delta string) error) error
-}
-
-func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, ollamaClient textGenerator, ollamaHTTP chatGenerator, wasmGenerator ...*wasmgen.Generator) *Handler {
+func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, ollamaClient backend.TextGenerator, ollamaHTTP backend.ChatGenerator, wasmGenerator ...*wasmgen.Generator) *Handler {
 	h := &Handler{validator: validator, matcher: matcher, generator: generator, ollamaClient: ollamaClient, ollamaHTTP: ollamaHTTP}
 	if len(wasmGenerator) > 0 {
 		h.wasmGenerator = wasmGenerator[0]
