@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"zolem.dev/zolem/internal/admincli"
 )
 
 func TestZolemcLocalRuntimeE2E(t *testing.T) {
@@ -658,7 +660,7 @@ func TestListenerHealthStateAndRequestValidation(t *testing.T) {
 		t.Fatalf("bad header error = %v", err)
 	}
 	err = run(context.Background(), []string{"-base-url", listener.URL, "request", "-path", "/v1/error"}, &stdout, &stderr)
-	var apiErr *apiError
+	var apiErr *admincli.APIError
 	if !errors.As(err, &apiErr) || !strings.Contains(apiErr.Error(), "502") || !strings.Contains(apiErr.Error(), "bad") {
 		t.Fatalf("api error = %v", err)
 	}
@@ -687,7 +689,7 @@ func TestRequestBodyJoinBaseAndRepeatedStrings(t *testing.T) {
 		t.Fatal("requestBody with both sources unexpectedly succeeded")
 	}
 
-	got, err := joinBaseAndPath("http://example.test/api/", "v1/models?limit=1")
+	got, err := admincli.JoinBaseAndPath("http://example.test/api/", "v1/models?limit=1")
 	if err != nil {
 		t.Fatalf("joinBaseAndPath: %v", err)
 	}
@@ -702,8 +704,8 @@ func TestRequestBodyJoinBaseAndRepeatedStrings(t *testing.T) {
 		{base: "://bad", path: "/v1/models"},
 		{base: "http://example.test", path: "https://evil.test/v1/models"},
 	} {
-		if _, err := joinBaseAndPath(bad.base, bad.path); err == nil {
-			t.Fatalf("joinBaseAndPath(%q, %q) unexpectedly succeeded", bad.base, bad.path)
+		if _, err := admincli.JoinBaseAndPath(bad.base, bad.path); err == nil {
+			t.Fatalf("JoinBaseAndPath(%q, %q) unexpectedly succeeded", bad.base, bad.path)
 		}
 	}
 
