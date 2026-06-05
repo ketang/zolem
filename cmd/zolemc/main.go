@@ -14,14 +14,9 @@ import (
 	"os"
 	"strings"
 	"time"
-)
 
-type rootOptions struct {
-	adminURL string
-	baseURL  string
-	json     bool
-	timeout  time.Duration
-}
+	"zolem.dev/zolem/internal/admincli"
+)
 
 type localProfilePayload struct {
 	Backend               string `json:"backend,omitempty"`
@@ -71,26 +66,6 @@ type listenerStateView struct {
 	TLS      bool   `json:"tls"`
 }
 
-type adminClient struct {
-	baseURL string
-	http    *http.Client
-}
-
-type apiError struct {
-	Method string
-	URL    string
-	Status string
-	Body   string
-}
-
-func (e *apiError) Error() string {
-	body := strings.TrimSpace(e.Body)
-	if body == "" {
-		return fmt.Sprintf("%s %s: %s", e.Method, e.URL, e.Status)
-	}
-	return fmt.Sprintf("%s %s: %s: %s", e.Method, e.URL, e.Status, body)
-}
-
 func main() {
 	if err := run(context.Background(), os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -99,13 +74,13 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	opts := rootOptions{}
+	opts := admincli.Options{}
 	fs := flag.NewFlagSet("zolemc", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.StringVar(&opts.adminURL, "admin-url", "http://127.0.0.1:8090", "local admin API base URL")
-	fs.StringVar(&opts.baseURL, "base-url", "", "local listener base URL")
-	fs.BoolVar(&opts.json, "json", false, "write machine-readable JSON")
-	fs.DurationVar(&opts.timeout, "timeout", 10*time.Second, "HTTP request timeout")
+	fs.StringVar(&opts.AdminURL, "admin-url", "http://127.0.0.1:8090", "local admin API base URL")
+	fs.StringVar(&opts.BaseURL, "base-url", "", "local listener base URL")
+	fs.BoolVar(&opts.JSON, "json", false, "write machine-readable JSON")
+	fs.DurationVar(&opts.Timeout, "timeout", 10*time.Second, "HTTP request timeout")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -114,10 +89,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return errors.New("missing command")
 	}
 
-	client := adminClient{
-		baseURL: strings.TrimRight(opts.adminURL, "/"),
-		http:    &http.Client{Timeout: opts.timeout},
-	}
+	client := admincli.NewClient(opts.AdminURL, &http.Client{Timeout: opts.Timeout})
 
 	switch fs.Arg(0) {
 	case "health":
@@ -139,29 +111,29 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 }
 
-func runAdminHealth(ctx context.Context, client adminClient, opts rootOptions, stdout io.Writer) error {
+func runAdminHealth(ctx context.Context, client admincli.Client, opts admincli.Options, stdout io.Writer) error {
 	var payload map[string]string
-	if err := client.getJSON(ctx, "/_zolem/health", &payload); err != nil {
+	if err := client.GetJSON(ctx, "/_zolem/health", &payload); err != nil {
 		return err
 	}
-	if opts.json {
+	if opts.JSON {
 		return writeJSONObject(stdout, payload)
 	}
 	fmt.Fprintf(stdout, "admin health: %s\n", payload["status"])
 	return nil
 }
 
-func runProfiles(ctx context.Context, client adminClient, opts rootOptions, args []string, stdout, stderr io.Writer) error {
+func runProfiles(ctx context.Context, client admincli.Client, opts admincli.Options, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("profiles requires list, create, or delete")
 	}
 	switch args[0] {
 	case "list":
 		var profiles []localProfileView
-		if err := client.getJSON(ctx, "/_zolem/profiles", &profiles); err != nil {
+		if err := client.GetJSON(ctx, "/_zolem/profiles", &profiles); err != nil {
 			return err
 		}
-		if opts.json {
+		if opts.JSON {
 			return writeJSONObject(stdout, profiles)
 		}
 		if len(profiles) == 0 {
@@ -226,10 +198,10 @@ func runProfiles(ctx context.Context, client adminClient, opts rootOptions, args
 			payload.WASMGenerateTimeoutMS = &wasmTimeoutMS
 		}
 		var profile localProfileView
-		if err := client.putJSON(ctx, "/_zolem/profiles/"+url.PathEscape(name), payload, &profile); err != nil {
+		if err := client.PutJSON(ctx, "/_zolem/profiles/"+url.PathEscape(name), payload, &profile); err != nil {
 			return err
 		}
-		if opts.json {
+		if opts.JSON {
 			return writeJSONObject(stdout, profile)
 		}
 		fmt.Fprintf(stdout, "profile %s created\n", profile.Name)
@@ -238,10 +210,10 @@ func runProfiles(ctx context.Context, client adminClient, opts rootOptions, args
 		if len(args) != 2 {
 			return errors.New("profiles delete requires exactly one profile name")
 		}
-		if err := client.delete(ctx, "/_zolem/profiles/"+url.PathEscape(args[1])); err != nil {
+		if err := client.Delete(ctx, "/_zolem/profiles/"+url.PathEscape(args[1])); err != nil {
 			return err
 		}
-		if opts.json {
+		if opts.JSON {
 			return writeJSONObject(stdout, map[string]string{"deleted": args[1]})
 		}
 		fmt.Fprintf(stdout, "profile %s deleted\n", args[1])
@@ -251,7 +223,7 @@ func runProfiles(ctx context.Context, client adminClient, opts rootOptions, args
 	}
 }
 
-func runListeners(ctx context.Context, client adminClient, opts rootOptions, args []string, stdout, stderr io.Writer) error {
+func runListeners(ctx context.Context, client admincli.Client, opts admincli.Options, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("listeners requires list, create, delete, or calls")
 	}
@@ -260,10 +232,10 @@ func runListeners(ctx context.Context, client adminClient, opts rootOptions, arg
 		return runListenerCalls(ctx, client, opts, args[1:], stdout, stderr)
 	case "list":
 		var listeners []localListenerView
-		if err := client.getJSON(ctx, "/_zolem/listeners", &listeners); err != nil {
+		if err := client.GetJSON(ctx, "/_zolem/listeners", &listeners); err != nil {
 			return err
 		}
-		if opts.json {
+		if opts.JSON {
 			return writeJSONObject(stdout, listeners)
 		}
 		if len(listeners) == 0 {
@@ -293,10 +265,10 @@ func runListeners(ctx context.Context, client adminClient, opts rootOptions, arg
 			return errors.New("listeners create requires exactly one listener name")
 		}
 		var listener localListenerView
-		if err := client.putJSON(ctx, "/_zolem/listeners/"+url.PathEscape(name), payload, &listener); err != nil {
+		if err := client.PutJSON(ctx, "/_zolem/listeners/"+url.PathEscape(name), payload, &listener); err != nil {
 			return err
 		}
-		if opts.json {
+		if opts.JSON {
 			return writeJSONObject(stdout, listener)
 		}
 		fmt.Fprintf(stdout, "listener %s created: %s\n", listener.Name, listener.BaseURL)
@@ -305,10 +277,10 @@ func runListeners(ctx context.Context, client adminClient, opts rootOptions, arg
 		if len(args) != 2 {
 			return errors.New("listeners delete requires exactly one listener name")
 		}
-		if err := client.delete(ctx, "/_zolem/listeners/"+url.PathEscape(args[1])); err != nil {
+		if err := client.Delete(ctx, "/_zolem/listeners/"+url.PathEscape(args[1])); err != nil {
 			return err
 		}
-		if opts.json {
+		if opts.JSON {
 			return writeJSONObject(stdout, map[string]string{"deleted": args[1]})
 		}
 		fmt.Fprintf(stdout, "listener %s deleted\n", args[1])
@@ -318,7 +290,7 @@ func runListeners(ctx context.Context, client adminClient, opts rootOptions, arg
 	}
 }
 
-func runListenerCalls(ctx context.Context, client adminClient, opts rootOptions, args []string, stdout, stderr io.Writer) error {
+func runListenerCalls(ctx context.Context, client admincli.Client, opts admincli.Options, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("calls requires list or clear")
 	}
@@ -346,7 +318,7 @@ type recordedCallView struct {
 	} `json:"response"`
 }
 
-func runListenerCallsList(ctx context.Context, client adminClient, opts rootOptions, args []string, stdout, stderr io.Writer) error {
+func runListenerCallsList(ctx context.Context, client admincli.Client, opts admincli.Options, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("zolemc listeners calls list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var since int64
@@ -363,7 +335,7 @@ func runListenerCallsList(ctx context.Context, client adminClient, opts rootOpti
 	}
 
 	var raw json.RawMessage
-	if err := client.getJSON(ctx, "/_zolem/listeners/"+url.PathEscape(name)+"/calls", &raw); err != nil {
+	if err := client.GetJSON(ctx, "/_zolem/listeners/"+url.PathEscape(name)+"/calls", &raw); err != nil {
 		return err
 	}
 	var envelope struct {
@@ -384,7 +356,7 @@ func runListenerCallsList(ctx context.Context, client adminClient, opts rootOpti
 		filtered = kept
 	}
 
-	if opts.json {
+	if opts.JSON {
 		if since > 0 {
 			return writeJSONObject(stdout, map[string]any{"calls": filtered})
 		}
@@ -417,7 +389,7 @@ func runListenerCallsList(ctx context.Context, client adminClient, opts rootOpti
 	return nil
 }
 
-func runListenerCallsClear(ctx context.Context, client adminClient, opts rootOptions, args []string, stdout, stderr io.Writer) error {
+func runListenerCallsClear(ctx context.Context, client admincli.Client, opts admincli.Options, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("zolemc listeners calls clear", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	name, flagArgs := splitOptionalLeadingName(args)
@@ -434,41 +406,41 @@ func runListenerCallsClear(ctx context.Context, client adminClient, opts rootOpt
 	var resp struct {
 		Cleared int `json:"cleared"`
 	}
-	if err := client.doJSON(ctx, http.MethodDelete, "/_zolem/listeners/"+url.PathEscape(name)+"/calls", nil, &resp); err != nil {
+	if err := client.DoJSON(ctx, http.MethodDelete, "/_zolem/listeners/"+url.PathEscape(name)+"/calls", nil, &resp); err != nil {
 		return err
 	}
-	if opts.json {
+	if opts.JSON {
 		return writeJSONObject(stdout, map[string]int{"cleared": resp.Cleared})
 	}
 	fmt.Fprintf(stdout, "Cleared %d calls from listener %s.\n", resp.Cleared, name)
 	return nil
 }
 
-func runListener(ctx context.Context, opts rootOptions, args []string, stdout, stderr io.Writer) error {
+func runListener(ctx context.Context, opts admincli.Options, args []string, stdout, stderr io.Writer) error {
 	if len(args) != 1 {
 		return errors.New("listener requires health or state")
 	}
-	if opts.baseURL == "" {
+	if opts.BaseURL == "" {
 		return errors.New("listener commands require -base-url")
 	}
-	client := adminClient{baseURL: strings.TrimRight(opts.baseURL, "/"), http: &http.Client{Timeout: opts.timeout}}
+	client := admincli.NewClient(opts.BaseURL, &http.Client{Timeout: opts.Timeout})
 	switch args[0] {
 	case "health":
 		var payload map[string]string
-		if err := client.getJSON(ctx, "/_zolem/health", &payload); err != nil {
+		if err := client.GetJSON(ctx, "/_zolem/health", &payload); err != nil {
 			return err
 		}
-		if opts.json {
+		if opts.JSON {
 			return writeJSONObject(stdout, payload)
 		}
 		fmt.Fprintf(stdout, "listener health: %s\n", payload["status"])
 		return nil
 	case "state":
 		var payload listenerStateView
-		if err := client.getJSON(ctx, "/_zolem/state", &payload); err != nil {
+		if err := client.GetJSON(ctx, "/_zolem/state", &payload); err != nil {
 			return err
 		}
-		if opts.json {
+		if opts.JSON {
 			return writeJSONObject(stdout, payload)
 		}
 		fmt.Fprintf(stdout, "provider=%s profile=%s backend=%s listener=%s tls=%v\n", payload.Provider, payload.Profile, payload.Backend, payload.Listener, payload.TLS)
@@ -478,8 +450,8 @@ func runListener(ctx context.Context, opts rootOptions, args []string, stdout, s
 	}
 }
 
-func runProviderRequest(ctx context.Context, opts rootOptions, args []string, stdout, stderr io.Writer) error {
-	if opts.baseURL == "" {
+func runProviderRequest(ctx context.Context, opts admincli.Options, args []string, stdout, stderr io.Writer) error {
+	if opts.BaseURL == "" {
 		return errors.New("request requires -base-url")
 	}
 
@@ -509,7 +481,7 @@ func runProviderRequest(ctx context.Context, opts rootOptions, args []string, st
 		return err
 	}
 
-	target, err := joinBaseAndPath(opts.baseURL, requestPath)
+	target, err := admincli.JoinBaseAndPath(opts.BaseURL, requestPath)
 	if err != nil {
 		return err
 	}
@@ -528,7 +500,7 @@ func runProviderRequest(ctx context.Context, opts rootOptions, args []string, st
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := (&http.Client{Timeout: opts.timeout}).Do(req)
+	resp, err := (&http.Client{Timeout: opts.Timeout}).Do(req)
 	if err != nil {
 		return err
 	}
@@ -538,9 +510,9 @@ func runProviderRequest(ctx context.Context, opts rootOptions, args []string, st
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &apiError{Method: method, URL: target, Status: resp.Status, Body: string(respBody)}
+		return &admincli.APIError{Method: method, URL: target, Status: resp.Status, Body: string(respBody)}
 	}
-	if opts.json {
+	if opts.JSON {
 		return writeJSONObject(stdout, map[string]any{
 			"status": resp.StatusCode,
 			"body":   json.RawMessage(respBody),
@@ -581,86 +553,6 @@ func flagWasSet(fs *flag.FlagSet, name string) bool {
 		}
 	})
 	return seen
-}
-
-func (c adminClient) getJSON(ctx context.Context, p string, out any) error {
-	return c.doJSON(ctx, http.MethodGet, p, nil, out)
-}
-
-func (c adminClient) putJSON(ctx context.Context, p string, in, out any) error {
-	return c.doJSON(ctx, http.MethodPut, p, in, out)
-}
-
-func (c adminClient) delete(ctx context.Context, p string) error {
-	return c.doJSON(ctx, http.MethodDelete, p, nil, nil)
-}
-
-func (c adminClient) doJSON(ctx context.Context, method, p string, in, out any) error {
-	target, err := joinBaseAndPath(c.baseURL, p)
-	if err != nil {
-		return err
-	}
-	var body io.Reader
-	if in != nil {
-		data, err := json.Marshal(in)
-		if err != nil {
-			return err
-		}
-		body = bytes.NewReader(data)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, target, body)
-	if err != nil {
-		return err
-	}
-	if in != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &apiError{Method: method, URL: target, Status: resp.Status, Body: string(data)}
-	}
-	if out == nil {
-		return nil
-	}
-	if err := json.Unmarshal(data, out); err != nil {
-		return fmt.Errorf("decode %s %s response: %w: %s", method, target, err, strings.TrimSpace(string(data)))
-	}
-	return nil
-}
-
-func joinBaseAndPath(base, p string) (string, error) {
-	if base == "" {
-		return "", errors.New("base URL is required")
-	}
-	u, err := url.Parse(base)
-	if err != nil {
-		return "", err
-	}
-	if u.Scheme == "" || u.Host == "" {
-		return "", fmt.Errorf("invalid base URL %q", base)
-	}
-	rel, err := url.Parse(p)
-	if err != nil {
-		return "", err
-	}
-	if rel.IsAbs() || rel.Host != "" {
-		return "", fmt.Errorf("request path must be relative to base URL: %q", p)
-	}
-	relPath := rel.Path
-	if !strings.HasPrefix(relPath, "/") {
-		relPath = "/" + relPath
-	}
-	u.Path = strings.TrimRight(u.Path, "/") + relPath
-	u.RawQuery = rel.RawQuery
-	return u.String(), nil
 }
 
 func writeJSONObject(w io.Writer, v any) error {
