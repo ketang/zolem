@@ -143,6 +143,63 @@ func TestLocalAdminHandler_ListenerCRUD(t *testing.T) {
 	}
 }
 
+func TestLocalAdminHandler_ListenerNamedCallsCRUDAndCallsSubresource(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	handler := buildLocalAdminHandler(control)
+
+	profileResp := doRequest(t, handler, httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"lorem"}`)))
+	defer profileResp.Body.Close()
+	if profileResp.StatusCode != http.StatusOK {
+		t.Fatalf("profile put status: got %d, want 200", profileResp.StatusCode)
+	}
+
+	listenerResp := doRequest(t, handler, httptestRequest(http.MethodPut, "/_zolem/listeners/calls", bytes.NewBufferString(`{"addr":"127.0.0.1:0","provider":"openai","profile":"demo"}`)))
+	defer listenerResp.Body.Close()
+	if listenerResp.StatusCode != http.StatusOK {
+		t.Fatalf("listener put status: got %d, want 200", listenerResp.StatusCode)
+	}
+	var listener map[string]any
+	decodeJSON(t, listenerResp.Body, &listener)
+	if listener["name"] != "calls" {
+		t.Fatalf("listener name: got %#v, want calls", listener["name"])
+	}
+
+	getResp := doRequest(t, handler, httptestRequest(http.MethodGet, "/_zolem/listeners/calls", bytes.NewBuffer(nil)))
+	defer getResp.Body.Close()
+	if getResp.StatusCode != http.StatusOK {
+		t.Fatalf("listener get status: got %d, want 200", getResp.StatusCode)
+	}
+	var fetched map[string]any
+	decodeJSON(t, getResp.Body, &fetched)
+	if fetched["name"] != "calls" {
+		t.Fatalf("fetched listener name: got %#v, want calls", fetched["name"])
+	}
+
+	control.mu.Lock()
+	rec := control.listeners["calls"].recorder
+	control.mu.Unlock()
+	rec.NextCallID()
+	rec.Record(RecordedCall{CallID: 1, Listener: "calls"})
+
+	callsResp := doRequest(t, handler, httptestRequest(http.MethodGet, "/_zolem/listeners/calls/calls", bytes.NewBuffer(nil)))
+	defer callsResp.Body.Close()
+	if callsResp.StatusCode != http.StatusOK {
+		t.Fatalf("calls get status: got %d, want 200", callsResp.StatusCode)
+	}
+	var callsBody map[string]any
+	decodeJSON(t, callsResp.Body, &callsBody)
+	calls, ok := callsBody["calls"].([]any)
+	if !ok || len(calls) != 1 {
+		t.Fatalf("calls: got %#v, want 1", callsBody["calls"])
+	}
+
+	deleteResp := doRequest(t, handler, httptestRequest(http.MethodDelete, "/_zolem/listeners/calls", bytes.NewBuffer(nil)))
+	defer deleteResp.Body.Close()
+	if deleteResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("listener delete status: got %d, want 204", deleteResp.StatusCode)
+	}
+}
+
 func TestLocalAdminHandler_ProfileRejectsUnsupportedBackend(t *testing.T) {
 	control := newTestLocalControlPlane(t, localAdminOptions{})
 	handler := buildLocalAdminHandler(control)
