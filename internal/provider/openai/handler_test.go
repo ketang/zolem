@@ -105,6 +105,48 @@ func TestChatCompletions_LoremStreaming(t *testing.T) {
 	}
 }
 
+func TestChatCompletions_ArrayContentParts_NonStreaming(t *testing.T) {
+	h := newHandler(t)
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":[{"type":"text","text":"hello"},{"type":"text","text":"world"}]}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer sk-test")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200. body: %s", rr.Code, rr.Body.String())
+	}
+	var resp openai.ChatCompletionResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+		t.Fatalf("expected non-empty completion, got %+v", resp)
+	}
+}
+
+func TestChatCompletions_ArrayContentParts_Streaming(t *testing.T) {
+	h := newHandler(t)
+	body := `{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"hello"},{"type":"text","text":"world"}]}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer sk-test")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200. body: %s", rr.Code, rr.Body.String())
+	}
+	body2 := rr.Body.String()
+	if !strings.Contains(body2, "chat.completion.chunk") {
+		t.Errorf("expected chunk objects, got:\n%s", body2)
+	}
+	if !strings.Contains(body2, "data: [DONE]") {
+		t.Errorf("missing [DONE] terminator, got:\n%s", body2)
+	}
+}
+
 func TestChatCompletions_OllamaFallback_NonStreaming(t *testing.T) {
 	h := newHandlerWithGenerator(t, stubGenerator{text: "hello from ollama"})
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
