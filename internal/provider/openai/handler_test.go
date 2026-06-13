@@ -32,6 +32,16 @@ func (g errorGenerator) Generate(context.Context, string) (string, error) {
 	return "", errors.New("ollama generation failed")
 }
 
+type capturingGenerator struct {
+	text   string
+	prompt string
+}
+
+func (g *capturingGenerator) Generate(_ context.Context, prompt string) (string, error) {
+	g.prompt = prompt
+	return g.text, nil
+}
+
 type testGenerator interface {
 	Generate(context.Context, string) (string, error)
 }
@@ -106,7 +116,8 @@ func TestChatCompletions_LoremStreaming(t *testing.T) {
 }
 
 func TestChatCompletions_ArrayContentParts_NonStreaming(t *testing.T) {
-	h := newHandler(t)
+	generator := &capturingGenerator{text: "array reply"}
+	h := newHandlerWithGenerator(t, generator)
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":[{"type":"text","text":"hello"},{"type":"text","text":"world"}]}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -123,6 +134,9 @@ func TestChatCompletions_ArrayContentParts_NonStreaming(t *testing.T) {
 	}
 	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
 		t.Fatalf("expected non-empty completion, got %+v", resp)
+	}
+	if generator.prompt != "user: helloworld" {
+		t.Fatalf("prompt: got %q, want concatenated text parts", generator.prompt)
 	}
 }
 
@@ -144,6 +158,24 @@ func TestChatCompletions_ArrayContentParts_Streaming(t *testing.T) {
 	}
 	if !strings.Contains(body2, "data: [DONE]") {
 		t.Errorf("missing [DONE] terminator, got:\n%s", body2)
+	}
+}
+
+func TestChatCompletions_StringContentPromptUnchanged(t *testing.T) {
+	generator := &capturingGenerator{text: "string reply"}
+	h := newHandlerWithGenerator(t, generator)
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hello world"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer sk-test")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200. body: %s", rr.Code, rr.Body.String())
+	}
+	if generator.prompt != "user: hello world" {
+		t.Fatalf("prompt: got %q, want string content unchanged", generator.prompt)
 	}
 }
 

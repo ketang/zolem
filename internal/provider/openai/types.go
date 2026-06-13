@@ -1,12 +1,69 @@
 package openai
 
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+)
+
 type ChatCompletionRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
-	Stream   bool      `json:"stream,omitempty"`
+	Model         string                  `json:"model"`
+	Messages      []ChatCompletionMessage `json:"messages"`
+	Stream        bool                    `json:"stream,omitempty"`
 	StreamOptions *struct {
 		IncludeUsage bool `json:"include_usage"`
 	} `json:"stream_options,omitempty"`
+}
+
+type ChatCompletionMessage struct {
+	Role    string         `json:"role"`
+	Content MessageContent `json:"content"`
+}
+
+type MessageContent struct {
+	raw  json.RawMessage
+	text string
+}
+
+func (c *MessageContent) UnmarshalJSON(data []byte) error {
+	c.raw = append(c.raw[:0], data...)
+	c.text = ""
+
+	trimmed := bytes.TrimSpace(data)
+	if bytes.Equal(trimmed, []byte("null")) {
+		return nil
+	}
+
+	var text string
+	if err := json.Unmarshal(trimmed, &text); err == nil {
+		c.text = text
+		return nil
+	}
+
+	var parts []messageContentPart
+	if err := json.Unmarshal(trimmed, &parts); err == nil {
+		for _, part := range parts {
+			if part.Type == "text" {
+				c.text += part.Text
+			}
+		}
+		return nil
+	}
+
+	return fmt.Errorf("content must be a string or an array of content parts")
+}
+
+func (c MessageContent) Text() string {
+	return c.text
+}
+
+func (c MessageContent) RawJSON() json.RawMessage {
+	return append(json.RawMessage(nil), c.raw...)
+}
+
+type messageContentPart struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
 }
 
 type Message struct {
