@@ -564,7 +564,8 @@ func TestLocalAdminHandler_InvalidResourceNamesAndMethods(t *testing.T) {
 		{method: http.MethodGet, path: "/_zolem/profiles/nested/name", status: http.StatusNotFound},
 		{method: http.MethodGet, path: "/_zolem/profiles/demo", status: http.StatusMethodNotAllowed, allow: "PUT, DELETE"},
 		{method: http.MethodGet, path: "/_zolem/listeners/nested/name", status: http.StatusNotFound},
-		{method: http.MethodGet, path: "/_zolem/listeners/demo", status: http.StatusMethodNotAllowed, allow: "PUT, DELETE"},
+		{method: http.MethodGet, path: "/_zolem/listeners/demo", status: http.StatusNotFound},
+		{method: http.MethodPost, path: "/_zolem/listeners/demo", status: http.StatusMethodNotAllowed, allow: "PUT, GET, DELETE"},
 		{method: http.MethodGet, path: "/_zolem/listeners/nested/name/calls", status: http.StatusNotFound},
 		{method: http.MethodGet, path: "/_zolem/missing", status: http.StatusNotFound},
 	}
