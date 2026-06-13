@@ -59,6 +59,22 @@ type localListenerView struct {
 	RecordStreamEventCap       int    `json:"record_stream_event_cap"`
 }
 
+func newLocalListenerView(runtime runtimecfg.ListenerRuntime, baseURL string, caps RecordCaps) localListenerView {
+	spec := runtime.Spec
+	return localListenerView{
+		Name:                       spec.Name,
+		Addr:                       spec.Addr,
+		Provider:                   spec.Provider,
+		Profile:                    spec.Profile,
+		Backend:                    runtime.Profile.Backend,
+		TLS:                        spec.TLS,
+		BaseURL:                    baseURL,
+		RecordRequestBodyCapBytes:  caps.RequestBodyCapBytes,
+		RecordResponseBodyCapBytes: caps.ResponseBodyCapBytes,
+		RecordStreamEventCap:       caps.StreamEventCap,
+	}
+}
+
 type localServer interface {
 	Addr() string
 	Close() error
@@ -252,18 +268,7 @@ func (c *localControlPlane) UpsertListener(name string, payload localListenerPay
 		Profile: profile,
 	}
 
-	view := localListenerView{
-		Name:                       actualSpec.Name,
-		Addr:                       actualSpec.Addr,
-		Provider:                   actualSpec.Provider,
-		Profile:                    actualSpec.Profile,
-		Backend:                    profile.Backend,
-		TLS:                        actualSpec.TLS,
-		BaseURL:                    localBaseURL(actualSpec),
-		RecordRequestBodyCapBytes:  caps.RequestBodyCapBytes,
-		RecordResponseBodyCapBytes: caps.ResponseBodyCapBytes,
-		RecordStreamEventCap:       caps.StreamEventCap,
-	}
+	view := newLocalListenerView(actualRuntime, localBaseURL(actualSpec), caps)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -293,18 +298,7 @@ func (c *localControlPlane) ListListeners() []localListenerView {
 	out := make([]localListenerView, 0, len(specs))
 	for _, spec := range specs {
 		entry := c.listeners[spec.Name]
-		out = append(out, localListenerView{
-			Name:                       spec.Name,
-			Addr:                       spec.Addr,
-			Provider:                   spec.Provider,
-			Profile:                    spec.Profile,
-			Backend:                    entry.runtime.Profile.Backend,
-			TLS:                        spec.TLS,
-			BaseURL:                    entry.baseURL,
-			RecordRequestBodyCapBytes:  entry.caps.RequestBodyCapBytes,
-			RecordResponseBodyCapBytes: entry.caps.ResponseBodyCapBytes,
-			RecordStreamEventCap:       entry.caps.StreamEventCap,
-		})
+		out = append(out, newLocalListenerView(entry.runtime, entry.baseURL, entry.caps))
 	}
 	return out
 }
@@ -317,19 +311,7 @@ func (c *localControlPlane) GetListener(name string) (localListenerView, error) 
 	if !ok {
 		return localListenerView{}, runtimecfg.ErrListenerNotFound
 	}
-	spec := entry.runtime.Spec
-	return localListenerView{
-		Name:                       spec.Name,
-		Addr:                       spec.Addr,
-		Provider:                   spec.Provider,
-		Profile:                    spec.Profile,
-		Backend:                    entry.runtime.Profile.Backend,
-		TLS:                        spec.TLS,
-		BaseURL:                    entry.baseURL,
-		RecordRequestBodyCapBytes:  entry.caps.RequestBodyCapBytes,
-		RecordResponseBodyCapBytes: entry.caps.ResponseBodyCapBytes,
-		RecordStreamEventCap:       entry.caps.StreamEventCap,
-	}, nil
+	return newLocalListenerView(entry.runtime, entry.baseURL, entry.caps), nil
 }
 
 func (c *localControlPlane) DeleteListener(name string) error {
