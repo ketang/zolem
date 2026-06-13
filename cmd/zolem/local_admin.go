@@ -59,6 +59,22 @@ type localListenerView struct {
 	RecordStreamEventCap       int    `json:"record_stream_event_cap"`
 }
 
+func newLocalListenerView(runtime runtimecfg.ListenerRuntime, baseURL string, caps RecordCaps) localListenerView {
+	spec := runtime.Spec
+	return localListenerView{
+		Name:                       spec.Name,
+		Addr:                       spec.Addr,
+		Provider:                   spec.Provider,
+		Profile:                    spec.Profile,
+		Backend:                    runtime.Profile.Backend,
+		TLS:                        spec.TLS,
+		BaseURL:                    baseURL,
+		RecordRequestBodyCapBytes:  caps.RequestBodyCapBytes,
+		RecordResponseBodyCapBytes: caps.ResponseBodyCapBytes,
+		RecordStreamEventCap:       caps.StreamEventCap,
+	}
+}
+
 type localServer interface {
 	Addr() string
 	Close() error
@@ -252,18 +268,7 @@ func (c *localControlPlane) UpsertListener(name string, payload localListenerPay
 		Profile: profile,
 	}
 
-	view := localListenerView{
-		Name:                       actualSpec.Name,
-		Addr:                       actualSpec.Addr,
-		Provider:                   actualSpec.Provider,
-		Profile:                    actualSpec.Profile,
-		Backend:                    profile.Backend,
-		TLS:                        actualSpec.TLS,
-		BaseURL:                    localBaseURL(actualSpec),
-		RecordRequestBodyCapBytes:  caps.RequestBodyCapBytes,
-		RecordResponseBodyCapBytes: caps.ResponseBodyCapBytes,
-		RecordStreamEventCap:       caps.StreamEventCap,
-	}
+	view := newLocalListenerView(actualRuntime, localBaseURL(actualSpec), caps)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -293,20 +298,20 @@ func (c *localControlPlane) ListListeners() []localListenerView {
 	out := make([]localListenerView, 0, len(specs))
 	for _, spec := range specs {
 		entry := c.listeners[spec.Name]
-		out = append(out, localListenerView{
-			Name:                       spec.Name,
-			Addr:                       spec.Addr,
-			Provider:                   spec.Provider,
-			Profile:                    spec.Profile,
-			Backend:                    entry.runtime.Profile.Backend,
-			TLS:                        spec.TLS,
-			BaseURL:                    entry.baseURL,
-			RecordRequestBodyCapBytes:  entry.caps.RequestBodyCapBytes,
-			RecordResponseBodyCapBytes: entry.caps.ResponseBodyCapBytes,
-			RecordStreamEventCap:       entry.caps.StreamEventCap,
-		})
+		out = append(out, newLocalListenerView(entry.runtime, entry.baseURL, entry.caps))
 	}
 	return out
+}
+
+func (c *localControlPlane) GetListener(name string) (localListenerView, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	entry, ok := c.listeners[name]
+	if !ok {
+		return localListenerView{}, runtimecfg.ErrListenerNotFound
+	}
+	return newLocalListenerView(entry.runtime, entry.baseURL, entry.caps), nil
 }
 
 func (c *localControlPlane) DeleteListener(name string) error {
@@ -369,12 +374,8 @@ func buildLocalAdminHandler(control *localControlPlane) http.Handler {
 		case strings.HasPrefix(req.URL.Path, "/_zolem/profiles/"):
 			handleProfileResource(w, req, control)
 			return
-		case strings.HasPrefix(req.URL.Path, "/_zolem/listeners/") &&
-			strings.HasSuffix(req.URL.Path, "/calls"):
-			handleListenerCalls(w, req, control)
-			return
 		case strings.HasPrefix(req.URL.Path, "/_zolem/listeners/"):
-			handleListenerResource(w, req, control)
+			handleListenerPath(w, req, control)
 			return
 		default:
 			http.NotFound(w, req)
@@ -382,14 +383,20 @@ func buildLocalAdminHandler(control *localControlPlane) http.Handler {
 	})
 }
 
-func handleListenerCalls(w http.ResponseWriter, req *http.Request, control *localControlPlane) {
+func handleListenerPath(w http.ResponseWriter, req *http.Request, control *localControlPlane) {
 	rest := strings.TrimPrefix(req.URL.Path, "/_zolem/listeners/")
-	name := strings.TrimSuffix(rest, "/calls")
-	if name == "" || strings.Contains(name, "/") {
+	segments := strings.Split(rest, "/")
+	switch {
+	case len(segments) == 1 && segments[0] != "":
+		handleListenerResource(w, req, control, segments[0])
+	case len(segments) == 2 && segments[0] != "" && segments[1] == "calls":
+		handleListenerCalls(w, req, control, segments[0])
+	default:
 		http.NotFound(w, req)
-		return
 	}
+}
 
+func handleListenerCalls(w http.ResponseWriter, req *http.Request, control *localControlPlane, name string) {
 	switch req.Method {
 	case http.MethodGet:
 		calls, err := control.ListCalls(name)
@@ -460,13 +467,7 @@ func handleProfileResource(w http.ResponseWriter, req *http.Request, control *lo
 	}
 }
 
-func handleListenerResource(w http.ResponseWriter, req *http.Request, control *localControlPlane) {
-	name, ok := localResourceName("/_zolem/listeners/", req.URL.Path)
-	if !ok {
-		http.NotFound(w, req)
-		return
-	}
-
+func handleListenerResource(w http.ResponseWriter, req *http.Request, control *localControlPlane, name string) {
 	switch req.Method {
 	case http.MethodPut:
 		var payload localListenerPayload
@@ -487,6 +488,17 @@ func handleListenerResource(w http.ResponseWriter, req *http.Request, control *l
 			w.Header().Set("X-Zolem-Warnings", strings.Join(warnings, "; "))
 		}
 		writeJSON(w, http.StatusOK, view)
+	case http.MethodGet:
+		view, err := control.GetListener(name)
+		if err != nil {
+			if errors.Is(err, runtimecfg.ErrListenerNotFound) {
+				writeAdminError(w, http.StatusNotFound, err.Error())
+				return
+			}
+			writeAdminError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, view)
 	case http.MethodDelete:
 		err := control.DeleteListener(name)
 		switch {
@@ -498,7 +510,7 @@ func handleListenerResource(w http.ResponseWriter, req *http.Request, control *l
 			writeAdminError(w, http.StatusBadRequest, err.Error())
 		}
 	default:
-		w.Header().Set("Allow", "PUT, DELETE")
+		w.Header().Set("Allow", "PUT, GET, DELETE")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }

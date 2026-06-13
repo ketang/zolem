@@ -193,6 +193,78 @@ func TestLocalRuntimeWASMBackend_E2E(t *testing.T) {
 	assertOpenAIStreamShape(t, streamBody, 2)
 }
 
+func TestLocalRuntimeListenerNamedCalls_E2E(t *testing.T) {
+	repoRoot := repoRoot(t)
+	admin := startLocalAdminService(t, repoRoot)
+	t.Cleanup(admin.Close)
+
+	profileResp, profileBody := doRequest(t, admin.baseURL, http.MethodPut, "/_zolem/profiles/calls-profile", `{"backend":"lorem"}`, "Content-Type: application/json")
+	defer profileResp.Body.Close()
+	if profileResp.StatusCode != http.StatusOK {
+		t.Fatalf("profile status: got %d, want 200: %s", profileResp.StatusCode, profileBody)
+	}
+	t.Cleanup(func() {
+		resp, _, err := doRequestRaw(&http.Client{Timeout: 5 * time.Second}, admin.baseURL, http.MethodDelete, "/_zolem/profiles/calls-profile", "")
+		if err == nil && resp != nil {
+			resp.Body.Close()
+		}
+	})
+
+	listenerResp, listenerBody := doRequest(t, admin.baseURL, http.MethodPut, "/_zolem/listeners/calls", `{"addr":"127.0.0.1:0","provider":"openai","profile":"calls-profile"}`, "Content-Type: application/json")
+	defer listenerResp.Body.Close()
+	if listenerResp.StatusCode != http.StatusOK {
+		t.Fatalf("listener status: got %d, want 200: %s", listenerResp.StatusCode, listenerBody)
+	}
+	t.Cleanup(func() {
+		resp, _, err := doRequestRaw(&http.Client{Timeout: 5 * time.Second}, admin.baseURL, http.MethodDelete, "/_zolem/listeners/calls", "")
+		if err == nil && resp != nil {
+			resp.Body.Close()
+		}
+	})
+
+	var listener struct {
+		Name    string `json:"name"`
+		BaseURL string `json:"base_url"`
+	}
+	mustJSONUnmarshal(t, listenerBody, &listener)
+	if listener.Name != "calls" {
+		t.Fatalf("listener name: got %q, want calls", listener.Name)
+	}
+	if listener.BaseURL == "" {
+		t.Fatalf("listener base_url missing: %s", listenerBody)
+	}
+
+	getResp, getBody := doRequest(t, admin.baseURL, http.MethodGet, "/_zolem/listeners/calls", "")
+	defer getResp.Body.Close()
+	if getResp.StatusCode != http.StatusOK {
+		t.Fatalf("listener get status: got %d, want 200: %s", getResp.StatusCode, getBody)
+	}
+	var fetched struct {
+		Name string `json:"name"`
+	}
+	mustJSONUnmarshal(t, getBody, &fetched)
+	if fetched.Name != "calls" {
+		t.Fatalf("fetched listener name: got %q, want calls", fetched.Name)
+	}
+
+	resp, body := doRequest(t, listener.BaseURL, http.MethodPost, "/v1/chat/completions", `{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`, "Content-Type: application/json", "Authorization: Bearer sk-test")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("chat status: got %d, want 200: %s", resp.StatusCode, body)
+	}
+
+	calls := getCalls(t, admin.baseURL, "calls")
+	if len(calls) != 1 {
+		t.Fatalf("calls subresource count: got %d, want 1", len(calls))
+	}
+
+	deleteResp, deleteBody := doRequest(t, admin.baseURL, http.MethodDelete, "/_zolem/listeners/calls", "")
+	defer deleteResp.Body.Close()
+	if deleteResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("listener delete status: got %d, want 204: %s", deleteResp.StatusCode, deleteBody)
+	}
+}
+
 type localAdminService struct {
 	baseURL string
 	cmd     *exec.Cmd
