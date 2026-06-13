@@ -251,7 +251,7 @@ func tokenize(text string) []string {
 func estimatePromptTokens(req ChatCompletionRequest) int {
 	total := 0
 	for _, m := range req.Messages {
-		total += len(strings.Fields(m.Content)) + 4
+		total += len(strings.Fields(m.Content.Text())) + 4
 	}
 	return total
 }
@@ -259,7 +259,7 @@ func estimatePromptTokens(req ChatCompletionRequest) int {
 func promptFromRequest(req ChatCompletionRequest) string {
 	var lines []string
 	for _, msg := range req.Messages {
-		line := strings.TrimSpace(msg.Role + ": " + msg.Content)
+		line := strings.TrimSpace(msg.Role + ": " + msg.Content.Text())
 		if line != "" {
 			lines = append(lines, line)
 		}
@@ -397,10 +397,11 @@ func (h *Handler) handleOllamaStream(w http.ResponseWriter, ctx context.Context,
 func openaiToChatMessages(req ChatCompletionRequest) []ollama.ChatMessage {
 	messages := make([]ollama.ChatMessage, 0, len(req.Messages))
 	for _, msg := range req.Messages {
-		if msg.Content == "" {
+		content := msg.Content.Text()
+		if content == "" {
 			continue
 		}
-		messages = append(messages, ollama.ChatMessage{Role: msg.Role, Content: msg.Content})
+		messages = append(messages, ollama.ChatMessage{Role: msg.Role, Content: content})
 	}
 	return messages
 }

@@ -430,6 +430,15 @@ func TestLocalRuntimeLocalBackends_E2E(t *testing.T) {
 			}
 		})
 
+		t.Run("non-streaming-array-content", func(t *testing.T) {
+			resp, body := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions",
+				`{"model":"gpt-4o","messages":[{"role":"user","content":[{"type":"text","text":"hello"},{"type":"text","text":"world"}]}]}`,
+				"Content-Type: application/json", "Authorization: Bearer sk-test")
+			defer resp.Body.Close()
+
+			assertOpenAIChatCompletion(t, resp, body)
+		})
+
 		t.Run("streaming", func(t *testing.T) {
 			resp, body := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions",
 				`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hello"}]}`,
@@ -441,6 +450,19 @@ func TestLocalRuntimeLocalBackends_E2E(t *testing.T) {
 			}
 			assertSSEHeaders(t, resp.Header)
 			// Lorem backend uses Generate(30); chunker frames as 30 token deltas plus 4 framing events.
+			assertOpenAIStreamShape(t, body, 30)
+		})
+
+		t.Run("streaming-array-content", func(t *testing.T) {
+			resp, body := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions",
+				`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"hello"},{"type":"text","text":"world"}]}]}`,
+				"Content-Type: application/json", "Authorization: Bearer sk-test")
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status: got %d, want 200: %s", resp.StatusCode, body)
+			}
+			assertSSEHeaders(t, resp.Header)
 			assertOpenAIStreamShape(t, body, 30)
 		})
 	})
