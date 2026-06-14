@@ -146,10 +146,10 @@ func DefaultRecordCaps() RecordCaps {
 type inMemoryRecorder struct {
 	listener string
 
-	mu    sync.Mutex
-	calls []RecordedCall
-
-	nextID atomic.Int64
+	mu       sync.Mutex
+	calls    []RecordedCall
+	nextID   int64
+	inFlight int
 }
 
 func newInMemoryRecorder(listener string) *inMemoryRecorder {
@@ -166,18 +166,28 @@ func NewInMemoryRecorder(listener string) Recorder { return newInMemoryRecorder(
 func NewNoopRecorder() Recorder { return noopRecorder{} }
 
 func (r *inMemoryRecorder) NextCallID() int64 {
-	return r.nextID.Add(1)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.nextID++
+	r.inFlight++
+	return r.nextID
 }
 
 func (r *inMemoryRecorder) Record(call RecordedCall) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.inFlight > 0 {
+		r.inFlight--
+	}
 	r.calls = append(r.calls, call)
 }
 
 func (r *inMemoryRecorder) RecordWS(call RecordedWSCall) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.inFlight > 0 {
+		r.inFlight--
+	}
 	wsCall := call
 	r.calls = append(r.calls, RecordedCall{
 		CallID:   call.CallID,
@@ -203,10 +213,12 @@ func (r *inMemoryRecorder) List() []RecordedCall {
 
 func (r *inMemoryRecorder) Clear() int {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	n := len(r.calls)
 	r.calls = nil
-	r.mu.Unlock()
-	r.nextID.Store(0) // next call: Add(1) -> 1
+	if r.inFlight == 0 {
+		r.nextID = 0
+	}
 	return n
 }
 
@@ -297,8 +309,8 @@ var (
 //
 //  1. Assigns call_id via recorder.NextCallID() before invoking next, so
 //     concurrent arrivals get distinct, arrival-ordered IDs.
-//  2. Buffers up to caps.RequestBodyCapBytes of the request body for the
-//     record, restoring the full body to req.Body for the downstream handler.
+//  2. Wraps the request body so the downstream handler can stream it normally
+//     while capture stores only up to caps.RequestBodyCapBytes.
 //  3. Wraps the ResponseWriter to capture status, headers, and body (or SSE
 //     event stream, detected via Content-Type: text/event-stream).
 func recordingMiddleware(recorder Recorder, caps RecordCaps) func(http.Handler) http.Handler {
@@ -309,13 +321,14 @@ func recordingMiddleware(recorder Recorder, caps RecordCaps) func(http.Handler) 
 			ctx, wsStats := runtimecfg.WithWebSocketStats(req.Context())
 			req = req.WithContext(ctx)
 
-			fullBody, _ := readAllBody(req.Body)
-			reqBody, reqTruncated := capBytes(fullBody, caps.RequestBodyCapBytes)
-			// Restore full body for the downstream handler.
-			req.Body = io.NopCloser(bytes.NewReader(fullBody))
+			bodyCapture := newRecordingRequestBody(req.Body, caps.RequestBodyCapBytes)
+			req.Body = bodyCapture
 
 			rw := newRecordingResponseWriter(w, caps)
 			next.ServeHTTP(rw, req)
+			_ = bodyCapture.drain()
+			_ = bodyCapture.Close()
+			reqBody, reqTruncated := bodyCapture.snapshot()
 
 			completedAt := time.Now().UTC()
 			if wsStats.Upgraded() {
@@ -388,26 +401,72 @@ func cloneHeader(h http.Header) http.Header {
 	return out
 }
 
-// readAllBody drains r and closes it if it is an io.Closer. A nil reader
-// returns an empty slice.
-func readAllBody(r io.Reader) ([]byte, error) {
-	if r == nil {
-		return nil, nil
-	}
-	all, err := io.ReadAll(r)
-	if c, ok := r.(io.Closer); ok {
-		_ = c.Close()
-	}
-	return all, err
+type recordingRequestBody struct {
+	rc     io.ReadCloser
+	cap    int
+	buf    bytes.Buffer
+	total  int
+	closed bool
 }
 
-// capBytes returns the prefix of raw up to cap bytes and the count of bytes
-// dropped past the cap. A non-positive cap disables truncation.
-func capBytes(raw []byte, cap int) ([]byte, int) {
-	if cap <= 0 || len(raw) <= cap {
-		return raw, 0
+func newRecordingRequestBody(rc io.ReadCloser, cap int) *recordingRequestBody {
+	if rc == nil {
+		rc = http.NoBody
 	}
-	return raw[:cap], len(raw) - cap
+	return &recordingRequestBody{rc: rc, cap: cap}
+}
+
+func (b *recordingRequestBody) Read(p []byte) (int, error) {
+	n, err := b.rc.Read(p)
+	if n > 0 {
+		b.capture(p[:n])
+	}
+	return n, err
+}
+
+func (b *recordingRequestBody) Close() error {
+	if b.closed {
+		return nil
+	}
+	b.closed = true
+	return b.rc.Close()
+}
+
+func (b *recordingRequestBody) drain() error {
+	if b.closed {
+		return nil
+	}
+	_, err := io.Copy(io.Discard, b)
+	if err == io.EOF {
+		return nil
+	}
+	return err
+}
+
+func (b *recordingRequestBody) capture(p []byte) {
+	b.total += len(p)
+	if b.cap <= 0 {
+		b.buf.Write(p)
+		return
+	}
+	room := b.cap - b.buf.Len()
+	if room <= 0 {
+		return
+	}
+	if len(p) <= room {
+		b.buf.Write(p)
+		return
+	}
+	b.buf.Write(p[:room])
+}
+
+func (b *recordingRequestBody) snapshot() ([]byte, int) {
+	raw := append([]byte(nil), b.buf.Bytes()...)
+	truncated := b.total - len(raw)
+	if truncated < 0 {
+		truncated = 0
+	}
+	return raw, truncated
 }
 
 // recordingResponseWriter wraps an http.ResponseWriter to capture status,
@@ -526,16 +585,18 @@ func (a *sseAccumulator) feed(p []byte, ts time.Time) {
 }
 
 func (a *sseAccumulator) parseFrame(frame []byte, ts time.Time) {
-	var event, data string
+	var event string
+	var dataLines []string
 	for _, lineBytes := range bytes.Split(frame, []byte("\n")) {
 		line := string(lineBytes)
 		switch {
 		case strings.HasPrefix(line, "event:"):
-			event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			event = sseFieldValue(line, "event:")
 		case strings.HasPrefix(line, "data:"):
-			data = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			dataLines = append(dataLines, sseFieldValue(line, "data:"))
 		}
 	}
+	data := strings.Join(dataLines, "\n")
 	if event == "" && data == "" {
 		return
 	}
@@ -548,4 +609,12 @@ func (a *sseAccumulator) parseFrame(frame []byte, ts time.Time) {
 		Event:      event,
 		Data:       data,
 	})
+}
+
+func sseFieldValue(line, prefix string) string {
+	value := strings.TrimPrefix(line, prefix)
+	if strings.HasPrefix(value, " ") {
+		return strings.TrimPrefix(value, " ")
+	}
+	return value
 }
