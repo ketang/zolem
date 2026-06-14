@@ -139,6 +139,36 @@ func TestBuildLocalStartupAppForRuntime_DeprecationWarnings(t *testing.T) {
 	}
 }
 
+func TestBuildLocalStartupAppForRuntime_LoadedFixtureIsNotWarning(t *testing.T) {
+	fixturesDir := t.TempDir()
+	writeLocalFixture(t, fixturesDir, "wasm-only", "anthropic", "v1", []byte(`{"id":"wasm-only","type":"message","role":"assistant","content":[{"type":"text","text":"x"}],"model":"claude-3-5-sonnet-20241022","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2}}`), localAlwaysMatchWASM)
+
+	app, warnings, err := buildLocalStartupAppForRuntime(runtimecfg.ListenerRuntime{
+		Spec: runtimecfg.ListenerSpec{
+			Name:     "anthropic-demo",
+			Addr:     "127.0.0.1:12001",
+			Provider: "anthropic",
+			Profile:  "demo",
+		},
+		Profile: runtimecfg.RuntimeProfile{
+			Name:    "demo",
+			Backend: runtimecfg.BackendFixture,
+		},
+	}, fixturesDir, runtimecfg.NewProfileCounters(), nil, RecordCaps{}, startupDeps{
+		newFetcher: disabledTestFetcher,
+	})
+	if err != nil {
+		t.Fatalf("buildLocalStartupAppForRuntime: %v", err)
+	}
+	defer app.close()
+
+	for _, warning := range warnings {
+		if strings.Contains(warning, "loaded fixture") {
+			t.Fatalf("loaded fixture info surfaced as warning: %v", warnings)
+		}
+	}
+}
+
 func TestBuildLocalStartupAppForRuntime_NoDeprecationWithFixturesYAML(t *testing.T) {
 	fixturesDir := t.TempDir()
 	nsDir := filepath.Join(fixturesDir, "team-a")

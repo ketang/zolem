@@ -1,11 +1,21 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 )
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	localAdminAddr := flag.String("local-admin-addr", "", "listen address for local admin control plane")
 	localAddr := flag.String("local-addr", "", "loopback listen address for local fixed-listener mode (e.g. 127.0.0.1:8080); non-loopback addresses are rejected")
 	localProvider := flag.String("local-provider", "", "provider for local fixed-listener mode")
@@ -20,6 +30,7 @@ func main() {
 	localRecordStreamEventCap := flag.Int("local-record-stream-event-cap", 1024, "maximum SSE events to record per streamed response; excess is counted but dropped")
 	flag.Parse()
 
+	deps := signalAwareStartupDeps(ctx)
 	if *localAdminAddr != "" {
 		if err := runLocalAdmin(localAdminOptions{
 			Addr:        *localAdminAddr,
@@ -28,7 +39,7 @@ func main() {
 				CertFile: *localTLSCert,
 				KeyFile:  *localTLSKey,
 			},
-		}, startupDeps{}); err != nil {
+		}, deps); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -49,11 +60,52 @@ func main() {
 			RecordRequestBodyCapBytes:  *localRecordRequestBodyCap,
 			RecordResponseBodyCapBytes: *localRecordResponseBodyCap,
 			RecordStreamEventCap:       *localRecordStreamEventCap,
-		}, startupDeps{}); err != nil {
+		}, deps); err != nil {
 			log.Fatal(err)
 		}
 		return
 	}
 
 	log.Fatal("choose either -local-admin-addr or -local-provider")
+}
+
+func signalAwareStartupDeps(ctx context.Context) startupDeps {
+	return startupDeps{
+		listen: func(addr string, handler http.Handler) error {
+			server := &http.Server{Addr: addr, Handler: handler}
+			return serveHTTPWithContext(ctx, server, server.ListenAndServe)
+		},
+		listenTLS: func(addr, certFile, keyFile string, handler http.Handler) error {
+			server := &http.Server{Addr: addr, Handler: handler}
+			return serveHTTPWithContext(ctx, server, func() error {
+				return server.ListenAndServeTLS(certFile, keyFile)
+			})
+		},
+	}
+}
+
+func serveHTTPWithContext(ctx context.Context, server *http.Server, serve func() error) error {
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- serve()
+	}()
+
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+		err := <-errCh
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	}
 }

@@ -104,6 +104,40 @@ func TestInMemoryRecorder_RecordListClear(t *testing.T) {
 	}
 }
 
+func TestInMemoryRecorder_ClearDoesNotReuseInFlightCallID(t *testing.T) {
+	r := newInMemoryRecorder("listener-1")
+
+	inFlightID := r.NextCallID()
+	if cleared := r.Clear(); cleared != 0 {
+		t.Fatalf("Clear with only in-flight call returned %d, want 0", cleared)
+	}
+
+	nextID := r.NextCallID()
+	if nextID == inFlightID {
+		t.Fatalf("NextCallID reused in-flight id %d after Clear", nextID)
+	}
+	if nextID != inFlightID+1 {
+		t.Fatalf("NextCallID after Clear with in-flight call = %d, want %d", nextID, inFlightID+1)
+	}
+
+	r.Record(RecordedCall{CallID: inFlightID, Listener: "listener-1"})
+	r.Record(RecordedCall{CallID: nextID, Listener: "listener-1"})
+	calls := r.List()
+	if len(calls) != 2 {
+		t.Fatalf("List len = %d, want 2", len(calls))
+	}
+	if calls[0].CallID == calls[1].CallID {
+		t.Fatalf("call IDs collided after Clear: %+v", calls)
+	}
+
+	if cleared := r.Clear(); cleared != 2 {
+		t.Fatalf("second Clear returned %d, want 2", cleared)
+	}
+	if got := r.NextCallID(); got != 1 {
+		t.Fatalf("after quiet Clear, NextCallID = %d, want 1", got)
+	}
+}
+
 func TestInMemoryRecorder_RecordWS(t *testing.T) {
 	r := newInMemoryRecorder("listener-1")
 	r.RecordWS(RecordedWSCall{
@@ -331,6 +365,61 @@ func TestRecordingMiddleware_RequestBodyCap(t *testing.T) {
 	}
 }
 
+func TestRecordingMiddleware_RequestBodyCapDoesNotPrebufferFullBody(t *testing.T) {
+	r := newInMemoryRecorder("listener-1")
+	caps := RecordCaps{RequestBodyCapBytes: 4, ResponseBodyCapBytes: 1024, StreamEventCap: 32}
+	allowRest := make(chan struct{})
+	handlerStarted := make(chan struct{})
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		close(handlerStarted)
+		close(allowRest)
+		body, _ := io.ReadAll(req.Body)
+		if string(body) != "hello world" {
+			t.Errorf("handler should still see full body, got %q", body)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	h := recordingMiddleware(r, caps)(next)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		req := httptest.NewRequest(http.MethodPost, "/x", &gatedReadCloser{
+			first:     []byte("hello"),
+			rest:      []byte(" world"),
+			allowRest: allowRest,
+		})
+		h.ServeHTTP(httptest.NewRecorder(), req)
+	}()
+
+	select {
+	case <-handlerStarted:
+	case <-time.After(500 * time.Millisecond):
+		close(allowRest)
+		<-done
+		t.Fatal("handler did not start before the oversized request body was released")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("request did not finish")
+	}
+
+	calls := r.List()
+	if len(calls) != 1 {
+		t.Fatalf("len = %d, want 1", len(calls))
+	}
+	got := calls[0].Request
+	if got.Body != "hell" {
+		t.Fatalf("Body = %q, want first 4 bytes", got.Body)
+	}
+	if got.BodyTruncatedBytes != len("hello world")-4 {
+		t.Fatalf("BodyTruncatedBytes = %d, want %d", got.BodyTruncatedBytes, len("hello world")-4)
+	}
+}
+
 func TestRecordingMiddleware_ResponseBodyCap(t *testing.T) {
 	r := newInMemoryRecorder("listener-1")
 	caps := RecordCaps{RequestBodyCapBytes: 1024, ResponseBodyCapBytes: 3, StreamEventCap: 32}
@@ -413,6 +502,33 @@ func TestRecordingMiddleware_SSEStream(t *testing.T) {
 	}
 	if c.Response.Stream.Events[0].ReceivedAt.IsZero() {
 		t.Fatalf("event timestamp not set")
+	}
+}
+
+func TestRecordingMiddleware_SSEMultiLineData(t *testing.T) {
+	r := newInMemoryRecorder("listener-1")
+	caps := DefaultRecordCaps()
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("event: delta\ndata: first line\ndata: second line\ndata:\n\n"))
+	})
+	h := recordingMiddleware(r, caps)(next)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/stream", nil)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	calls := r.List()
+	if len(calls) != 1 {
+		t.Fatalf("len = %d, want 1", len(calls))
+	}
+	stream := calls[0].Response.Stream
+	if stream == nil || len(stream.Events) != 1 {
+		t.Fatalf("Stream = %+v, want one event", stream)
+	}
+	if stream.Events[0].Data != "first line\nsecond line\n" {
+		t.Fatalf("Data = %q, want multi-line data joined with newlines", stream.Events[0].Data)
 	}
 }
 
@@ -522,4 +638,34 @@ func TestRecordingMiddleware_AssignsCallIDsInArrivalOrder(t *testing.T) {
 	if calls[0].CallID == calls[1].CallID {
 		t.Fatalf("call IDs collided: %+v", calls)
 	}
+}
+
+type gatedReadCloser struct {
+	first     []byte
+	rest      []byte
+	allowRest <-chan struct{}
+	closed    bool
+}
+
+func (b *gatedReadCloser) Read(p []byte) (int, error) {
+	if b.closed {
+		return 0, io.ErrClosedPipe
+	}
+	if len(b.first) > 0 {
+		n := copy(p, b.first)
+		b.first = b.first[n:]
+		return n, nil
+	}
+	if len(b.rest) > 0 {
+		<-b.allowRest
+		n := copy(p, b.rest)
+		b.rest = b.rest[n:]
+		return n, nil
+	}
+	return 0, io.EOF
+}
+
+func (b *gatedReadCloser) Close() error {
+	b.closed = true
+	return nil
 }

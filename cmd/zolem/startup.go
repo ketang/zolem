@@ -331,7 +331,6 @@ func loadFixtures(fixturesDir string, listenerRuntime runtimecfg.ListenerRuntime
 			return nil, nil, warnings, fmt.Errorf("compile wasm for fixture %q: %w", fixtures[i].ID, err)
 		}
 		fixtures[i].Module = &mod
-		warnings = append(warnings, fmt.Sprintf("loaded fixture: %s", fixtures[i].ID))
 	}
 
 	return fixtures, selector, warnings, nil

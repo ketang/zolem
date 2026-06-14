@@ -415,6 +415,30 @@ func TestLocalAdminHandler_ListenerCalls_GetAndDelete(t *testing.T) {
 	}
 }
 
+func TestLocalAdminHandler_LoadedFixtureInfoDoesNotSurfaceInWarningsHeader(t *testing.T) {
+	fixturesDir := t.TempDir()
+	writeLocalFixture(t, fixturesDir, "wasm-only", "anthropic", "v1", []byte(`{"id":"wasm-only","type":"message","role":"assistant","content":[{"type":"text","text":"x"}],"model":"claude-3-5-sonnet-20241022","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2}}`), localAlwaysMatchWASM)
+
+	control := newTestLocalControlPlane(t, localAdminOptions{FixturesDir: fixturesDir})
+	handler := buildLocalAdminHandler(control)
+
+	profileResp := doRequest(t, handler, httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"fixture"}`)))
+	defer profileResp.Body.Close()
+	if profileResp.StatusCode != http.StatusOK {
+		t.Fatalf("profile put status: got %d, want 200", profileResp.StatusCode)
+	}
+
+	listenerResp := doRequest(t, handler, httptestRequest(http.MethodPut, "/_zolem/listeners/anthropic-demo", bytes.NewBufferString(`{"addr":"127.0.0.1:0","provider":"anthropic","profile":"demo"}`)))
+	defer listenerResp.Body.Close()
+	if listenerResp.StatusCode != http.StatusOK {
+		t.Fatalf("listener put status: got %d, want 200", listenerResp.StatusCode)
+	}
+	warningsHeader := listenerResp.Header.Get("X-Zolem-Warnings")
+	if strings.Contains(warningsHeader, "loaded fixture") {
+		t.Fatalf("X-Zolem-Warnings contained fixture load info: %q", warningsHeader)
+	}
+}
+
 func TestLocalAdminHandler_ListenerCalls_NotFound(t *testing.T) {
 	control := newTestLocalControlPlane(t, localAdminOptions{})
 	handler := buildLocalAdminHandler(control)
