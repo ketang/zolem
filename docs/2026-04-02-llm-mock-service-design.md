@@ -1,7 +1,12 @@
 # Zolem: LLM API Mock Service — Design Spec
 
 **Date:** 2026-04-02  
-**Status:** Approved
+**Status:** Historical design snapshot
+
+This document records the original approved design direction from April 2026.
+It is not the current user-facing runtime reference; use
+[`README.md`](../README.md) and [`docs/local-runtime.md`](local-runtime.md) for
+current local runtime commands, flags, and fixture behavior.
 
 ---
 

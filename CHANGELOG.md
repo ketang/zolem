@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+
+- Marked the April 2026 design document as historical, fixed Anthropic snapshot
+  links and test selectors, removed the empty `ERRORS.md` stub, refreshed local
+  TLS certificate guidance, and replaced hard-coded Docker example tags with
+  current tag guidance.
+
 ## v0.1.0 — 2026-05-25
 
 Initial release.
