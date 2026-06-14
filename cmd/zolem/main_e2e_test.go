@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -50,16 +51,15 @@ func TestMain_E2E(t *testing.T) {
 				if chunk.Choices[0].Delta.Role != "assistant" {
 					t.Fatalf("first chunk delta: %#v", chunk.Choices[0].Delta)
 				}
-			case len(dataRecords) - 2:
+			case len(dataRecords) - 1:
 				if chunk.Choices[0].FinishReason == nil || *chunk.Choices[0].FinishReason != "stop" {
 					t.Fatalf("final completion chunk finish reason: %#v", chunk.Choices[0].FinishReason)
 				}
-			case len(dataRecords) - 1:
-				if chunk.Usage == nil || chunk.Usage.TotalTokens != 12 {
-					t.Fatalf("usage chunk: %#v", chunk.Usage)
-				}
 			default:
 				combined.WriteString(chunk.Choices[0].Delta.Content)
+			}
+			if chunk.Usage != nil {
+				t.Fatalf("unexpected usage chunk without include_usage: %#v", chunk.Usage)
 			}
 		}
 		if combined.String() != "Fixture says hello from openai." {
@@ -81,10 +81,17 @@ func TestMain_E2E(t *testing.T) {
 		records := sseRecords(t, body)
 		var combined strings.Builder
 		for i, record := range records {
+			payload := sseDataPayload(t, record)
 			var chunk gemini.GenerateContentResponse
-			mustJSONUnmarshal(t, sseDataPayload(t, record), &chunk)
-			if i < len(records)-1 && chunk.Candidates[0].FinishReason != "NONE" {
-				t.Fatalf("chunk %d finish reason: got %q, want NONE", i, chunk.Candidates[0].FinishReason)
+			mustJSONUnmarshal(t, payload, &chunk)
+			if i < len(records)-1 {
+				var raw struct {
+					Candidates []map[string]json.RawMessage `json:"candidates"`
+				}
+				mustJSONUnmarshal(t, payload, &raw)
+				if _, ok := raw.Candidates[0]["finishReason"]; ok {
+					t.Fatalf("chunk %d included finishReason, want omitted: %s", i, payload)
+				}
 			}
 			if i == len(records)-1 && chunk.Candidates[0].FinishReason != "STOP" {
 				t.Fatalf("last chunk finish reason: got %q, want STOP", chunk.Candidates[0].FinishReason)
