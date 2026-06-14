@@ -76,12 +76,22 @@ func main() {
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	opts := admincli.Options{}
 	fs := flag.NewFlagSet("zolemc", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	var parseOutput bytes.Buffer
+	fs.SetOutput(&parseOutput)
 	fs.StringVar(&opts.AdminURL, "admin-url", "http://127.0.0.1:8090", "local admin API base URL")
 	fs.StringVar(&opts.BaseURL, "base-url", "", "local listener base URL")
 	fs.BoolVar(&opts.JSON, "json", false, "write machine-readable JSON")
 	fs.DurationVar(&opts.Timeout, "timeout", 10*time.Second, "HTTP request timeout")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			usage(stdout)
+			return nil
+		}
+		if parseOutput.Len() > 0 {
+			if _, writeErr := stderr.Write(parseOutput.Bytes()); writeErr != nil {
+				return writeErr
+			}
+		}
 		return err
 	}
 	if fs.NArg() == 0 {
