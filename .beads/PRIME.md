@@ -1,6 +1,6 @@
 # Beads Context
 
-This repo uses bd (Beads) for task tracking. Run `bd prime --export` when you need the complete default reference.
+This repo uses bd (Beads) for task tracking. Run `bd prime --full` when you need the complete workflow reference.
 
 ## Session Close
 
