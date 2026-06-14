@@ -26,7 +26,7 @@ type GenerateContentResponse struct {
 
 type Candidate struct {
 	Content      Content `json:"content"`
-	FinishReason string  `json:"finishReason"`
+	FinishReason string  `json:"finishReason,omitempty"`
 	Index        int     `json:"index"`
 }
 

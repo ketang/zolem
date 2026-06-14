@@ -92,6 +92,41 @@ func TestMessages_LoremResponse_NonStreaming(t *testing.T) {
 	}
 }
 
+func TestMessages_LoremResponse_NonStreamingUniqueIDs(t *testing.T) {
+	h := newHandler(t)
+	body := `{"model":"claude-3-5-sonnet-20241022","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`
+	issueRequest := func() anthropic.MessagesResponse {
+		req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-api-key", "sk-any-key")
+		rr := httptest.NewRecorder()
+
+		h.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want 200. body: %s", rr.Code, rr.Body.String())
+		}
+		var resp anthropic.MessagesResponse
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		return resp
+	}
+
+	first := issueRequest()
+	second := issueRequest()
+
+	if !strings.HasPrefix(first.ID, "msg_zolem_") {
+		t.Fatalf("first id: got %q, want msg_zolem_ prefix", first.ID)
+	}
+	if !strings.HasPrefix(second.ID, "msg_zolem_") {
+		t.Fatalf("second id: got %q, want msg_zolem_ prefix", second.ID)
+	}
+	if first.ID == second.ID {
+		t.Fatalf("ids should be unique across responses, got %q twice", first.ID)
+	}
+}
+
 func TestMessages_LoremResponse_Streaming(t *testing.T) {
 	h := newHandler(t)
 	body := `{"model":"claude-3-5-sonnet-20241022","max_tokens":100,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
@@ -177,8 +212,8 @@ func TestMessages_OllamaError_FallsBackToLorem(t *testing.T) {
 	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.ID != "msg_zolem_generated" {
-		t.Fatalf("expected lorem fallback (msg_zolem_generated), got ID %q", resp.ID)
+	if !strings.HasPrefix(resp.ID, "msg_zolem_") {
+		t.Fatalf("expected lorem fallback ID with msg_zolem_ prefix, got %q", resp.ID)
 	}
 }
 

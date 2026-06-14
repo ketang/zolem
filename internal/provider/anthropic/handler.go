@@ -130,7 +130,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resp := MessagesResponse{
-			ID:         "msg_zolem_generated",
+			ID:         newMessageID(),
 			Type:       "message",
 			Role:       "assistant",
 			Content:    []ContentBlock{{Type: "text", Text: strings.Join(tokens, "")}},
@@ -150,7 +150,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		}
 
 		resp := MessagesResponse{
-			ID:         "msg_zolem_ollama",
+			ID:         newMessageID(),
 			Type:       "message",
 			Role:       "assistant",
 			Content:    []ContentBlock{{Type: "text", Text: text}},
@@ -171,7 +171,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 	text := strings.Join(tokens, "")
 	resp := MessagesResponse{
-		ID:         "msg_zolem_generated",
+		ID:         newMessageID(),
 		Type:       "message",
 		Role:       "assistant",
 		Content:    []ContentBlock{{Type: "text", Text: text}},
@@ -331,7 +331,7 @@ func (h *Handler) handleOllamaBackend(w http.ResponseWriter, r *http.Request, re
 	}
 
 	resp := MessagesResponse{
-		ID:         "msg_zolem_" + fmt.Sprintf("%016x", pseudoRandID()),
+		ID:         newMessageID(),
 		Type:       "message",
 		Role:       "assistant",
 		Content:    []ContentBlock{{Type: "text", Text: text}},

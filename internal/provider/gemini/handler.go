@@ -91,7 +91,7 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 		return
 	}
 
-	if r.Header.Get("x-goog-api-key") == "" {
+	if r.Header.Get("x-goog-api-key") == "" && r.URL.Query().Get("key") == "" {
 		writeForbidden(r.Context(), w)
 		return
 	}
@@ -401,9 +401,8 @@ func (h *Handler) handleOllamaStream(w http.ResponseWriter, ctx context.Context,
 		completionTokens++
 		chunk := GenerateContentResponse{
 			Candidates: []Candidate{{
-				Content:      Content{Parts: []Part{{Text: delta}}, Role: "model"},
-				FinishReason: "NONE",
-				Index:        0,
+				Content: Content{Parts: []Part{{Text: delta}}, Role: "model"},
+				Index:   0,
 			}},
 			UsageMetadata: UsageMetadata{
 				PromptTokenCount: promptTokens,
