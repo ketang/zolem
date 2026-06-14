@@ -403,6 +403,22 @@ func TestRunRootUsageAndUnknownCommand(t *testing.T) {
 	if !strings.Contains(stdout.String(), "profiles create") {
 		t.Fatalf("help output missing commands:\n%s", stdout.String())
 	}
+
+	for _, args := range [][]string{{"-h"}, {"--help"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			stdout.Reset()
+			stderr.Reset()
+			if err := run(context.Background(), args, &stdout, &stderr); err != nil {
+				t.Fatalf("root help failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stdout.String(), "profiles create") || !strings.Contains(stdout.String(), "listeners create") {
+				t.Fatalf("root help output missing commands:\n%s", stdout.String())
+			}
+			if strings.Contains(stderr.String(), "flag: help requested") {
+				t.Fatalf("root help wrote flag package error to stderr:\n%s", stderr.String())
+			}
+		})
+	}
 }
 
 func TestAdminHealthOutputModes(t *testing.T) {
