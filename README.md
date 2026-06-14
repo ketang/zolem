@@ -135,6 +135,21 @@ zolemc -base-url http://127.0.0.1:19001 \
   -json-body '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}'
 ```
 
+Inspect or clear the listener's in-memory call history from the admin server:
+
+```bash
+zolemc -admin-url http://127.0.0.1:18090 \
+  listeners calls list openai-demo -since 0
+
+zolemc -admin-url http://127.0.0.1:18090 \
+  listeners calls clear openai-demo
+```
+
+The list output shows call ID, method, path, status, latency, and timestamp.
+Use `-json` to get the full `{"calls":[...]}` API payload. Streamed responses
+show a `~` before the status, such as `~200`, when the status was sent before
+streaming completed.
+
 Current local runtime limitations:
 
 - local-only, loopback addresses only

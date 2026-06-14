@@ -255,6 +255,110 @@ Listener rules:
 - `tls: true` requires the admin server to have been started with `-local-tls-cert` and `-local-tls-key`
 - `fixture` listeners require the admin server to have been started with `-local-fixtures-dir`
 
+## Admin-Mode Call History
+
+Each admin-mode listener keeps an in-memory call history for post-hoc test
+assertions. The history is always recorded for local runtime listeners, is
+scoped to one listener, and disappears when that listener or the admin server
+stops. Fixed-listener mode uses the JSONL recording file described in
+[Call Recording](#call-recording) instead; fixed-listener calls are not
+available through the admin API or `zolemc listeners calls`.
+
+Create a listener with the default recording caps:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"addr":"127.0.0.1:0","provider":"openai","profile":"demo"}' \
+  http://127.0.0.1:18090/_zolem/listeners/openai-demo
+```
+
+You can override the caps per listener:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "addr": "127.0.0.1:0",
+    "provider": "openai",
+    "profile": "demo",
+    "record_request_body_cap_bytes": 65536,
+    "record_response_body_cap_bytes": 65536,
+    "record_stream_event_cap": 256
+  }' \
+  http://127.0.0.1:18090/_zolem/listeners/openai-demo
+```
+
+| Field | Default | Purpose |
+| --- | --- | --- |
+| `record_request_body_cap_bytes` | `262144` | Maximum bytes of request body stored in history. Excess bytes are counted in `body_truncated_bytes`. |
+| `record_response_body_cap_bytes` | `262144` | Maximum bytes of response body stored in history. Excess bytes use the same truncation field. |
+| `record_stream_event_cap` | `1024` | Maximum SSE events stored for a streamed response. Excess events are counted in `events_truncated`. |
+
+Caps only limit what is recorded. Zolem still serves the full request and
+response to the client.
+
+List calls through the admin API:
+
+```bash
+curl http://127.0.0.1:18090/_zolem/listeners/openai-demo/calls
+```
+
+Response:
+
+```json
+{
+  "calls": [
+    {
+      "call_id": 1,
+      "listener": "openai-demo",
+      "received_at": "2026-05-22T16:34:12Z",
+      "latency_ms": 12,
+      "request": {
+        "method": "POST",
+        "path": "/v1/chat/completions"
+      },
+      "response": {
+        "status": 200,
+        "stream": null
+      }
+    }
+  ]
+}
+```
+
+Clear the history and reset the next `call_id` to `1`:
+
+```bash
+curl -X DELETE http://127.0.0.1:18090/_zolem/listeners/openai-demo/calls
+```
+
+Response:
+
+```json
+{"cleared": 1}
+```
+
+The same operations are available through `zolemc`:
+
+```bash
+zolemc -admin-url http://127.0.0.1:18090 \
+  listeners calls list openai-demo
+
+zolemc -admin-url http://127.0.0.1:18090 \
+  listeners calls list openai-demo -since 5
+
+zolemc -admin-url http://127.0.0.1:18090 \
+  listeners calls clear openai-demo
+```
+
+`listeners calls list` prints a table with call ID, method, path, status,
+latency, and timestamp. Use `-json` to print the raw `{"calls":[...]}` API
+payload. `-since <call_id>` filters client-side to calls with a higher
+`call_id`; the admin API still returns the full list. For streamed responses,
+the table prefixes the HTTP status with `~`, for example `~200`, to indicate
+the status was sent before streaming completed.
+
 ## Fixture Backend
 
 The `fixture` backend uses the existing fixture loader and matcher. Start the
