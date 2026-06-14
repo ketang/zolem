@@ -73,8 +73,8 @@ syft zolem-<version>-<os>-<arch>.tar.gz.sbom
 ## Option 2 — Docker
 
 ```bash
-docker pull ghcr.io/ketang/zolem:v0.1.0   # pinned release
-docker pull ghcr.io/ketang/zolem:latest    # latest stable release
+docker pull ghcr.io/ketang/zolem:<version>  # pinned release
+docker pull ghcr.io/ketang/zolem:latest     # latest stable release
 ```
 
 Available platforms: `linux/amd64`, `linux/arm64`.

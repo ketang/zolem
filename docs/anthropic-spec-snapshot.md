@@ -5,7 +5,10 @@ Zolem currently supports Anthropic request validation for:
 - `POST /v1/messages`
 - API version: `v1`
 
-The normalized snapshot lives at [`internal/specs/vendored/anthropic-v1.json`](/tmp/zolem-phase4-discovery-ingestion/internal/specs/vendored/anthropic-v1.json) and is bundled through [`internal/specs/vendored.go`](/tmp/zolem-phase4-discovery-ingestion/internal/specs/vendored.go).
+The normalized snapshot lives at
+[`internal/specs/vendored/anthropic-v1.json`](../internal/specs/vendored/anthropic-v1.json)
+and is bundled through
+[`internal/specs/vendored.go`](../internal/specs/vendored.go).
 
 ## Derivation Source
 
@@ -32,12 +35,15 @@ Message items are currently normalized as:
 When Zolem expands Anthropic request support or Anthropic changes the documented request shape:
 
 1. Re-read the official Messages API docs.
-2. Update [`internal/specs/vendored/anthropic-v1.json`](/tmp/zolem-phase4-discovery-ingestion/internal/specs/vendored/anthropic-v1.json) to match the documented request fields Zolem actually supports.
+2. Update
+   [`internal/specs/vendored/anthropic-v1.json`](../internal/specs/vendored/anthropic-v1.json)
+   to match the documented request fields Zolem actually supports.
 3. Keep the snapshot normalized to JSON Schema draft 2020-12 so it can be compiled directly by the existing validator.
 4. Run the targeted validation tests:
    - `env GOCACHE=/tmp/zolem-go-build-cache go test ./internal/specs -run 'TestVendoredFallbacks_AnthropicSnapshotValidatesMessagesRequests'`
+   - `env GOCACHE=/tmp/zolem-go-build-cache go test ./internal/specs -run 'TestSourceVerification_AnthropicV1SnapshotInvariants'`
    - `env GOCACHE=/tmp/zolem-go-build-cache go test ./internal/provider/anthropic -run 'TestMessages_ValidationFailure'`
-   - `env GOCACHE=/tmp/zolem-go-build-cache go test ./cmd/zolem -run 'TestBuildStartupApp_LoadsVendoredAnthropicSnapshot'`
+   - `env GOCACHE=/tmp/zolem-go-build-cache go test ./cmd/zolem -run 'TestSpecSourceMap_CanonicalSourceInvariants'`
 
 ## Notes
 

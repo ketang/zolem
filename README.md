@@ -67,8 +67,8 @@ See [Artifact verification](#artifact-verification) for cosign signature and SBO
 ### Docker
 
 ```bash
-docker pull ghcr.io/ketang/zolem:v0.1.0   # pinned
-docker pull ghcr.io/ketang/zolem:latest    # latest release
+docker pull ghcr.io/ketang/zolem:<version>  # pinned release
+docker pull ghcr.io/ketang/zolem:latest     # latest release
 ```
 
 Available platforms: `linux/amd64`, `linux/arm64`.
@@ -343,7 +343,7 @@ Basic local runtime mode (admin server):
 
 ```bash
 docker run --rm -p 18090:18090 \
-  ghcr.io/ketang/zolem:v0.1.0 \
+  ghcr.io/ketang/zolem:latest \
   -local-admin-addr 0.0.0.0:18090
 ```
 
@@ -352,7 +352,7 @@ With a fixture directory mounted:
 ```bash
 docker run --rm -p 18090:18090 \
   -v $PWD/fixtures:/fixtures \
-  ghcr.io/ketang/zolem:v0.1.0 \
+  ghcr.io/ketang/zolem:latest \
   -local-admin-addr 0.0.0.0:18090 \
   -local-fixtures-dir /fixtures
 ```
@@ -362,7 +362,7 @@ With TLS certs mounted:
 ```bash
 docker run --rm -p 18443:18443 \
   -v $PWD/certs:/certs \
-  ghcr.io/ketang/zolem:v0.1.0 \
+  ghcr.io/ketang/zolem:latest \
   -local-admin-addr 0.0.0.0:18443 \
   -local-tls-cert /certs/localhost.pem \
   -local-tls-key /certs/localhost-key.pem
