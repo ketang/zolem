@@ -116,7 +116,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if req.Stream {
-			streamResponse(r.Context(), w, responseModel, tokens, promptTokens)
+			streamResponse(r.Context(), w, responseModel, tokens, promptTokens, includeUsage(req))
 			return
 		}
 		text := strings.Join(tokens, "")
@@ -137,7 +137,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	if text, ok := h.generateText(r.Context(), promptFromRequest(req)); ok {
 		completionTokens := len(strings.Fields(text))
 		if req.Stream {
-			streamResponse(r.Context(), w, responseModel, tokenize(text), promptTokens)
+			streamResponse(r.Context(), w, responseModel, tokenize(text), promptTokens, includeUsage(req))
 			return
 		}
 
@@ -157,7 +157,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	tokens := h.generator.Generate(30)
 
 	if req.Stream {
-		streamResponse(r.Context(), w, responseModel, tokens, promptTokens)
+		streamResponse(r.Context(), w, responseModel, tokens, promptTokens, includeUsage(req))
 		return
 	}
 
@@ -232,7 +232,11 @@ func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture
 		return
 	}
 	tokens := tokenize(resp.Choices[0].Message.Content)
-	streamResponse(ctx, w, responseModel, tokens, resp.Usage.PromptTokens)
+	streamResponse(ctx, w, responseModel, tokens, resp.Usage.PromptTokens, includeUsage(req))
+}
+
+func includeUsage(req ChatCompletionRequest) bool {
+	return req.StreamOptions != nil && req.StreamOptions.IncludeUsage
 }
 
 func tokenize(text string) []string {
@@ -310,7 +314,7 @@ func (h *Handler) handleOllamaBackend(w http.ResponseWriter, r *http.Request, re
 	messages := openaiToChatMessages(req)
 
 	if req.Stream {
-		h.handleOllamaStream(w, r.Context(), upstream, messages, model, responseModel, promptTokens)
+		h.handleOllamaStream(w, r.Context(), upstream, messages, model, responseModel, promptTokens, includeUsage(req))
 		return
 	}
 
@@ -333,7 +337,7 @@ func (h *Handler) handleOllamaBackend(w http.ResponseWriter, r *http.Request, re
 	json.NewEncoder(w).Encode(resp)
 }
 
-func (h *Handler) handleOllamaStream(w http.ResponseWriter, ctx context.Context, upstream string, messages []ollama.ChatMessage, model, responseModel string, promptTokens int) {
+func (h *Handler) handleOllamaStream(w http.ResponseWriter, ctx context.Context, upstream string, messages []ollama.ChatMessage, model, responseModel string, promptTokens int, includeUsage bool) {
 	sse := response.NewSSEWriter(w)
 	sse.SetHeaders()
 
@@ -378,17 +382,19 @@ func (h *Handler) handleOllamaStream(w http.ResponseWriter, ctx context.Context,
 	sse.WriteData(data)
 	sse.Flush()
 
-	usageChunk := map[string]any{
-		"id": id, "object": "chat.completion.chunk", "created": created, "model": responseModel,
-		"choices": []any{},
-		"usage": map[string]int{
-			"prompt_tokens": promptTokens, "completion_tokens": completionTokens,
-			"total_tokens": promptTokens + completionTokens,
-		},
+	if includeUsage {
+		usageChunk := map[string]any{
+			"id": id, "object": "chat.completion.chunk", "created": created, "model": responseModel,
+			"choices": []any{},
+			"usage": map[string]int{
+				"prompt_tokens": promptTokens, "completion_tokens": completionTokens,
+				"total_tokens": promptTokens + completionTokens,
+			},
+		}
+		data, _ = json.Marshal(usageChunk)
+		sse.WriteData(data)
+		sse.Flush()
 	}
-	data, _ = json.Marshal(usageChunk)
-	sse.WriteData(data)
-	sse.Flush()
 
 	sse.WriteData([]byte("[DONE]"))
 	sse.Flush()

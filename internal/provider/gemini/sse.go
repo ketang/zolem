@@ -35,7 +35,7 @@ func streamResponse(ctx context.Context, w http.ResponseWriter, model string, to
 
 	for i, tok := range tokens {
 		isLast := i == len(tokens)-1
-		finishReason := "NONE"
+		finishReason := ""
 		candidateTokenCount := 0
 		if isLast {
 			finishReason = "STOP"

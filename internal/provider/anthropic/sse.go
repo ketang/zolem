@@ -16,7 +16,7 @@ func streamResponse(ctx context.Context, w http.ResponseWriter, model string, to
 	sse.SetHeaders()
 	delay := runtimecfg.StreamDelayForRequest(ctx)
 
-	msgID := "msg_zolem_" + fmt.Sprintf("%016x", pseudoRandID())
+	msgID := newMessageID()
 
 	msgStart, _ := json.Marshal(map[string]any{
 		"type": "message_start",
@@ -74,7 +74,7 @@ func streamToolUseResponse(ctx context.Context, w http.ResponseWriter, model str
 	sse := response.NewSSEWriter(w)
 	sse.SetHeaders()
 
-	msgID := "msg_zolem_" + fmt.Sprintf("%016x", pseudoRandID())
+	msgID := newMessageID()
 
 	msgStart, _ := json.Marshal(map[string]any{
 		"type": "message_start",
@@ -128,6 +128,10 @@ func streamToolUseResponse(ctx context.Context, w http.ResponseWriter, model str
 }
 
 var pseudoCounter uint64
+
+func newMessageID() string {
+	return "msg_zolem_" + fmt.Sprintf("%016x", pseudoRandID())
+}
 
 func pseudoRandID() uint64 {
 	return atomic.AddUint64(&pseudoCounter, 1)

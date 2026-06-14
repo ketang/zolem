@@ -11,7 +11,7 @@ import (
 	runtimecfg "zolem.dev/zolem/internal/runtime"
 )
 
-func streamResponse(ctx context.Context, w http.ResponseWriter, model string, tokens []string, promptTokens int) {
+func streamResponse(ctx context.Context, w http.ResponseWriter, model string, tokens []string, promptTokens int, includeUsage bool) {
 	sse := response.NewSSEWriter(w)
 	sse.SetHeaders()
 	delay := runtimecfg.StreamDelayForRequest(ctx)
@@ -51,17 +51,19 @@ func streamResponse(ctx context.Context, w http.ResponseWriter, model string, to
 	sse.WriteData(data)
 	sse.Flush()
 
-	usageChunk := map[string]any{
-		"id": id, "object": "chat.completion.chunk", "created": created, "model": model,
-		"choices": []any{},
-		"usage": map[string]int{
-			"prompt_tokens": promptTokens, "completion_tokens": response.CountNonEmpty(tokens),
-			"total_tokens": promptTokens + response.CountNonEmpty(tokens),
-		},
+	if includeUsage {
+		usageChunk := map[string]any{
+			"id": id, "object": "chat.completion.chunk", "created": created, "model": model,
+			"choices": []any{},
+			"usage": map[string]int{
+				"prompt_tokens": promptTokens, "completion_tokens": response.CountNonEmpty(tokens),
+				"total_tokens": promptTokens + response.CountNonEmpty(tokens),
+			},
+		}
+		data, _ = json.Marshal(usageChunk)
+		sse.WriteData(data)
+		sse.Flush()
 	}
-	data, _ = json.Marshal(usageChunk)
-	sse.WriteData(data)
-	sse.Flush()
 
 	sse.WriteData([]byte("[DONE]"))
 	sse.Flush()
