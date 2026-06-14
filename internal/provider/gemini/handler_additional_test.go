@@ -304,6 +304,22 @@ func TestGenerateContent_MissingAuthUsesHighFidelityEnvelope(t *testing.T) {
 	assertGeminiHighFidelityError(t, rr, http.StatusForbidden, "PERMISSION_DENIED", "API_KEY_INVALID")
 }
 
+func TestGenerateContent_QueryKeyAuth(t *testing.T) {
+	runner := fixture.NewRunner()
+	t.Cleanup(runner.Close)
+	h := newGeminiAdditionalHandler(t, runner, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPost, geminiGeneratePath+"?key=test-key", strings.NewReader(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200. body: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestGenerateContent_InvalidJSONUsesHighFidelityEnvelope(t *testing.T) {
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)
@@ -512,8 +528,13 @@ func TestGenerateContent_StreamFixtureResponse(t *testing.T) {
 	if got := first.Candidates[0].Content.Parts[0].Text; got != "alpha " {
 		t.Fatalf("first token: got %q, want %q", got, "alpha ")
 	}
-	if got := first.Candidates[0].FinishReason; got != "NONE" {
-		t.Fatalf("first finishReason: got %q, want NONE", got)
+	var firstRaw map[string]any
+	if err := json.Unmarshal([]byte(payloads[0]), &firstRaw); err != nil {
+		t.Fatalf("decode first raw payload: %v", err)
+	}
+	firstCandidate := firstRaw["candidates"].([]any)[0].(map[string]any)
+	if _, ok := firstCandidate["finishReason"]; ok {
+		t.Fatalf("first chunk included finishReason, want omitted: %s", payloads[0])
 	}
 	if first.UsageMetadata.PromptTokenCount != 7 {
 		t.Fatalf("first promptTokenCount: got %d, want 7", first.UsageMetadata.PromptTokenCount)

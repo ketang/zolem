@@ -372,7 +372,7 @@ func TestChatCompletions_FixtureStreamingResponse(t *testing.T) {
 		Module:       &mod,
 	}})
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"model":"gpt-4o","stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Authorization", "Bearer sk-test")
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -446,6 +446,54 @@ func TestChatCompletions_FixtureStreamingResponse(t *testing.T) {
 	}
 	if usage.Usage.PromptTokens != 11 || usage.Usage.CompletionTokens != 2 || usage.Usage.TotalTokens != 13 {
 		t.Fatalf("usage chunk: got %+v", usage.Usage)
+	}
+}
+
+func TestChatCompletions_StreamUsageChunkRequiresIncludeUsage(t *testing.T) {
+	runner := newRunner(t)
+	h := newTestHandler(t, specs.NewValidator(), runner, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer sk-test")
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status without include_usage: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	frames := splitSSEDataFrames(t, rr.Body.String())
+	if frames[len(frames)-1] != "[DONE]" {
+		t.Fatalf("terminal frame without include_usage: got %q, want [DONE]", frames[len(frames)-1])
+	}
+	for _, frame := range frames[:len(frames)-1] {
+		chunk := decodeStreamChunk(t, frame)
+		if chunk.Usage != nil {
+			t.Fatalf("unexpected usage chunk without include_usage: %s", frame)
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"model":"gpt-4o","stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer sk-test")
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status with include_usage: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	frames = splitSSEDataFrames(t, rr.Body.String())
+	if len(frames) < 2 {
+		t.Fatalf("frames with include_usage: got %d, want at least 2", len(frames))
+	}
+	usage := decodeStreamChunk(t, frames[len(frames)-2])
+	if usage.Usage == nil {
+		t.Fatalf("missing usage chunk with include_usage; penultimate frame: %s", frames[len(frames)-2])
+	}
+	if len(usage.Choices) != 0 {
+		t.Fatalf("usage chunk choices: got %d, want 0", len(usage.Choices))
 	}
 }
 
