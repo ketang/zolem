@@ -383,22 +383,22 @@ func parseSSEDataPayloads(t *testing.T, body []byte) [][]byte {
 }
 
 // assertOpenAIStreamShape pins the exact SSE event-frame layout that zolem's
-// OpenAI streaming chunker emits: 1 role-opener + wantTokens token deltas + 1
-// finish-reason chunk + 1 usage chunk + 1 [DONE] terminator. Total event
-// count must equal wantTokens + 4, [DONE] must be the final event, and no
-// events may follow [DONE]. Pass exact wantTokens for deterministic backends
-// (lorem/faker fixed at 30, fixture = word count of the rendered string,
-// ollama = number of upstream content deltas, wasm = number of generator
-// tokens). A regression that collapses chunks, drops [DONE], emits trailing
-// events after [DONE], reorders the frame structure, or changes per-chunk
-// content shape (role on opener, finish_reason on finalChunk, usage on
-// usageChunk) fails this assertion.
+// OpenAI streaming chunker emits when stream_options.include_usage is not set:
+// 1 role-opener + wantTokens token deltas + 1 finish-reason chunk + 1 [DONE]
+// terminator. Total event count must equal wantTokens + 3, [DONE] must be the
+// final event, and no events may follow [DONE]. Pass exact wantTokens for
+// deterministic backends (lorem/faker fixed at 30, fixture = word count of the
+// rendered string, ollama = number of upstream content deltas, wasm = number
+// of generator tokens). A regression that collapses chunks, drops [DONE],
+// emits trailing events after [DONE], reorders the frame structure, emits an
+// unsolicited usage chunk, or changes per-chunk content shape (role on opener,
+// finish_reason on finalChunk) fails this assertion.
 func assertOpenAIStreamShape(t *testing.T, body []byte, wantTokens int) {
 	t.Helper()
 	payloads := parseSSEDataPayloads(t, body)
-	wantTotal := wantTokens + 4
+	wantTotal := wantTokens + 3
 	if len(payloads) != wantTotal {
-		t.Fatalf("event count: got %d, want %d (1 role-opener + %d token deltas + 1 finalChunk + 1 usageChunk + 1 [DONE]); body:\n%s",
+		t.Fatalf("event count: got %d, want %d (1 role-opener + %d token deltas + 1 finalChunk + 1 [DONE]); body:\n%s",
 			len(payloads), wantTotal, wantTokens, body)
 	}
 
@@ -427,6 +427,9 @@ func assertOpenAIStreamShape(t *testing.T, body []byte, wantTokens int) {
 	if first.Choices[0].FinishReason != nil {
 		t.Fatalf("role-opener finish_reason = %q, want null", *first.Choices[0].FinishReason)
 	}
+	if first.Usage != nil {
+		t.Fatalf("role-opener usage = %+v, want nil", first.Usage)
+	}
 
 	for i := 1; i <= wantTokens; i++ {
 		var c openAIStreamChunk
@@ -438,6 +441,9 @@ func assertOpenAIStreamShape(t *testing.T, body []byte, wantTokens int) {
 		}
 		if c.Choices[0].FinishReason != nil {
 			t.Fatalf("token chunk %d: finish_reason = %q, want null", i, *c.Choices[0].FinishReason)
+		}
+		if c.Usage != nil {
+			t.Fatalf("token chunk %d: usage = %+v, want nil", i, c.Usage)
 		}
 	}
 
@@ -460,35 +466,26 @@ func assertOpenAIStreamShape(t *testing.T, body []byte, wantTokens int) {
 		t.Fatalf("finalChunk delta should be empty; got role=%q content=%q",
 			fin.Choices[0].Delta.Role, fin.Choices[0].Delta.Content)
 	}
-
-	usageIdx := wantTokens + 2
-	var usage openAIStreamChunk
-	if err := json.Unmarshal(payloads[usageIdx], &usage); err != nil {
-		t.Fatalf("usageChunk unmarshal: %v; payload=%s", err, payloads[usageIdx])
-	}
-	if usage.Usage == nil {
-		t.Fatalf("usageChunk: usage missing; payload=%s", payloads[usageIdx])
-	}
-	if len(usage.Choices) != 0 {
-		t.Fatalf("usageChunk: choices len = %d, want 0; payload=%s", len(usage.Choices), payloads[usageIdx])
+	if fin.Usage != nil {
+		t.Fatalf("finalChunk usage = %+v, want nil", fin.Usage)
 	}
 }
 
 type recordedCall struct {
-	CallID      int64          `json:"call_id"`
-	Listener    string         `json:"listener"`
-	ReceivedAt  string         `json:"received_at"`
-	CompletedAt string         `json:"completed_at"`
-	LatencyMS   int64          `json:"latency_ms"`
-	Request     recordedReq    `json:"request"`
-	Response    recordedResp   `json:"response"`
+	CallID      int64        `json:"call_id"`
+	Listener    string       `json:"listener"`
+	ReceivedAt  string       `json:"received_at"`
+	CompletedAt string       `json:"completed_at"`
+	LatencyMS   int64        `json:"latency_ms"`
+	Request     recordedReq  `json:"request"`
+	Response    recordedResp `json:"response"`
 }
 
 type recordedReq struct {
 	Method             string              `json:"method"`
 	Path               string              `json:"path"`
 	Query              string              `json:"query"`
-	Headers            map[string][]string  `json:"headers"`
+	Headers            map[string][]string `json:"headers"`
 	RemoteAddr         string              `json:"remote_addr"`
 	Body               string              `json:"body,omitempty"`
 	BodyBase64         string              `json:"body_base64,omitempty"`
