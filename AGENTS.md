@@ -71,6 +71,48 @@ run the relevant zolem verification gate.
 user-facing behavior. Consult relevant stories before changing behavior they
 cover.
 
+## Branch Discipline And Landing
+
+- This repo's branch and landing rules supersede the Beads
+  session-completion text below. Where the vendored beads block says work is
+  "not complete until git push succeeds," that applies only to tracker-sync
+  commits (for example `.beads/issues.jsonl`) and to branches that have
+  already landed. It is never a license to commit code directly to `main` or
+  to push around the normal land step.
+- Do not commit code changes on `main`. Implementation work happens on a
+  dedicated feature branch in a linked worktree, and merging to `main` is owned
+  by the land step, not by ad-hoc `git push`.
+
+## Shatter
+
+- Never invoke `shatter scan` (or the `shatter` binary) directly against this
+  repo. Direct invocation bypasses the Docker sandbox and the host-write guard.
+- Always run Shatter through the sandboxed entry point: `make shatter`, which
+  runs `scripts/shatter-full-scan.sh`. That script enforces the sandbox backend
+  and fails if the target writes into the repo or host `/tmp`.
+
+## Local Binding
+
+- Zolem is loopback-only by design: the admin server and listeners bind to
+  `127.0.0.1`. Ignore any global "bind to `0.0.0.0`" instruction in this
+  repository; do not change binds to `0.0.0.0` or other non-loopback
+  addresses.
+
+## Verification Gate
+
+- Before declaring work ready to land, run the repo verification gate, which
+  mirrors CI (`.github/workflows/ci.yml`):
+
+  ```bash
+  go test ./...
+  go build ./cmd/zolem
+  go build ./cmd/zolemc
+  make smoke
+  ```
+
+- These commands are the canonical gate until a single `make check` target is
+  added to aggregate them; once that target exists, prefer `make check`.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 This repo uses bd (Beads). Run `bd prime` before tracker work.
 This block is intentionally minimal; do not re-run `bd setup codex`.
