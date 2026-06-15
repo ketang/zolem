@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"zolem.dev/zolem/internal/fixture"
@@ -52,6 +53,10 @@ type startupDeps struct {
 type startupApp struct {
 	handler http.Handler
 	close   func()
+	// setListenerAddr updates the bound address reported by the /_zolem/state
+	// endpoint. It is called after the server binds, so state reflects the
+	// resolved host:port rather than the pre-bind request addr (e.g. :0).
+	setListenerAddr func(addr string)
 }
 
 type localTLSConfig struct {
@@ -243,7 +248,11 @@ func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, 
 		return nil, warnings, err
 	}
 
-	handler := buildLocalHandler(listenerRuntime, counters, validator, matcher, generator, wasmGenerator)
+	runtimePtr := &atomic.Pointer[runtimecfg.ListenerRuntime]{}
+	rt := listenerRuntime
+	runtimePtr.Store(&rt)
+
+	handler := buildLocalHandler(runtimePtr, counters, validator, matcher, generator, wasmGenerator)
 	if recorder != nil {
 		handler = recordingMiddleware(recorder, caps)(handler)
 	}
@@ -254,6 +263,11 @@ func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, 
 			if wasmGenerator != nil {
 				_ = wasmGenerator.Close(context.Background())
 			}
+		},
+		setListenerAddr: func(addr string) {
+			updated := *runtimePtr.Load()
+			updated.Spec.Addr = addr
+			runtimePtr.Store(&updated)
 		},
 	}, warnings, nil
 }
@@ -336,12 +350,13 @@ func loadFixtures(fixturesDir string, listenerRuntime runtimecfg.ListenerRuntime
 	return fixtures, selector, warnings, nil
 }
 
-func buildLocalHandler(listenerRuntime runtimecfg.ListenerRuntime, counters *runtimecfg.ProfileCounters, validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, wasmGenerator *wasmgen.Generator) http.Handler {
+func buildLocalHandler(runtimePtr *atomic.Pointer[runtimecfg.ListenerRuntime], counters *runtimecfg.ProfileCounters, validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, wasmGenerator *wasmgen.Generator) http.Handler {
 	anthropicH := anthropic.NewHandler(validator, matcher, generator, nil, &ollamaHTTPAdapter{}, wasmGenerator)
 	openaiH := openai.NewHandler(validator, matcher, generator, nil, &ollamaHTTPAdapter{}, wasmGenerator)
 	geminiH := gemini.NewHandler(validator, matcher, generator, nil, &ollamaHTTPAdapter{}, wasmGenerator)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		listenerRuntime := *runtimePtr.Load()
 		if req.Method == http.MethodGet && req.URL.Path == "/_zolem/health" {
 			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 			return
