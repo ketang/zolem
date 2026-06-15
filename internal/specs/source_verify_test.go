@@ -25,10 +25,16 @@ func TestSourceVerification_AnthropicV1SnapshotInvariants(t *testing.T) {
 				} `json:"properties"`
 			} `json:"message"`
 			MessageContentBlock struct {
-				Required   []string `json:"required"`
-				Properties map[string]struct {
-					Enum []string `json:"enum"`
-				} `json:"properties"`
+				Required []string `json:"required"`
+				AllOf    []struct {
+					If struct {
+						Properties struct {
+							Type struct {
+								Const string `json:"const"`
+							} `json:"type"`
+						} `json:"properties"`
+					} `json:"if"`
+				} `json:"allOf"`
 			} `json:"message_content_block"`
 		} `json:"$defs"`
 	}
@@ -40,8 +46,14 @@ func TestSourceVerification_AnthropicV1SnapshotInvariants(t *testing.T) {
 	assertContainsAll(t, keys(doc.Properties), "model", "max_tokens", "messages", "system", "stream")
 	assertContainsAll(t, doc.Defs.Message.Required, "role", "content")
 	assertContainsAll(t, doc.Defs.Message.Properties["role"].Enum, "user", "assistant")
-	assertContainsAll(t, doc.Defs.MessageContentBlock.Required, "type", "text")
-	assertContainsAll(t, doc.Defs.MessageContentBlock.Properties["type"].Enum, "text")
+	assertContainsAll(t, doc.Defs.MessageContentBlock.Required, "type")
+	blockTypes := make([]string, 0, len(doc.Defs.MessageContentBlock.AllOf))
+	for _, branch := range doc.Defs.MessageContentBlock.AllOf {
+		if c := branch.If.Properties.Type.Const; c != "" {
+			blockTypes = append(blockTypes, c)
+		}
+	}
+	assertContainsAll(t, blockTypes, "text", "image", "document", "tool_use", "tool_result", "thinking")
 
 	validator := specs.NewValidator()
 	if err := specs.LoadProviderSchema(validator, "anthropic", "v1", data); err != nil {
@@ -61,6 +73,42 @@ func TestSourceVerification_AnthropicV1SnapshotInvariants(t *testing.T) {
 	validSystemBlocks := []byte(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"system":[{"type":"text","text":"be precise","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":"hello"}]}`)
 	if err := validator.Validate("anthropic", "v1", validSystemBlocks); err != nil {
 		t.Fatalf("valid anthropic system-block request rejected: %v", err)
+	}
+
+	toolRoundTrip := []byte(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[` +
+		`{"role":"user","content":[{"type":"text","text":"What is the weather?"}]},` +
+		`{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01","name":"get_weather","input":{"location":"SF"}}]},` +
+		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"sunny"}]}` +
+		`]}`)
+	if err := validator.Validate("anthropic", "v1", toolRoundTrip); err != nil {
+		t.Fatalf("valid anthropic tool_use/tool_result round-trip rejected: %v", err)
+	}
+
+	imageRequest := []byte(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"user","content":[` +
+		`{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aGVsbG8="}},` +
+		`{"type":"text","text":"describe this"}` +
+		`]}]}`)
+	if err := validator.Validate("anthropic", "v1", imageRequest); err != nil {
+		t.Fatalf("valid anthropic image-block request rejected: %v", err)
+	}
+
+	thinkingRequest := []byte(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"assistant","content":[` +
+		`{"type":"thinking","thinking":"let me consider","signature":"sig"}` +
+		`]}]}`)
+	if err := validator.Validate("anthropic", "v1", thinkingRequest); err != nil {
+		t.Fatalf("valid anthropic thinking-block request rejected: %v", err)
+	}
+
+	// A tool_use block missing its required name/input must still fail.
+	malformedToolUse := []byte(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01"}]}]}`)
+	if err := validator.Validate("anthropic", "v1", malformedToolUse); err == nil {
+		t.Fatal("expected anthropic tool_use block missing name/input to fail validation")
+	}
+
+	// An image block missing its required source must still fail.
+	malformedImage := []byte(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"user","content":[{"type":"image"}]}]}`)
+	if err := validator.Validate("anthropic", "v1", malformedImage); err == nil {
+		t.Fatal("expected anthropic image block missing source to fail validation")
 	}
 
 	drifted := []byte(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"tool","content":"hello"}]}`)

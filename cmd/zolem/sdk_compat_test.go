@@ -85,6 +85,71 @@ func TestSDKCompatibility_Anthropic(t *testing.T) {
 	})
 }
 
+// TestE2E_Anthropic_ContentBlocks exercises request-side schema acceptance for
+// the agentic content-block types (tool_use, tool_result, image, thinking)
+// against a real zolem process. Before the vendored anthropic-v1 schema was
+// extended, these standard agentic round-trips returned HTTP 400.
+func TestE2E_Anthropic_ContentBlocks(t *testing.T) {
+	svc := startFixedService(t, "anthropic")
+	headers := []string{"x-api-key: sk-test", "Content-Type: application/json"}
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "tool_use_tool_result_round_trip",
+			body: `{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[` +
+				`{"role":"user","content":[{"type":"text","text":"What is the weather in SF?"}]},` +
+				`{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01","name":"get_weather","input":{"location":"SF"}}]},` +
+				`{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"sunny, 72F"}]}` +
+				`]}`,
+		},
+		{
+			name: "image_block",
+			body: `{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"user","content":[` +
+				`{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aGVsbG8="}},` +
+				`{"type":"text","text":"describe this image"}` +
+				`]}]}`,
+		},
+		{
+			name: "thinking_block",
+			body: `{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"assistant","content":[` +
+				`{"type":"thinking","thinking":"considering the request","signature":"sig"}` +
+				`]}]}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, body := doRequest(t, svc.baseURL, http.MethodPost, "/v1/messages", tc.body, headers...)
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status: got %d, want 200; body: %s", resp.StatusCode, body)
+			}
+			var message anthropicapi.Message
+			mustJSONUnmarshal(t, body, &message)
+			if len(message.Content) == 0 {
+				t.Fatalf("expected non-empty content; body: %s", body)
+			}
+			text, ok := message.Content[0].AsAny().(anthropicapi.TextBlock)
+			if !ok || text.Text != "Fixture says hello from anthropic." {
+				t.Fatalf("content: %#v", message.Content)
+			}
+		})
+	}
+
+	t.Run("malformed_tool_use_rejected", func(t *testing.T) {
+		// tool_use block missing required name/input must still be rejected.
+		body := `{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01"}]}]}`
+		resp, respBody := doRequest(t, svc.baseURL, http.MethodPost, "/v1/messages", body, headers...)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status: got %d, want 400; body: %s", resp.StatusCode, respBody)
+		}
+	})
+}
+
 func TestSDKCompatibility_OpenAI(t *testing.T) {
 	svc := startFixedService(t, "openai")
 
