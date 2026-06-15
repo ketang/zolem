@@ -86,9 +86,9 @@ func TestSDKCompatibility_Anthropic(t *testing.T) {
 }
 
 // TestE2E_Anthropic_ContentBlocks exercises request-side schema acceptance for
-// the agentic content-block types (tool_use, tool_result, image, thinking)
-// against a real zolem process. Before the vendored anthropic-v1 schema was
-// extended, these standard agentic round-trips returned HTTP 400.
+// the agentic content-block types (tool_use, tool_result, image, document,
+// thinking) against a real zolem process. Before the vendored anthropic-v1
+// schema was extended, these standard agentic round-trips returned HTTP 400.
 func TestE2E_Anthropic_ContentBlocks(t *testing.T) {
 	svc := startFixedService(t, "anthropic")
 	headers := []string{"x-api-key: sk-test", "Content-Type: application/json"}
@@ -116,6 +116,13 @@ func TestE2E_Anthropic_ContentBlocks(t *testing.T) {
 			name: "thinking_block",
 			body: `{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"assistant","content":[` +
 				`{"type":"thinking","thinking":"considering the request","signature":"sig"}` +
+				`]}]}`,
+		},
+		{
+			name: "document_block",
+			body: `{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"user","content":[` +
+				`{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"JVBERi0="}},` +
+				`{"type":"text","text":"summarize this document"}` +
 				`]}]}`,
 		},
 	}

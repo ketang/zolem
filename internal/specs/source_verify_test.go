@@ -53,7 +53,7 @@ func TestSourceVerification_AnthropicV1SnapshotInvariants(t *testing.T) {
 			blockTypes = append(blockTypes, c)
 		}
 	}
-	assertContainsAll(t, blockTypes, "text", "image", "document", "tool_use", "tool_result", "thinking")
+	assertContainsAll(t, blockTypes, "text", "image", "document", "tool_use", "tool_result", "thinking", "redacted_thinking")
 
 	validator := specs.NewValidator()
 	if err := specs.LoadProviderSchema(validator, "anthropic", "v1", data); err != nil {
@@ -93,10 +93,26 @@ func TestSourceVerification_AnthropicV1SnapshotInvariants(t *testing.T) {
 	}
 
 	thinkingRequest := []byte(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"assistant","content":[` +
-		`{"type":"thinking","thinking":"let me consider","signature":"sig"}` +
+		`{"type":"thinking","thinking":"let me consider","signature":"sig"},` +
+		`{"type":"redacted_thinking","data":"encrypted"}` +
 		`]}]}`)
 	if err := validator.Validate("anthropic", "v1", thinkingRequest); err != nil {
 		t.Fatalf("valid anthropic thinking-block request rejected: %v", err)
+	}
+
+	documentRequest := []byte(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"user","content":[` +
+		`{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"JVBERi0="}},` +
+		`{"type":"document","source":{"type":"text","media_type":"text/plain","data":"plain text doc"}},` +
+		`{"type":"text","text":"summarize these"}` +
+		`]}]}`)
+	if err := validator.Validate("anthropic", "v1", documentRequest); err != nil {
+		t.Fatalf("valid anthropic document-block request rejected: %v", err)
+	}
+
+	// A document text source missing its required data must still fail.
+	malformedDocSource := []byte(`{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"user","content":[{"type":"document","source":{"type":"text","media_type":"text/plain"}}]}]}`)
+	if err := validator.Validate("anthropic", "v1", malformedDocSource); err == nil {
+		t.Fatal("expected anthropic document text source missing data to fail validation")
 	}
 
 	// A tool_use block missing its required name/input must still fail.

@@ -322,6 +322,57 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "text"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "media_type": {
+                "type": "string"
+              },
+              "data": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "content"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "content"
+            ],
+            "properties": {
+              "content": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/message_content_block"
+                    }
+                  }
+                ]
+              }
+            }
+          }
         }
       ],
       "additionalProperties": true
