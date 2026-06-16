@@ -144,8 +144,10 @@ go install github.com/ketang/zolem/cmd/zolemc@latest
 
 ## Nightly builds
 
-Nightly snapshots are built from the tip of `main` and published as
-pre-releases on GitHub Releases. The Docker image is tagged `:nightly`.
+Nightly builds run on a daily schedule from the tip of `main` and are
+published as pre-releases on GitHub Releases (under the moving
+`v0.0.0-nightly` tag). The multi-arch Docker image is tagged `:nightly` and
+the stable `:latest` image is never updated by a nightly run.
 
 ```bash
 docker pull ghcr.io/ketang/zolem:nightly
