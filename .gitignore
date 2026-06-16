@@ -2,11 +2,12 @@
 .agents/bin/
 /zolem
 /zolemc
+bin/
 certs/
 .tmp/
-.shatter/cache/
-.shatter/seeds/
-.shatter/test-markers/
+# Ignore Shatter working dirs at any depth, but keep tracked config.
+**/.shatter/*
+!**/.shatter/config.yaml
 .shatter-cache/
 shatter-artifacts/
 shatter-report/
