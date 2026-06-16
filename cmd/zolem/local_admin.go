@@ -267,6 +267,11 @@ func (c *localControlPlane) UpsertListener(name string, payload localListenerPay
 		Spec:    actualSpec,
 		Profile: profile,
 	}
+	// Reflect the resolved bound addr in the runtime the /_zolem/state endpoint
+	// reports; otherwise it keeps showing the pre-bind request addr (e.g. :0).
+	if app.setListenerAddr != nil {
+		app.setListenerAddr(actualSpec.Addr)
+	}
 
 	view := newLocalListenerView(actualRuntime, localBaseURL(actualSpec), caps)
 

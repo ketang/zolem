@@ -401,6 +401,12 @@ func createRuntimeListener(t *testing.T, admin *localAdminService, provider stri
 	if state["backend"] != backend {
 		t.Fatalf("state backend: got %#v, want %s", state["backend"], backend)
 	}
+	// The listener was created on 127.0.0.1:0; state must report the resolved
+	// bound host:port, matching the addr embedded in base_url.
+	wantAddr := strings.TrimPrefix(strings.TrimPrefix(payload.BaseURL, "https://"), "http://")
+	if state["listener"] != wantAddr {
+		t.Fatalf("state listener: got %#v, want %q (base_url %s)", state["listener"], wantAddr, payload.BaseURL)
+	}
 
 	return payload.BaseURL
 }
