@@ -284,6 +284,184 @@ func TestListenersCallsList(t *testing.T) {
 	}
 }
 
+// TestJSONOutputIsFieldComplete verifies that -json output passes through every
+// field the admin API returned, including fields the narrow human-readable view
+// structs do not model (e.g. stream_delay, ollama_upstream). Re-marshaling
+// through the view structs would silently drop them.
+func TestJSONOutputIsFieldComplete(t *testing.T) {
+	profileJSON := `{"name":"demo","backend":"ollama","stream_delay":"250ms","ollama_upstream":"http://127.0.0.1:11434","seed":7}`
+	listenerJSON := `{"name":"openai-demo","provider":"openai","profile":"demo","backend":"ollama","base_url":"http://127.0.0.1:9000","extra_field":"keep-me"}`
+	stateJSON := `{"provider":"openai","profile":"demo","backend":"ollama","listener":"openai-demo","tls":false,"stream_delay":"250ms"}`
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case req.Method == http.MethodGet && req.URL.Path == "/_zolem/profiles":
+			fmt.Fprintf(w, "[%s]", profileJSON)
+		case req.Method == http.MethodPut && req.URL.Path == "/_zolem/profiles/demo":
+			fmt.Fprint(w, profileJSON)
+		case req.Method == http.MethodGet && req.URL.Path == "/_zolem/listeners":
+			fmt.Fprintf(w, "[%s]", listenerJSON)
+		case req.Method == http.MethodPut && req.URL.Path == "/_zolem/listeners/openai-demo":
+			fmt.Fprint(w, listenerJSON)
+		case req.Method == http.MethodGet && req.URL.Path == "/_zolem/state":
+			fmt.Fprint(w, stateJSON)
+		default:
+			t.Errorf("unexpected request: %s %s", req.Method, req.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(admin.Close)
+
+	cases := []struct {
+		name        string
+		args        []string
+		mustContain []string
+	}{
+		{
+			name:        "profiles list",
+			args:        []string{"-json", "-admin-url", admin.URL, "profiles", "list"},
+			mustContain: []string{`"stream_delay":"250ms"`, `"ollama_upstream":"http://127.0.0.1:11434"`, `"name":"demo"`},
+		},
+		{
+			name:        "profiles create",
+			args:        []string{"-json", "-admin-url", admin.URL, "profiles", "create", "demo", "-backend", "ollama"},
+			mustContain: []string{`"stream_delay":"250ms"`, `"ollama_upstream":"http://127.0.0.1:11434"`},
+		},
+		{
+			name:        "listeners list",
+			args:        []string{"-json", "-admin-url", admin.URL, "listeners", "list"},
+			mustContain: []string{`"extra_field":"keep-me"`, `"base_url":"http://127.0.0.1:9000"`},
+		},
+		{
+			name:        "listeners create",
+			args:        []string{"-json", "-admin-url", admin.URL, "listeners", "create", "openai-demo", "-provider", "openai", "-profile", "demo"},
+			mustContain: []string{`"extra_field":"keep-me"`, `"base_url":"http://127.0.0.1:9000"`},
+		},
+		{
+			name:        "listener state",
+			args:        []string{"-json", "-admin-url", admin.URL, "-base-url", admin.URL, "listener", "state"},
+			mustContain: []string{`"stream_delay":"250ms"`, `"listener":"openai-demo"`},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if err := run(context.Background(), tc.args, &stdout, &stderr); err != nil {
+				t.Fatalf("%s -json failed: %v\nstderr:\n%s", tc.name, err, stderr.String())
+			}
+			// Output must be exactly one JSON document on one line.
+			if !json.Valid(bytes.TrimSpace(stdout.Bytes())) {
+				t.Fatalf("%s output is not valid JSON:\n%s", tc.name, stdout.String())
+			}
+			for _, want := range tc.mustContain {
+				if !strings.Contains(stdout.String(), want) {
+					t.Fatalf("%s -json dropped field %q:\n%s", tc.name, want, stdout.String())
+				}
+			}
+		})
+	}
+}
+
+// TestCallsListJSONSinceShapeParity verifies that "calls list -json -since N"
+// produces the same record shape as "calls list -json" (every field of each
+// retained call, including request/response headers and bodies), differing only
+// by which calls survive the filter. The pre-fix code re-marshaled the -since
+// path through recordedCallView, keeping only id/method/path/status.
+func TestCallsListJSONSinceShapeParity(t *testing.T) {
+	call := func(id int64) string {
+		return fmt.Sprintf(`{"call_id":%d,"received_at":"2026-05-22T16:34:1%dZ","latency_ms":%d,`+
+			`"request":{"method":"POST","path":"/v1/chat/completions","headers":{"Authorization":"Bearer sk-test"},"body":"{\"model\":\"gpt-4\"}"},`+
+			`"response":{"status":200,"headers":{"Content-Type":"application/json"},"body":"{\"id\":\"resp-%d\"}","stream":null}}`, id, id, id, id)
+	}
+	respBody := fmt.Sprintf(`{"calls":[%s,%s,%s]}`, call(1), call(2), call(3))
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, respBody)
+	}))
+	t.Cleanup(admin.Close)
+
+	decodeCalls := func(t *testing.T, args ...string) []map[string]any {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		if err := run(context.Background(), args, &stdout, &stderr); err != nil {
+			t.Fatalf("run %v failed: %v\nstderr:\n%s", args, err, stderr.String())
+		}
+		var env struct {
+			Calls []map[string]any `json:"calls"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
+			t.Fatalf("decode %v output: %v\n%s", args, err, stdout.String())
+		}
+		return env.Calls
+	}
+
+	full := decodeCalls(t, "-json", "-admin-url", admin.URL, "listeners", "calls", "list", "openai-demo")
+	if len(full) != 3 {
+		t.Fatalf("unfiltered -json: got %d calls, want 3", len(full))
+	}
+
+	filtered := decodeCalls(t, "-json", "-admin-url", admin.URL, "listeners", "calls", "list", "openai-demo", "-since", "2")
+	if len(filtered) != 1 {
+		t.Fatalf("-since 2 -json: got %d calls, want 1", len(filtered))
+	}
+
+	// The single retained call (call_id=3) must be byte-identical in both the
+	// filtered and unfiltered outputs: same keys, same nested headers/bodies.
+	want, err := json.Marshal(full[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(filtered[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(want) != string(got) {
+		t.Fatalf("-since dropped fields from retained call:\n with -since: %s\nwithout -since: %s", got, want)
+	}
+
+	// Sanity: the complete record carries headers and bodies the narrow view
+	// would have dropped.
+	for _, key := range []string{"request", "response"} {
+		sub, ok := filtered[0][key].(map[string]any)
+		if !ok {
+			t.Fatalf("retained call missing %q object: %#v", key, filtered[0])
+		}
+		if _, ok := sub["headers"]; !ok {
+			t.Fatalf("retained call %q dropped headers: %#v", key, sub)
+		}
+		if _, ok := sub["body"]; !ok {
+			t.Fatalf("retained call %q dropped body: %#v", key, sub)
+		}
+	}
+}
+
+// TestCallsListJSONSinceNullBody guards against a nil-map panic: a JSON null
+// body unmarshals into a nil map, and filtering must not crash assigning to it.
+func TestCallsListJSONSinceNullBody(t *testing.T) {
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `null`)
+	}))
+	t.Cleanup(admin.Close)
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(), []string{"-json", "-admin-url", admin.URL, "listeners", "calls", "list", "openai-demo", "-since", "1"}, &stdout, &stderr); err != nil {
+		t.Fatalf("calls list -json -since with null body failed: %v\nstderr:\n%s", err, stderr.String())
+	}
+	if !json.Valid(bytes.TrimSpace(stdout.Bytes())) {
+		t.Fatalf("output is not valid JSON:\n%s", stdout.String())
+	}
+	var env struct {
+		Calls []json.RawMessage `json:"calls"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
+		t.Fatalf("decode output: %v\n%s", err, stdout.String())
+	}
+	if len(env.Calls) != 0 {
+		t.Fatalf("null body should yield zero calls, got %d", len(env.Calls))
+	}
+}
+
 func TestListenersCallsListEmpty(t *testing.T) {
 	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
