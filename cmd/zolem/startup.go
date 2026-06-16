@@ -69,6 +69,7 @@ type localOptions struct {
 	Provider                   string
 	Profile                    string
 	Backend                    string
+	ErrorType                  string
 	FixturesDir                string
 	TLS                        localTLSConfig
 	CallsFile                  string
@@ -469,6 +470,15 @@ func (o localOptions) runtime() (runtimecfg.ListenerRuntime, error) {
 		backend = "lorem"
 	}
 
+	runtimeProfile := runtimecfg.RuntimeProfile{
+		Name:      profile,
+		Backend:   backend,
+		ErrorType: o.ErrorType,
+	}
+	if err := runtimecfg.ValidateProfile(runtimeProfile); err != nil {
+		return runtimecfg.ListenerRuntime{}, fmt.Errorf("invalid local profile: %w", err)
+	}
+
 	return runtimecfg.ListenerRuntime{
 		Spec: runtimecfg.ListenerSpec{
 			Name:     providerListenerName(o.Provider, profile),
@@ -477,10 +487,7 @@ func (o localOptions) runtime() (runtimecfg.ListenerRuntime, error) {
 			Profile:  profile,
 			TLS:      o.TLS.enabled(),
 		},
-		Profile: runtimecfg.RuntimeProfile{
-			Name:    profile,
-			Backend: backend,
-		},
+		Profile: runtimeProfile,
 	}, nil
 }
 

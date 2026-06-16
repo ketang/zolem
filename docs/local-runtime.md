@@ -94,6 +94,19 @@ curl -X PUT \
 Every request sent to that listener's provider endpoint returns the configured
 provider-native error instead of a generated or fixture-backed success response.
 
+In fixed-listener mode the `error_type` is supplied with `-local-error-type`:
+
+```bash
+zolem \
+  -local-addr 127.0.0.1:18080 \
+  -local-provider anthropic \
+  -local-backend error \
+  -local-error-type rate_limit
+```
+
+`-local-backend error` without `-local-error-type` is rejected at startup with
+a clear message, the same way other misconfigured profiles fail fast.
+
 ## Start The Admin Server
 
 Run:
