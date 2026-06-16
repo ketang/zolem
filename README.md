@@ -214,6 +214,12 @@ zolem \
 
 For fixture-backed fixed listeners, also pass `-local-fixtures-dir`.
 
+For error-backed fixed listeners, pass `-local-backend error` together with
+`-local-error-type` (`authentication`, `permission`, `invalid_request`,
+`rate_limit`, or `server_error`). The listener returns that provider-native
+error for every request. `-local-backend error` without `-local-error-type`
+is rejected at startup.
+
 Full guide: [docs/local-runtime.md](docs/local-runtime.md)
 
 ## Verification

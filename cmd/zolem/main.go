@@ -21,6 +21,7 @@ func main() {
 	localProvider := flag.String("local-provider", "", "provider for local fixed-listener mode")
 	localProfile := flag.String("local-profile", "default", "profile name for local fixed-listener mode")
 	localBackend := flag.String("local-backend", "lorem", "backend for local fixed-listener mode")
+	localErrorType := flag.String("local-error-type", "", "error type for the error backend in fixed-listener mode: authentication, permission, invalid_request, rate_limit, or server_error; required when -local-backend is error")
 	localFixturesDir := flag.String("local-fixtures-dir", "", "fixtures directory for local runtime fixture backend; HTTP fixtures use response.json/response.json.tmpl, OpenAI Responses WebSocket fixtures use an array of event objects")
 	localTLSCert := flag.String("local-tls-cert", "", "certificate file for local admin or fixed-listener TLS")
 	localTLSKey := flag.String("local-tls-key", "", "key file for local admin or fixed-listener TLS")
@@ -51,6 +52,7 @@ func main() {
 			Provider:    *localProvider,
 			Profile:     *localProfile,
 			Backend:     *localBackend,
+			ErrorType:   *localErrorType,
 			FixturesDir: *localFixturesDir,
 			TLS: localTLSConfig{
 				CertFile: *localTLSCert,
