@@ -474,4 +474,3 @@ func generateTestTLSCerts(t *testing.T) testCerts {
 
 	return testCerts{certPath: certPath, keyPath: keyPath, caPool: pool}
 }
-
