@@ -104,14 +104,15 @@ cover.
   mirrors CI (`.github/workflows/ci.yml`):
 
   ```bash
-  go test ./...
+  make check
   go build ./cmd/zolem
   go build ./cmd/zolemc
   make smoke
   ```
 
-- These commands are the canonical gate until a single `make check` target is
-  added to aggregate them; once that target exists, prefer `make check`.
+- `make check` is the canonical gate: it runs `go vet ./...`, fails if any file
+  needs `gofmt`, and runs the test suite (with `-race` for `./internal/...`).
+  The build and `make smoke` steps cover the remaining CI checks.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 This repo uses bd (Beads). Run `bd prime` before tracker work.

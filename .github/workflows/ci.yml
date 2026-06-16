@@ -19,8 +19,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Run tests
-        run: go test ./...
+      - name: Run quality gates
+        run: make check
 
       - name: Build zolem
         run: go build ./cmd/zolem

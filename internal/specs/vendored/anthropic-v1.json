@@ -73,20 +73,308 @@
     "message_content_block": {
       "type": "object",
       "required": [
-        "type",
-        "text"
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "type": "string"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "text"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "text"
+            ],
+            "properties": {
+              "text": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "image"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "source"
+            ],
+            "properties": {
+              "source": {
+                "$ref": "#/$defs/content_source"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "document"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "source"
+            ],
+            "properties": {
+              "source": {
+                "$ref": "#/$defs/content_source"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "tool_use"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "id",
+              "name",
+              "input"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "input": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "tool_result"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "tool_use_id"
+            ],
+            "properties": {
+              "tool_use_id": {
+                "type": "string"
+              },
+              "is_error": {
+                "type": "boolean"
+              },
+              "content": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/message_content_block"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "thinking"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "thinking"
+            ],
+            "properties": {
+              "thinking": {
+                "type": "string"
+              },
+              "signature": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "redacted_thinking"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "data": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": true
+    },
+    "content_source": {
+      "type": "object",
+      "required": [
+        "type"
       ],
       "properties": {
         "type": {
           "type": "string",
           "enum": [
-            "text"
+            "base64",
+            "url",
+            "text",
+            "content",
+            "file"
           ]
-        },
-        "text": {
-          "type": "string"
         }
       },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "base64"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "media_type",
+              "data"
+            ],
+            "properties": {
+              "media_type": {
+                "type": "string"
+              },
+              "data": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "url"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "url"
+            ],
+            "properties": {
+              "url": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "file"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "file_id"
+            ],
+            "properties": {
+              "file_id": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "text"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "data"
+            ],
+            "properties": {
+              "media_type": {
+                "type": "string"
+              },
+              "data": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "content"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "content"
+            ],
+            "properties": {
+              "content": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/message_content_block"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ],
       "additionalProperties": true
     }
   }

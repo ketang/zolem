@@ -99,17 +99,37 @@ dockers:
       - "--label=org.opencontainers.image.created={{ .Date }}"
       - "--label=org.opencontainers.image.source=https://github.com/ketang/zolem"
 
+  # Mutable tag: `nightly` for prerelease builds, `latest` for stable releases.
+  # Keyed off `.Prerelease` (not `.IsSnapshot`) so that `:latest` is only ever
+  # updated by a real, non-prerelease release.
   - id: zolem-amd64-mutable
     ids:
       - zolem
     image_templates:
-      - "ghcr.io/ketang/zolem:{{ if .IsSnapshot }}nightly{{ else }}latest{{ end }}-amd64"
+      - "ghcr.io/ketang/zolem:{{ if .Prerelease }}nightly{{ else }}latest{{ end }}-amd64"
     goos: linux
     goarch: amd64
     use: buildx
     dockerfile: Dockerfile
     build_flag_templates:
       - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.source=https://github.com/ketang/zolem"
+
+  - id: zolem-arm64-mutable
+    ids:
+      - zolem
+    image_templates:
+      - "ghcr.io/ketang/zolem:{{ if .Prerelease }}nightly{{ else }}latest{{ end }}-arm64"
+    goos: linux
+    goarch: arm64
+    use: buildx
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--platform=linux/arm64"
       - "--label=org.opencontainers.image.title={{ .ProjectName }}"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
@@ -139,10 +159,10 @@ docker_manifests:
       - "ghcr.io/ketang/zolem:{{ .Version }}-amd64"
       - "ghcr.io/ketang/zolem:{{ .Version }}-arm64"
 
-  - name_template: "ghcr.io/ketang/zolem:{{ if .IsSnapshot }}nightly{{ else }}latest{{ end }}"
+  - name_template: "ghcr.io/ketang/zolem:{{ if .Prerelease }}nightly{{ else }}latest{{ end }}"
     image_templates:
-      - "ghcr.io/ketang/zolem:{{ if .IsSnapshot }}nightly{{ else }}latest{{ end }}-amd64"
-      - "ghcr.io/ketang/zolem:{{ .Version }}-arm64"
+      - "ghcr.io/ketang/zolem:{{ if .Prerelease }}nightly{{ else }}latest{{ end }}-amd64"
+      - "ghcr.io/ketang/zolem:{{ if .Prerelease }}nightly{{ else }}latest{{ end }}-arm64"
 
 docker_signs:
   - artifacts: all
