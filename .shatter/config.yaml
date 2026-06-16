@@ -35,6 +35,14 @@ go_runtime_values:
   "api.Function":
     expression: newShatterFunction()
 
+functions:
+  "loader.go:loadOne":
+    defaults:
+      dir: "/home/ketan/project/zolem/testdata/fixtures/sample-anthropic"
+  "loader.go:NewLoader":
+    defaults:
+      dir: "/home/ketan/project/zolem/testdata/fixtures"
+
 llm:
   enabled: true
   adapter: local
