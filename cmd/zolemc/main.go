@@ -139,12 +139,16 @@ func runProfiles(ctx context.Context, client admincli.Client, opts admincli.Opti
 	}
 	switch args[0] {
 	case "list":
-		var profiles []localProfileView
-		if err := client.GetJSON(ctx, "/_zolem/profiles", &profiles); err != nil {
+		var raw json.RawMessage
+		if err := client.GetJSON(ctx, "/_zolem/profiles", &raw); err != nil {
 			return err
 		}
 		if opts.JSON {
-			return writeJSONObject(stdout, profiles)
+			return writeRawJSON(stdout, raw)
+		}
+		var profiles []localProfileView
+		if err := json.Unmarshal(raw, &profiles); err != nil {
+			return fmt.Errorf("decode profiles response: %w", err)
 		}
 		if len(profiles) == 0 {
 			fmt.Fprintln(stdout, "no profiles")
@@ -207,12 +211,16 @@ func runProfiles(ctx context.Context, client admincli.Client, opts admincli.Opti
 			}
 			payload.WASMGenerateTimeoutMS = &wasmTimeoutMS
 		}
-		var profile localProfileView
-		if err := client.PutJSON(ctx, "/_zolem/profiles/"+url.PathEscape(name), payload, &profile); err != nil {
+		var raw json.RawMessage
+		if err := client.PutJSON(ctx, "/_zolem/profiles/"+url.PathEscape(name), payload, &raw); err != nil {
 			return err
 		}
 		if opts.JSON {
-			return writeJSONObject(stdout, profile)
+			return writeRawJSON(stdout, raw)
+		}
+		var profile localProfileView
+		if err := json.Unmarshal(raw, &profile); err != nil {
+			return fmt.Errorf("decode profile response: %w", err)
 		}
 		fmt.Fprintf(stdout, "profile %s created\n", profile.Name)
 		return nil
@@ -241,12 +249,16 @@ func runListeners(ctx context.Context, client admincli.Client, opts admincli.Opt
 	case "calls":
 		return runListenerCalls(ctx, client, opts, args[1:], stdout, stderr)
 	case "list":
-		var listeners []localListenerView
-		if err := client.GetJSON(ctx, "/_zolem/listeners", &listeners); err != nil {
+		var raw json.RawMessage
+		if err := client.GetJSON(ctx, "/_zolem/listeners", &raw); err != nil {
 			return err
 		}
 		if opts.JSON {
-			return writeJSONObject(stdout, listeners)
+			return writeRawJSON(stdout, raw)
+		}
+		var listeners []localListenerView
+		if err := json.Unmarshal(raw, &listeners); err != nil {
+			return fmt.Errorf("decode listeners response: %w", err)
 		}
 		if len(listeners) == 0 {
 			fmt.Fprintln(stdout, "no listeners")
@@ -274,12 +286,16 @@ func runListeners(ctx context.Context, client admincli.Client, opts admincli.Opt
 		if name == "" || fs.NArg() > 1 {
 			return errors.New("listeners create requires exactly one listener name")
 		}
-		var listener localListenerView
-		if err := client.PutJSON(ctx, "/_zolem/listeners/"+url.PathEscape(name), payload, &listener); err != nil {
+		var raw json.RawMessage
+		if err := client.PutJSON(ctx, "/_zolem/listeners/"+url.PathEscape(name), payload, &raw); err != nil {
 			return err
 		}
 		if opts.JSON {
-			return writeJSONObject(stdout, listener)
+			return writeRawJSON(stdout, raw)
+		}
+		var listener localListenerView
+		if err := json.Unmarshal(raw, &listener); err != nil {
+			return fmt.Errorf("decode listener response: %w", err)
 		}
 		fmt.Fprintf(stdout, "listener %s created: %s\n", listener.Name, listener.BaseURL)
 		return nil
@@ -348,6 +364,26 @@ func runListenerCallsList(ctx context.Context, client admincli.Client, opts admi
 	if err := client.GetJSON(ctx, "/_zolem/listeners/"+url.PathEscape(name)+"/calls", &raw); err != nil {
 		return err
 	}
+
+	if opts.JSON {
+		if since <= 0 {
+			// No client-side filter: pass the complete API bytes through so
+			// request/response headers and bodies survive intact.
+			return writeRawJSON(stdout, raw)
+		}
+		// With -since we still emit complete call records: filter on call_id
+		// but keep each call's raw bytes rather than re-marshaling through the
+		// narrow recordedCallView, which would drop headers and bodies. Sibling
+		// envelope fields are preserved, so each retained call carries the same
+		// fields it would in the unfiltered passthrough (the envelope is
+		// re-marshaled, so top-level key order may differ).
+		filtered, err := filterCallsRawSince(raw, since)
+		if err != nil {
+			return err
+		}
+		return writeRawJSON(stdout, filtered)
+	}
+
 	var envelope struct {
 		Calls []recordedCallView `json:"calls"`
 	}
@@ -364,22 +400,6 @@ func runListenerCallsList(ctx context.Context, client admincli.Client, opts admi
 			}
 		}
 		filtered = kept
-	}
-
-	if opts.JSON {
-		if since > 0 {
-			return writeJSONObject(stdout, map[string]any{"calls": filtered})
-		}
-		// Pass through unmodified bytes when no client-side filter applied.
-		if len(raw) == 0 || raw[len(raw)-1] != '\n' {
-			if _, err := stdout.Write(raw); err != nil {
-				return err
-			}
-			_, err := fmt.Fprintln(stdout)
-			return err
-		}
-		_, err := stdout.Write(raw)
-		return err
 	}
 
 	if len(filtered) == 0 {
@@ -446,12 +466,16 @@ func runListener(ctx context.Context, opts admincli.Options, args []string, stdo
 		fmt.Fprintf(stdout, "listener health: %s\n", payload["status"])
 		return nil
 	case "state":
-		var payload listenerStateView
-		if err := client.GetJSON(ctx, "/_zolem/state", &payload); err != nil {
+		var raw json.RawMessage
+		if err := client.GetJSON(ctx, "/_zolem/state", &raw); err != nil {
 			return err
 		}
 		if opts.JSON {
-			return writeJSONObject(stdout, payload)
+			return writeRawJSON(stdout, raw)
+		}
+		var payload listenerStateView
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return fmt.Errorf("decode state response: %w", err)
 		}
 		fmt.Fprintf(stdout, "provider=%s profile=%s backend=%s listener=%s tls=%v\n", payload.Provider, payload.Profile, payload.Backend, payload.Listener, payload.TLS)
 		return nil
@@ -571,6 +595,62 @@ func writeJSONObject(w io.Writer, v any) error {
 		return err
 	}
 	_, err = fmt.Fprintf(w, "%s\n", data)
+	return err
+}
+
+// filterCallsRawSince keeps only calls whose call_id exceeds since while
+// preserving each retained call's complete raw JSON and any sibling fields on
+// the envelope. It reports an error if the response is not the expected
+// {"calls":[...]} shape.
+func filterCallsRawSince(raw json.RawMessage, since int64) (json.RawMessage, error) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return nil, fmt.Errorf("decode calls response: %w", err)
+	}
+	// A JSON null body unmarshals to a nil map without error; initialize it so
+	// the assignment below does not panic.
+	if envelope == nil {
+		envelope = map[string]json.RawMessage{}
+	}
+	var calls []json.RawMessage
+	if rawCalls, ok := envelope["calls"]; ok && len(rawCalls) > 0 {
+		if err := json.Unmarshal(rawCalls, &calls); err != nil {
+			return nil, fmt.Errorf("decode calls list: %w", err)
+		}
+	}
+	kept := make([]json.RawMessage, 0, len(calls))
+	for _, c := range calls {
+		var id struct {
+			CallID int64 `json:"call_id"`
+		}
+		if err := json.Unmarshal(c, &id); err != nil {
+			return nil, fmt.Errorf("decode call id: %w", err)
+		}
+		if id.CallID > since {
+			kept = append(kept, c)
+		}
+	}
+	keptBytes, err := json.Marshal(kept)
+	if err != nil {
+		return nil, err
+	}
+	envelope["calls"] = keptBytes
+	out, err := json.Marshal(envelope)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// writeRawJSON writes API response bytes to w unchanged, normalized to exactly
+// one trailing newline. Passing the raw bytes through preserves every field the
+// API returned; the narrow view structs are reserved for human-readable output
+// and would otherwise silently drop fields they do not model.
+func writeRawJSON(w io.Writer, raw json.RawMessage) error {
+	if _, err := w.Write(bytes.TrimRight(raw, "\n")); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(w)
 	return err
 }
 
