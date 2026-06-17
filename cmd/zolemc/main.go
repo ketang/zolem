@@ -78,8 +78,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("zolemc", flag.ContinueOnError)
 	var parseOutput bytes.Buffer
 	fs.SetOutput(&parseOutput)
-	fs.StringVar(&opts.AdminURL, "admin-url", "http://127.0.0.1:8090", "local admin API base URL")
-	fs.StringVar(&opts.BaseURL, "base-url", "", "local listener base URL")
+	fs.StringVar(&opts.AdminURL, "admin-url", "http://127.0.0.1:8090", "admin control-plane base URL")
+	fs.StringVar(&opts.BaseURL, "base-url", "", "listener data-plane base URL; required only by the listener and request commands")
 	fs.BoolVar(&opts.JSON, "json", false, "write machine-readable JSON")
 	fs.DurationVar(&opts.Timeout, "timeout", 10*time.Second, "HTTP request timeout")
 	if err := fs.Parse(args); err != nil {
@@ -103,6 +103,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	switch fs.Arg(0) {
 	case "health":
+		// Global flags only bind before the command, so a flag placed after a
+		// no-arg command (e.g. `zolemc health -json`) lands here as a trailing
+		// arg the flag package never parsed. Reject it rather than silently
+		// ignoring it.
+		if extra := fs.Args()[1:]; len(extra) > 0 {
+			return errUnexpectedArgs("health", extra)
+		}
 		return runAdminHealth(ctx, client, opts, stdout)
 	case "profiles":
 		return runProfiles(ctx, client, opts, fs.Args()[1:], stdout, stderr)
@@ -139,6 +146,9 @@ func runProfiles(ctx context.Context, client admincli.Client, opts admincli.Opti
 	}
 	switch args[0] {
 	case "list":
+		if extra := args[1:]; len(extra) > 0 {
+			return errUnexpectedArgs("profiles list", extra)
+		}
 		var raw json.RawMessage
 		if err := client.GetJSON(ctx, "/_zolem/profiles", &raw); err != nil {
 			return err
@@ -249,6 +259,9 @@ func runListeners(ctx context.Context, client admincli.Client, opts admincli.Opt
 	case "calls":
 		return runListenerCalls(ctx, client, opts, args[1:], stdout, stderr)
 	case "list":
+		if extra := args[1:]; len(extra) > 0 {
+			return errUnexpectedArgs("listeners list", extra)
+		}
 		var raw json.RawMessage
 		if err := client.GetJSON(ctx, "/_zolem/listeners", &raw); err != nil {
 			return err
@@ -442,19 +455,26 @@ func runListenerCallsClear(ctx context.Context, client admincli.Client, opts adm
 	if opts.JSON {
 		return writeJSONObject(stdout, map[string]int{"cleared": resp.Cleared})
 	}
-	fmt.Fprintf(stdout, "Cleared %d calls from listener %s.\n", resp.Cleared, name)
+	fmt.Fprintf(stdout, "cleared %d calls from listener %s\n", resp.Cleared, name)
 	return nil
 }
 
 func runListener(ctx context.Context, opts admincli.Options, args []string, stdout, stderr io.Writer) error {
-	if len(args) != 1 {
+	if len(args) == 0 {
 		return errors.New("listener requires health or state")
+	}
+	sub := args[0]
+	if sub != "health" && sub != "state" {
+		return fmt.Errorf("unknown listener command %q", sub)
+	}
+	if extra := args[1:]; len(extra) > 0 {
+		return errUnexpectedArgs("listener "+sub, extra)
 	}
 	if opts.BaseURL == "" {
 		return errors.New("listener commands require -base-url")
 	}
 	client := admincli.NewClient(opts.BaseURL, &http.Client{Timeout: opts.Timeout})
-	switch args[0] {
+	switch sub {
 	case "health":
 		var payload map[string]string
 		if err := client.GetJSON(ctx, "/_zolem/health", &payload); err != nil {
@@ -480,7 +500,9 @@ func runListener(ctx context.Context, opts admincli.Options, args []string, stdo
 		fmt.Fprintf(stdout, "provider=%s profile=%s backend=%s listener=%s tls=%v\n", payload.Provider, payload.Profile, payload.Backend, payload.Listener, payload.TLS)
 		return nil
 	default:
-		return fmt.Errorf("unknown listener command %q", args[0])
+		// Unreachable: sub is validated to health or state above. Kept so the
+		// switch is total for the compiler.
+		return fmt.Errorf("unknown listener command %q", sub)
 	}
 }
 
@@ -570,6 +592,13 @@ func requestBody(jsonBody, bodyFile string) ([]byte, error) {
 		return os.ReadFile(bodyFile)
 	}
 	return nil, nil
+}
+
+// errUnexpectedArgs reports trailing args left after a command that takes none.
+// The hint steers users away from the most common trap: a global flag such as
+// -json placed after the command, where the flag package never parses it.
+func errUnexpectedArgs(command string, extra []string) error {
+	return fmt.Errorf("unexpected arguments after %s: %s (global flags such as -json go before the command)", command, strings.Join(extra, " "))
 }
 
 func splitOptionalLeadingName(args []string) (string, []string) {
@@ -668,12 +697,20 @@ func (v *repeatedStrings) Set(s string) error {
 func usage(w io.Writer) {
 	fmt.Fprintln(w, `usage: zolemc [global flags] <command> [args]
 
-Global flags:
-  -admin-url URL    local admin API base URL (default http://127.0.0.1:8090)
-  -base-url URL     local listener base URL for listener/request commands
-  -json             write machine-readable JSON
+zolemc talks to two planes, each addressed by its own flag:
+  -admin-url  the admin control plane (zolem -local-admin-addr): manage profiles
+              and listeners. This is the default plane for most commands.
+  -base-url   a single listener's data plane (its base_url from listeners create
+              or list): inspect that listener and send provider requests through it.
+Put global flags BEFORE the command; flags after a command are rejected.
 
-Commands:
+Global flags:
+  -admin-url URL    admin control-plane base URL (default http://127.0.0.1:8090)
+  -base-url URL     listener data-plane base URL (required only by listener/request commands)
+  -json             write machine-readable JSON
+  -timeout DUR      HTTP request timeout (default 10s)
+
+Admin control-plane commands (use -admin-url):
   health
   profiles list
   profiles create <name> [-backend lorem|faker|fixture|ollama|wasm|error] [...]
@@ -684,6 +721,8 @@ Commands:
   listeners delete <name>
   listeners calls list <name> [-since <id>]
   listeners calls clear <name>
+
+Listener data-plane commands (use -base-url):
   listener health
   listener state
   request -method POST -path /v1/chat/completions [-H 'Name: value'] [-json-body JSON|-body-file PATH]`)

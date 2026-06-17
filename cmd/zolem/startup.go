@@ -227,7 +227,7 @@ func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, 
 	sequenceCounters := fixture.NewSequenceCounters()
 
 	validator := deps.newValidator()
-	warnings := loadSpecs(validator, deps.newFetcher(filepath.Join(os.TempDir(), "zolem-specs"), map[string]string{}))
+	warnings := loadSpecs(validator, deps.newFetcher(filepath.Join(os.TempDir(), "zolem-specs"), map[string]string{}), listenerRuntime.Spec.Provider)
 
 	runner := deps.newRunner()
 	fixtures, selector, fixtureWarnings, err := loadLocalFixtures(listenerRuntime, fixturesDir, runner, deps.readFile, sequenceCounters)
@@ -286,17 +286,28 @@ func loadLocalFixtures(listenerRuntime runtimecfg.ListenerRuntime, fixturesDir s
 	return loadFixtures(fixturesDir, listenerRuntime, runner, readFile, sequenceCounters)
 }
 
-func loadSpecs(validator *specs.Validator, fetcher specFetcher) []string {
+// loadSpecs loads every known provider schema into validator. servedProvider is
+// the provider this listener actually serves; spec fetch/load failures for other
+// providers are suppressed rather than surfaced as warnings, since this listener
+// never validates against them (e.g. an anthropic listener has no use for the
+// openrouter spec). Passing "" surfaces warnings for all providers. The deeper
+// fix that avoids fetching unused specs entirely is tracked by zolem-e9h.
+func loadSpecs(validator *specs.Validator, fetcher specFetcher, servedProvider string) []string {
 	var warnings []string
 	for _, key := range specKeys() {
 		provider, version := splitKey(key)
+		relevant := servedProvider == "" || provider == servedProvider
 		data, err := fetcher.Get(provider, version)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("failed to fetch spec %s: %v", key, err))
+			if relevant {
+				warnings = append(warnings, fmt.Sprintf("failed to fetch spec %s: %v", key, err))
+			}
 			continue
 		}
 		if err := specs.LoadProviderSchema(validator, provider, version, data); err != nil {
-			warnings = append(warnings, fmt.Sprintf("failed to load spec %s: %v", key, err))
+			if relevant {
+				warnings = append(warnings, fmt.Sprintf("failed to load spec %s: %v", key, err))
+			}
 		}
 	}
 	return warnings
