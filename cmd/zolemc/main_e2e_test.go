@@ -144,7 +144,7 @@ func TestZolemcCallsE2E(t *testing.T) {
 
 	t.Run("calls_clear", func(t *testing.T) {
 		result := runZolemc(t, repoRoot, "-admin-url", admin.baseURL, "listeners", "calls", "clear", "calls-demo")
-		if !strings.Contains(result.stdout, "Cleared 3 calls") {
+		if !strings.Contains(result.stdout, "cleared 3 calls") {
 			t.Fatalf("clear output: %q", result.stdout)
 		}
 	})
@@ -506,7 +506,7 @@ func TestListenersCallsClear(t *testing.T) {
 	if gotMethod != http.MethodDelete || gotPath != "/_zolem/listeners/openai-demo/calls" {
 		t.Fatalf("request: got %s %s", gotMethod, gotPath)
 	}
-	if !strings.Contains(stdout.String(), "Cleared 7 calls from listener openai-demo.") {
+	if !strings.Contains(stdout.String(), "cleared 7 calls from listener openai-demo") {
 		t.Fatalf("clear human output: %q", stdout.String())
 	}
 
@@ -623,6 +623,39 @@ func TestAdminHealthOutputModes(t *testing.T) {
 	}
 	if strings.TrimSpace(stdout.String()) != `{"status":"ok"}` {
 		t.Fatalf("json health output = %q", stdout.String())
+	}
+}
+
+func TestNoArgCommandsRejectTrailingArgs(t *testing.T) {
+	// The admin server fails the test if any request reaches it: a command that
+	// is rejected for trailing args must error before issuing any HTTP request.
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		t.Errorf("unexpected request reached admin: %s %s", req.Method, req.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(admin.Close)
+
+	cases := []struct {
+		name string
+		args []string
+	}{
+		// A global flag placed after the command is the common trap: it is never
+		// parsed as the global flag and was previously ignored silently.
+		{name: "health -json", args: []string{"-admin-url", admin.URL, "health", "-json"}},
+		{name: "health extra", args: []string{"-admin-url", admin.URL, "health", "bogus"}},
+		{name: "profiles list extra", args: []string{"-admin-url", admin.URL, "profiles", "list", "-json"}},
+		{name: "listeners list extra", args: []string{"-admin-url", admin.URL, "listeners", "list", "extra"}},
+		{name: "listener health extra", args: []string{"-base-url", admin.URL, "listener", "health", "-json"}},
+		{name: "listener state extra", args: []string{"-base-url", admin.URL, "listener", "state", "extra"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := run(context.Background(), tc.args, &stdout, &stderr)
+			if err == nil || !strings.Contains(err.Error(), "unexpected arguments") {
+				t.Fatalf("err = %v, want 'unexpected arguments'", err)
+			}
+		})
 	}
 }
 
