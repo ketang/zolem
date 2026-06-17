@@ -196,7 +196,11 @@ func (c *localControlPlane) DeleteProfile(name string) error {
 }
 
 func (c *localControlPlane) UpsertListener(name string, payload localListenerPayload) (localListenerView, []string, error) {
-	if _, ok := c.store.GetProfile(payload.Profile); !ok {
+	// Snapshot the profile exactly once. Re-fetching it after validation would
+	// open a TOCTOU window where a concurrent DeleteProfile lets the listener
+	// bind with a zero-valued profile.
+	profile, ok := c.store.GetProfile(payload.Profile)
+	if !ok {
 		return localListenerView{}, nil, runtimecfg.ErrProfileNotFound
 	}
 
@@ -211,7 +215,6 @@ func (c *localControlPlane) UpsertListener(name string, payload localListenerPay
 		return localListenerView{}, nil, err
 	}
 
-	profile, _ := c.store.GetProfile(payload.Profile)
 	runtime := runtimecfg.ListenerRuntime{
 		Spec:    spec,
 		Profile: profile,
@@ -243,18 +246,12 @@ func (c *localControlPlane) UpsertListener(name string, payload localListenerPay
 		return localListenerView{}, warnings, err
 	}
 
-	c.mu.Lock()
-	if existing, ok := c.listeners[name]; ok {
-		_ = existing.server.Close()
-		existing.app.close()
-		if existing.recorder != nil {
-			existing.recorder.Close()
-		}
-		delete(c.listeners, name)
-		_ = c.store.DeleteListener(name)
-	}
-	c.mu.Unlock()
-
+	// Bind the new listener before touching the registry. The replace then
+	// happens in a single critical section: any previously-registered listener
+	// for this name is swapped out atomically with the new one. Holding c.mu
+	// across the whole swap closes the gap where two concurrent PUTs could both
+	// bind and have the loser orphan the winner's server + listener (a goroutine
+	// and port leak that survived until process exit).
 	server, err := c.startServer(spec, c.tls, app.handler)
 	if err != nil {
 		app.close()
@@ -276,9 +273,9 @@ func (c *localControlPlane) UpsertListener(name string, payload localListenerPay
 	view := newLocalListenerView(actualRuntime, localBaseURL(actualSpec), caps)
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	old := c.listeners[name]
 	if _, err := c.store.UpsertListener(actualSpec); err != nil {
+		c.mu.Unlock()
 		_ = server.Close()
 		app.close()
 		return localListenerView{}, warnings, err
@@ -290,6 +287,17 @@ func (c *localControlPlane) UpsertListener(name string, payload localListenerPay
 		baseURL:  view.BaseURL,
 		recorder: recorder,
 		caps:     caps,
+	}
+	c.mu.Unlock()
+
+	// Tear down the replaced listener outside the lock: server.Close() may block
+	// up to its shutdown deadline, and we must not hold c.mu while it drains.
+	if old != nil {
+		_ = old.server.Close()
+		old.app.close()
+		if old.recorder != nil {
+			old.recorder.Close()
+		}
 	}
 
 	return view, warnings, nil
@@ -303,6 +311,12 @@ func (c *localControlPlane) ListListeners() []localListenerView {
 	out := make([]localListenerView, 0, len(specs))
 	for _, spec := range specs {
 		entry := c.listeners[spec.Name]
+		if entry == nil {
+			// Defensive: the store spec and the managed-listener map are kept in
+			// sync under c.mu, so this should not happen. Skip rather than panic
+			// on a nil index if they ever diverge.
+			continue
+		}
 		out = append(out, newLocalListenerView(entry.runtime, entry.baseURL, entry.caps))
 	}
 	return out
@@ -614,7 +628,16 @@ func (s *httpLocalServer) Addr() string {
 func (s *httpLocalServer) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	return s.server.Shutdown(ctx)
+	if err := s.server.Shutdown(ctx); err != nil {
+		// Graceful shutdown timed out with connections still in flight — e.g. an
+		// SSE stream honoring a profile's stream_delay that outlives the 2s
+		// deadline. Force the listener and active connections closed so teardown
+		// cannot hang indefinitely. The force Close re-closes the already-closed
+		// listener and would surface a spurious "use of closed network
+		// connection"; teardown is best-effort, so report completion.
+		_ = s.server.Close()
+	}
+	return nil
 }
 
 func localBaseURL(spec runtimecfg.ListenerSpec) string {
