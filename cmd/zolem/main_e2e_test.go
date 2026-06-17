@@ -101,5 +101,18 @@ func TestMain_E2E(t *testing.T) {
 		if combined.String() != "Fixture says hello from gemini." {
 			t.Fatalf("combined stream content: got %q", combined.String())
 		}
+
+		ctResp, ctBody := doRequest(t, svc.baseURL, "POST", "/v1beta/models/gemini-2.0-flash:countTokens", `{"contents":[{"role":"user","parts":[{"text":"hello world from zolem"}]}]}`, "Content-Type: application/json", "x-goog-api-key: test-key")
+		defer ctResp.Body.Close()
+		if ctResp.StatusCode != 200 {
+			t.Fatalf("countTokens status: got %d, want 200; body: %s", ctResp.StatusCode, ctBody)
+		}
+		var ct struct {
+			TotalTokens int `json:"totalTokens"`
+		}
+		mustJSONUnmarshal(t, ctBody, &ct)
+		if ct.TotalTokens <= 0 {
+			t.Fatalf("countTokens totalTokens: got %d, want > 0", ct.TotalTokens)
+		}
 	})
 }

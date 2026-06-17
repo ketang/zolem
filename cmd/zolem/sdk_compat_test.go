@@ -83,6 +83,40 @@ func TestSDKCompatibility_Anthropic(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+
+	t.Run("models.list", func(t *testing.T) {
+		page, err := client.Models.List(context.Background(), anthropicapi.ModelListParams{})
+		if err != nil {
+			t.Fatalf("models.list: %v", err)
+		}
+		found := false
+		for _, m := range page.Data {
+			if m.Type != "model" {
+				t.Fatalf("model type: got %q, want \"model\"", m.Type)
+			}
+			if m.ID == "claude-3-5-sonnet-20241022" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected claude-3-5-sonnet-20241022 in listing, got %#v", page.Data)
+		}
+	})
+
+	t.Run("count_tokens", func(t *testing.T) {
+		count, err := client.Messages.CountTokens(context.Background(), anthropicapi.MessageCountTokensParams{
+			Model: anthropicapi.Model("claude-3-5-sonnet-20241022"),
+			Messages: []anthropicapi.MessageParam{
+				anthropicapi.NewUserMessage(anthropicapi.NewTextBlock("hello world from zolem")),
+			},
+		})
+		if err != nil {
+			t.Fatalf("messages.count_tokens: %v", err)
+		}
+		if count.InputTokens <= 0 {
+			t.Fatalf("input_tokens: got %d, want > 0", count.InputTokens)
+		}
+	})
 }
 
 // TestE2E_Anthropic_ContentBlocks exercises request-side schema acceptance for
@@ -217,6 +251,25 @@ func TestSDKCompatibility_OpenAI(t *testing.T) {
 		var apiErr *openai.Error
 		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
 			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("models.list", func(t *testing.T) {
+		page, err := client.Models.List(context.Background())
+		if err != nil {
+			t.Fatalf("models.list: %v", err)
+		}
+		found := false
+		for _, m := range page.Data {
+			if m.Object != "model" {
+				t.Fatalf("model object: got %q, want \"model\"", m.Object)
+			}
+			if m.ID == "gpt-4o" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected gpt-4o in listing, got %#v", page.Data)
 		}
 	})
 }

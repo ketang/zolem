@@ -39,6 +39,8 @@ func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator 
 	h.mux = chi.NewRouter()
 	h.mux.Post("/v1/chat/completions", h.handleChatCompletions)
 	h.mux.Get("/v1/responses", h.handleResponses)
+	h.mux.Get("/v1/models", h.handleListModels)
+	h.mux.Get("/v1/models/*", h.handleListModels)
 	return h
 }
 

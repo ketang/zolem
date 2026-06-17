@@ -77,6 +77,9 @@ func (h *Handler) handleCatchAll(version string) http.HandlerFunc {
 			stream = false
 		case "streamGenerateContent":
 			stream = true
+		case "countTokens":
+			h.handleCountTokens(w, r)
+			return
 		default:
 			http.NotFound(w, r)
 			return

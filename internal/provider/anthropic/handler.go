@@ -38,6 +38,9 @@ func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator 
 	}
 	h.mux = chi.NewRouter()
 	h.mux.Post("/v1/messages", h.handleMessages)
+	h.mux.Post("/v1/messages/count_tokens", h.handleCountTokens)
+	h.mux.Get("/v1/models", h.handleListModels)
+	h.mux.Get("/v1/models/{model}", h.handleListModels)
 	return h
 }
 
