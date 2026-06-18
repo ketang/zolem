@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"zolem.dev/zolem/internal/response"
+	"github.com/ketang/zolem/internal/response"
 )
 
 func TestFakerGenerate_ReturnsRequestedTokenCount(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"zolem.dev/zolem/internal/response"
+	"github.com/ketang/zolem/internal/response"
 )
 
 func TestSSEWriter_WriteEvent(t *testing.T) {

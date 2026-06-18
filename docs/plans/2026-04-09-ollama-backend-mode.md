@@ -667,7 +667,7 @@ Simplest path: add a `chatGenerator` field to each handler that defaults to call
 
 In `internal/provider/anthropic/handler.go`:
 
-Add import `"zolem.dev/zolem/internal/ollama"`.
+Add import `"github.com/ketang/zolem/internal/ollama"`.
 
 Add the interface:
 
@@ -840,7 +840,7 @@ func TestMessages_OllamaBackend_NonStreaming(t *testing.T) {
 }
 ```
 
-Add imports for `runtimecfg "zolem.dev/zolem/internal/runtime"` and `"zolem.dev/zolem/internal/ollama"` to the test file.
+Add imports for `runtimecfg "github.com/ketang/zolem/internal/runtime"` and `"github.com/ketang/zolem/internal/ollama"` to the test file.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1024,7 +1024,7 @@ func anthropicToChatMessages(req MessagesRequest) []ollama.ChatMessage {
 }
 ```
 
-Add imports: `"zolem.dev/zolem/internal/ollama"`, `"fmt"`, `"zolem.dev/zolem/internal/response"`. Note that `fmt` and `response` may already be imported — check and add only what's missing.
+Add imports: `"github.com/ketang/zolem/internal/ollama"`, `"fmt"`, `"github.com/ketang/zolem/internal/response"`. Note that `fmt` and `response` may already be imported — check and add only what's missing.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1204,7 +1204,7 @@ func TestChatCompletions_OllamaBackend_NonStreaming(t *testing.T) {
 }
 ```
 
-Add imports for `runtimecfg "zolem.dev/zolem/internal/runtime"` and `"zolem.dev/zolem/internal/ollama"`.
+Add imports for `runtimecfg "github.com/ketang/zolem/internal/runtime"` and `"github.com/ketang/zolem/internal/ollama"`.
 
 - [ ] **Step 2: Implement ollama backend dispatch in handleChatCompletions**
 
@@ -1330,7 +1330,7 @@ func openaiToChatMessages(req ChatCompletionRequest) []ollama.ChatMessage {
 }
 ```
 
-Add imports: `"zolem.dev/zolem/internal/ollama"`, `"zolem.dev/zolem/internal/response"`. Keep existing imports.
+Add imports: `"github.com/ketang/zolem/internal/ollama"`, `"github.com/ketang/zolem/internal/response"`. Keep existing imports.
 
 - [ ] **Step 3: Run tests**
 
@@ -1486,7 +1486,7 @@ func TestGenerateContent_OllamaBackend_NonStreaming(t *testing.T) {
 }
 ```
 
-Add imports for `runtimecfg "zolem.dev/zolem/internal/runtime"` and `"zolem.dev/zolem/internal/ollama"`.
+Add imports for `runtimecfg "github.com/ketang/zolem/internal/runtime"` and `"github.com/ketang/zolem/internal/ollama"`.
 
 - [ ] **Step 2: Implement ollama backend dispatch in handleGenerate**
 
@@ -1619,7 +1619,7 @@ func geminiToChatMessages(req GenerateContentRequest) []ollama.ChatMessage {
 }
 ```
 
-Add imports: `"zolem.dev/zolem/internal/ollama"`, `"zolem.dev/zolem/internal/response"`.
+Add imports: `"github.com/ketang/zolem/internal/ollama"`, `"github.com/ketang/zolem/internal/response"`.
 
 - [ ] **Step 3: Run tests**
 

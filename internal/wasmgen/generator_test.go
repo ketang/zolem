@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"zolem.dev/zolem/internal/fixture"
-	"zolem.dev/zolem/internal/wasmgen"
+	"github.com/ketang/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/wasmgen"
 )
 
 var generatorWASM = []byte{

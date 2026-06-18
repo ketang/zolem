@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"zolem.dev/zolem/internal/fixture"
-	runtimecfg "zolem.dev/zolem/internal/runtime"
+	"github.com/ketang/zolem/internal/fixture"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
 func ctxWithProfile(name string) context.Context {

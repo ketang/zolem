@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	runtimecfg "zolem.dev/zolem/internal/runtime"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
 func TestStore_ProfileLifecycle(t *testing.T) {

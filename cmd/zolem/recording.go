@@ -16,7 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	runtimecfg "zolem.dev/zolem/internal/runtime"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
 // Recorder is the storage abstraction for captured request/response pairs.

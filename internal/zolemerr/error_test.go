@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"zolem.dev/zolem/internal/zolemerr"
+	"github.com/ketang/zolem/internal/zolemerr"
 )
 
 func TestWrite(t *testing.T) {

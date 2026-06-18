@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	runtimecfg "zolem.dev/zolem/internal/runtime"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
 func TestNewInMemoryRecorder_RecordsWithoutFileIO(t *testing.T) {

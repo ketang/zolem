@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	runtimecfg "zolem.dev/zolem/internal/runtime"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
 // countingLocalServer wraps a real localServer and tracks how many remain open

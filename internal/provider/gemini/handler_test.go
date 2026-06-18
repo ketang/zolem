@@ -10,12 +10,12 @@ import (
 	"strings"
 	"testing"
 
-	"zolem.dev/zolem/internal/fixture"
-	"zolem.dev/zolem/internal/ollama"
-	"zolem.dev/zolem/internal/provider/gemini"
-	"zolem.dev/zolem/internal/response"
-	runtimecfg "zolem.dev/zolem/internal/runtime"
-	"zolem.dev/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/ollama"
+	"github.com/ketang/zolem/internal/provider/gemini"
+	"github.com/ketang/zolem/internal/response"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
+	"github.com/ketang/zolem/internal/specs"
 )
 
 type stubGenerator struct {

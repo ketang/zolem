@@ -9,9 +9,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ketang/zolem/internal/fixture"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
-	"zolem.dev/zolem/internal/fixture"
 )
 
 const (

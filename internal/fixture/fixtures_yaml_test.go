@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"zolem.dev/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/fixture"
 )
 
 func writeYAMLFixtureDir(t *testing.T, root, id, responseID string) {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"zolem.dev/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/fixture"
 )
 
 func staticTestCandidates() []fixture.Fixture {

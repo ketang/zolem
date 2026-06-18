@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"zolem.dev/zolem/internal/admincli"
+	"github.com/ketang/zolem/internal/admincli"
 )
 
 type localProfilePayload struct {

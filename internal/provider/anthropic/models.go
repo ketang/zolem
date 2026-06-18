@@ -7,7 +7,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	runtimecfg "zolem.dev/zolem/internal/runtime"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
 // modelInfo mirrors the Anthropic `model` resource returned by GET /v1/models.

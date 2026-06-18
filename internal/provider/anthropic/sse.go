@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"sync/atomic"
 
-	"zolem.dev/zolem/internal/response"
-	runtimecfg "zolem.dev/zolem/internal/runtime"
+	"github.com/ketang/zolem/internal/response"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
 func streamResponse(ctx context.Context, w http.ResponseWriter, model string, tokens []string, inputTokens int) {

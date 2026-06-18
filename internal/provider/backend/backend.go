@@ -7,7 +7,7 @@ package backend
 import (
 	"context"
 
-	"zolem.dev/zolem/internal/ollama"
+	"github.com/ketang/zolem/internal/ollama"
 )
 
 // TextGenerator produces a single completion string for a prompt. The real

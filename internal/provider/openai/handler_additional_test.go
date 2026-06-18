@@ -9,12 +9,12 @@ import (
 	"strings"
 	"testing"
 
-	"zolem.dev/zolem/internal/fixture"
-	"zolem.dev/zolem/internal/provider/openai"
-	"zolem.dev/zolem/internal/response"
-	"zolem.dev/zolem/internal/router"
-	runtimecfg "zolem.dev/zolem/internal/runtime"
-	"zolem.dev/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/provider/openai"
+	"github.com/ketang/zolem/internal/response"
+	"github.com/ketang/zolem/internal/router"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
+	"github.com/ketang/zolem/internal/specs"
 )
 
 var alwaysMatchWASM = []byte{

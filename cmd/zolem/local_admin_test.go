@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	runtimecfg "zolem.dev/zolem/internal/runtime"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
 type fakeLocalServer struct {
