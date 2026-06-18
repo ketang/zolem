@@ -504,16 +504,6 @@ func TestGeneratorForBackend_UsesFakerMode(t *testing.T) {
 	}
 }
 
-func TestSpecSourceMap_CanonicalSourceInvariants(t *testing.T) {
-	sources := specSourceMap()
-	if _, ok := sources["anthropic:v1"]; ok {
-		t.Fatal("anthropic:v1 should not use a remote canonical source")
-	}
-	if got := sources["openai:v1"]; got == "" {
-		t.Fatal("openai:v1 source should not be empty")
-	}
-}
-
 func TestNewScanStartupDeps_DoesNotBind(t *testing.T) {
 	deps := newScanStartupDeps()
 

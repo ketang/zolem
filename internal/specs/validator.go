@@ -4,6 +4,7 @@ package specs
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -79,6 +80,28 @@ func (v *Validator) Validate(provider, version string, body []byte) error {
 		return &ValidationError{Errors: []string{err.Error()}}
 	}
 	return nil
+}
+
+// Has reports whether a compiled schema is registered for (provider, version).
+func (v *Validator) Has(provider, version string) bool {
+	v.mu.RLock()
+	_, ok := v.schemas[provider+":"+version]
+	v.mu.RUnlock()
+	return ok
+}
+
+// Schemas returns the sorted "provider:version" keys of every registered
+// schema. It lets callers report which request schemas are active (e.g. via
+// the /_zolem/state endpoint).
+func (v *Validator) Schemas() []string {
+	v.mu.RLock()
+	keys := make([]string, 0, len(v.schemas))
+	for key := range v.schemas {
+		keys = append(keys, key)
+	}
+	v.mu.RUnlock()
+	sort.Strings(keys)
+	return keys
 }
 
 func asValidationError(err error, out **jsonschema.ValidationError) bool {

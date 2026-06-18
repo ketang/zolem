@@ -8,7 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
+
+// fetchClient bounds spec fetches so a slow or hung upstream cannot block
+// startup indefinitely. Production startup configures no remote sources, so
+// this path is exercised only when a caller explicitly supplies source URLs.
+var fetchClient = &http.Client{Timeout: 10 * time.Second}
 
 // Fetcher retrieves and caches OpenAPI spec content per (provider, version) pair.
 type Fetcher struct {
@@ -79,7 +85,7 @@ func (f *Fetcher) store(key string, data []byte) {
 }
 
 func fetchURL(url string) ([]byte, error) {
-	resp, err := http.Get(url) //nolint:gosec
+	resp, err := fetchClient.Get(url) //nolint:gosec
 	if err != nil {
 		return nil, err
 	}

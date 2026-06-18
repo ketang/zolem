@@ -286,28 +286,24 @@ func loadLocalFixtures(listenerRuntime runtimecfg.ListenerRuntime, fixturesDir s
 	return loadFixtures(fixturesDir, listenerRuntime, runner, readFile, sequenceCounters)
 }
 
-// loadSpecs loads every known provider schema into validator. servedProvider is
-// the provider this listener actually serves; spec fetch/load failures for other
-// providers are suppressed rather than surfaced as warnings, since this listener
-// never validates against them (e.g. an anthropic listener has no use for the
-// openrouter spec). Passing "" surfaces warnings for all providers. The deeper
-// fix that avoids fetching unused specs entirely is tracked by zolem-e9h.
+// loadSpecs loads the request schema for each (provider, version) pair the
+// served provider validates against. The vendored snapshots (see
+// specs.VendoredFallbacks) cover every supported provider, so under zolem's
+// no-egress posture this performs no network access. Only the served
+// provider's schemas are loaded — an anthropic listener has no use for the
+// gemini schema. Load failures are surfaced as warnings; missing schemas are
+// also reflected by the /_zolem/state endpoint.
 func loadSpecs(validator *specs.Validator, fetcher specFetcher, servedProvider string) []string {
 	var warnings []string
-	for _, key := range specKeys() {
+	for _, key := range providerSpecKeys(servedProvider) {
 		provider, version := splitKey(key)
-		relevant := servedProvider == "" || provider == servedProvider
 		data, err := fetcher.Get(provider, version)
 		if err != nil {
-			if relevant {
-				warnings = append(warnings, fmt.Sprintf("failed to fetch spec %s: %v", key, err))
-			}
+			warnings = append(warnings, fmt.Sprintf("failed to load spec %s: %v", key, err))
 			continue
 		}
 		if err := specs.LoadProviderSchema(validator, provider, version, data); err != nil {
-			if relevant {
-				warnings = append(warnings, fmt.Sprintf("failed to load spec %s: %v", key, err))
-			}
+			warnings = append(warnings, fmt.Sprintf("failed to load spec %s: %v", key, err))
 		}
 	}
 	return warnings
@@ -374,7 +370,7 @@ func buildLocalHandler(runtimePtr *atomic.Pointer[runtimecfg.ListenerRuntime], c
 			return
 		}
 		if req.Method == http.MethodGet && req.URL.Path == "/_zolem/state" {
-			writeLocalState(w, listenerRuntime)
+			writeLocalState(w, listenerRuntime, validator)
 			return
 		}
 
@@ -438,23 +434,24 @@ func writeZolemError(w http.ResponseWriter, message string) {
 }
 
 func splitKey(key string) (string, string) {
-	if i := strings.IndexByte(key, ':'); i >= 0 {
-		return key[:i], key[i+1:]
-	}
-	return key, ""
+	provider, version, _ := strings.Cut(key, ":")
+	return provider, version
 }
 
-func specSourceMap() map[string]string {
-	return map[string]string{
-		"openai:v1":     "https://raw.githubusercontent.com/openai/openai-openapi/master/openapi.yaml",
-		"openrouter:v1": "https://openrouter.ai/openapi.yaml",
-		"gemini:v1":     "https://generativelanguage.googleapis.com/$discovery/rest?version=v1",
-		"gemini:v1beta": "https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta",
+// providerSpecKeys returns the "provider:version" schema keys a listener for
+// the given provider validates requests against. Gemini serves both the v1 and
+// v1beta API surfaces, so it validates against both.
+func providerSpecKeys(provider string) []string {
+	switch provider {
+	case "anthropic":
+		return []string{"anthropic:v1"}
+	case "openai":
+		return []string{"openai:v1"}
+	case "gemini":
+		return []string{"gemini:v1", "gemini:v1beta"}
+	default:
+		return nil
 	}
-}
-
-func specKeys() []string {
-	return []string{"anthropic:v1", "openai:v1", "openrouter:v1", "gemini:v1", "gemini:v1beta"}
 }
 
 func (o localOptions) runtime() (runtimecfg.ListenerRuntime, error) {
@@ -506,15 +503,40 @@ func providerListenerName(provider, profile string) string {
 	return provider + "-" + profile
 }
 
-func writeLocalState(w http.ResponseWriter, listenerRuntime runtimecfg.ListenerRuntime) {
+func writeLocalState(w http.ResponseWriter, listenerRuntime runtimecfg.ListenerRuntime, validator *specs.Validator) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"provider": listenerRuntime.Spec.Provider,
-		"profile":  listenerRuntime.Spec.Profile,
-		"backend":  listenerRuntime.Profile.Backend,
-		"listener": listenerRuntime.Spec.Addr,
-		"tls":      listenerRuntime.Spec.TLS,
+		"provider":          listenerRuntime.Spec.Provider,
+		"profile":           listenerRuntime.Spec.Profile,
+		"backend":           listenerRuntime.Profile.Backend,
+		"listener":          listenerRuntime.Spec.Addr,
+		"tls":               listenerRuntime.Spec.TLS,
+		"schemas_loaded":    validator.Schemas(),
+		"schema_validation": schemaValidationStatus(validator, listenerRuntime.Spec.Provider),
 	})
+}
+
+// schemaValidationStatus reports whether request-schema validation is active
+// for the served provider: "enabled" when every schema it needs is loaded,
+// "unavailable: <keys>" when one or more are missing, or "unsupported" for a
+// provider with no known schema. It backs the missing-schema visibility
+// requirement of the /_zolem/state endpoint.
+func schemaValidationStatus(validator *specs.Validator, provider string) string {
+	keys := providerSpecKeys(provider)
+	if len(keys) == 0 {
+		return "unsupported"
+	}
+	var missing []string
+	for _, key := range keys {
+		p, v := splitKey(key)
+		if !validator.Has(p, v) {
+			missing = append(missing, key)
+		}
+	}
+	if len(missing) > 0 {
+		return "unavailable: " + strings.Join(missing, ", ")
+	}
+	return "enabled"
 }
 
 func (c localTLSConfig) enabled() bool {
