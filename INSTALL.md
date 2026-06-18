@@ -114,6 +114,11 @@ docker run --rm -p 18443:18443 \
 `zolemc` is not included in the image. Run it from the host against the
 published port as shown in the quick-start examples in [README.md](README.md).
 
+Fixed-listener mode enforces loopback-only binding, so it cannot listen on
+`0.0.0.0` inside a container. Use local runtime mode (the admin server, as
+above) for containerized deployments, or run the binary directly on the host
+for fixed-listener mode.
+
 ---
 
 ## Option 3 — From source
@@ -159,5 +164,6 @@ Nightly builds are not recommended for production use.
 
 ## Next steps
 
-See [README.md](README.md) for quick-start examples, response modes, and
-full flag reference.
+See [README.md](README.md) for quick-start examples and response modes, and
+[docs/local-runtime.md](docs/local-runtime.md) for the full local runtime and
+flag reference.

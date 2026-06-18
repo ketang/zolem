@@ -52,6 +52,12 @@ Always preview before applying a refactor:
 If the preview is correct, apply the same command without `--dry-run`, then
 run the relevant zolem verification gate.
 
+Verify the zolem refute wrapper behavior with:
+
+```bash
+./scripts/test-refute-setup.sh
+```
+
 ## CLI Help
 
 - When changing user-facing CLI behavior, flags, configuration, local runtime
@@ -90,6 +96,27 @@ cover.
 - Always run Shatter through the sandboxed entry point: `make shatter`, which
   runs `scripts/shatter-full-scan.sh`. That script enforces the sandbox backend
   and fails if the target writes into the repo or host `/tmp`.
+- `make shatter` scans the non-test Go source under `cmd/` and `internal/`. By
+  default it uses `~/project/shatter/target/release/shatter`; set
+  `SHATTER_BIN=/path/to/shatter` to use a different binary. Reports are written
+  under `shatter-report/`, with generated cache and artifact state ignored by
+  git.
+- Full scans require Docker. The wrapper runs targets with
+  `SHATTER_SANDBOX_BACKEND=docker` and defaults `SHATTER_SANDBOX_DOCKER_IMAGE`
+  to `golang:1.26-bookworm` so the container has the Go toolchain. Override
+  `SHATTER_SANDBOX_DOCKER_IMAGE` if the harness needs extra runtime packages.
+- Setup check (full source discovery without executing functions):
+
+  ```bash
+  ./scripts/test-shatter-setup.sh
+  ```
+
+- Sandbox wrapper check (verifies the full-scan invocation passes Docker
+  sandbox settings and rejects host writes to the repo or `/tmp`):
+
+  ```bash
+  ./scripts/test-shatter-full-scan-sandbox.sh
+  ```
 
 ## Local Binding
 

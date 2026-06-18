@@ -25,64 +25,22 @@ but local runtime listeners currently serve Anthropic, OpenAI, and Gemini.
 |------|-------------|
 | `lorem` | Returns lorem-ipsum placeholder text (default) |
 | `faker` | Returns randomized fake data |
-| `fixture` | Returns static or templated responses selected by CEL or WASM fixture matchers |
+| `fixture` | Returns static or templated responses selected by namespace `fixtures.yaml` expressions or a `selector.wasm` |
 | `ollama` | Forwards generation to a local Ollama instance via its HTTP API |
 | `wasm` | Runs a profile-supplied WebAssembly content generator |
 | `error` | Local runtime only; always returns a provider-native error |
 
 ## Installation
 
-**Supported platforms:**
-| | linux/amd64 | linux/arm64 | darwin/arm64 |
-|---|---|---|---|
-| Binary | ✓ | ✓ | ✓ |
-| Docker | ✓ | ✓ | — |
-
-### Binary (recommended)
-
-Download the archive for your platform from
-[github.com/ketang/zolem/releases/latest](https://github.com/ketang/zolem/releases/latest).
-
-| Platform | Archive |
-|----------|---------|
-| Linux amd64 | `zolem-<version>-linux-amd64.tar.gz` |
-| Linux arm64 | `zolem-<version>-linux-arm64.tar.gz` |
-| macOS arm64 | `zolem-<version>-darwin-arm64.tar.gz` |
-
-Extract and place both binaries on your `PATH`:
-
-```bash
-tar -xzf zolem-<version>-<os>-<arch>.tar.gz
-sudo mv zolem zolemc /usr/local/bin/
-```
-
-Verify checksums:
-
-```bash
-sha256sum -c checksums.txt
-```
-
-See [Artifact verification](#artifact-verification) for cosign signature and SBOM instructions.
-
-### Docker
-
-```bash
-docker pull ghcr.io/ketang/zolem:<version>  # pinned release
-docker pull ghcr.io/ketang/zolem:latest     # latest release
-```
-
-Available platforms: `linux/amd64`, `linux/arm64`.
-
-See [Docker examples](#docker-examples) below for `docker run` usage.
-
-### From source
-
-Requires Go 1.26+.
+The fastest path is `go install` (Go 1.26+):
 
 ```bash
 go install github.com/ketang/zolem/cmd/zolem@latest
 go install github.com/ketang/zolem/cmd/zolemc@latest
 ```
+
+Pre-built binaries, Docker images, nightly builds, and artifact verification
+(checksums, cosign, SBOM) are covered in **[INSTALL.md](INSTALL.md)**.
 
 ## Quick start: local runtime mode
 
@@ -200,7 +158,7 @@ zolem \
 When the admin server is started with local TLS certs, you can request HTTPS
 data-plane listeners by including `"tls": true` in the listener payload.
 
-## Quick Start: Fixed Listener Mode
+## Quick start: fixed-listener mode
 
 Start one loopback listener pinned to a provider and backend:
 
@@ -255,35 +213,6 @@ PROFILE_BACKEND=fixture \
 ./scripts/test-local-runtime.sh
 ```
 
-## Agent tooling
-
-Zolem agents can use [refute](https://github.com/shatterproof-ai/refute) for
-symbol-aware Go refactors. Install or update the repo-local binary from the
-expected local checkout at `~/project/refute`:
-
-```bash
-./scripts/setup-refute.sh
-```
-
-This writes `.agents/bin/refute` and runs `version` plus `doctor`. If the
-checkout is missing, clone `https://github.com/shatterproof-ai/refute` to
-`~/project/refute` or pass `--source /path/to/refute`.
-
-Check readiness before refactoring:
-
-```bash
-.agents/bin/refute doctor
-```
-
-Agents should preview changes with `--dry-run --json`, apply only after the
-preview is correct, and then run zolem's relevant verification gate.
-
-Verify the zolem wrapper behavior with:
-
-```bash
-./scripts/test-refute-setup.sh
-```
-
 ## TLS for local development
 
 Zolem supports TLS so clients that require HTTPS work out of the box locally.
@@ -311,119 +240,11 @@ The same certificate pair can now be used for local runtime mode:
 - `-local-admin-addr ... -local-tls-cert ... -local-tls-key ...`
 - `-local-addr ... -local-provider ... -local-tls-cert ... -local-tls-key ...`
 
-## Shatter
+Running Zolem in Docker (including fixtures and TLS mounts) is covered in
+[INSTALL.md](INSTALL.md#option-2--docker).
 
-Zolem is configured for a full Shatter scan of the non-test Go source under
-`cmd/` and `internal/`.
+## Documentation
 
-```bash
-make shatter
-```
-
-By default this uses `~/project/shatter/target/release/shatter`. Set
-`SHATTER_BIN=/path/to/shatter` to use a different binary. Reports are written
-under `shatter-report/`, with generated cache and artifact state ignored by git.
-
-Full scans require Docker. The scan wrapper runs Shatter targets with
-`SHATTER_SANDBOX_BACKEND=docker` and defaults
-`SHATTER_SANDBOX_DOCKER_IMAGE` to `golang:1.26-bookworm`, so the container has
-the Go toolchain required by targets that compile code. Override
-`SHATTER_SANDBOX_DOCKER_IMAGE` if the harness needs extra runtime packages.
-
-The setup check verifies full source discovery without executing functions:
-
-```bash
-./scripts/test-shatter-setup.sh
-```
-
-The sandbox wrapper check verifies the full-scan invocation passes Docker
-sandbox settings to Shatter and rejects host writes to the repo or `/tmp`:
-
-```bash
-./scripts/test-shatter-full-scan-sandbox.sh
-```
-
-## Docker examples
-
-Basic local runtime mode (admin server):
-
-```bash
-docker run --rm -p 18090:18090 \
-  ghcr.io/ketang/zolem:latest \
-  -local-admin-addr 0.0.0.0:18090
-```
-
-With a fixture directory mounted:
-
-```bash
-docker run --rm -p 18090:18090 \
-  -v $PWD/fixtures:/fixtures \
-  ghcr.io/ketang/zolem:latest \
-  -local-admin-addr 0.0.0.0:18090 \
-  -local-fixtures-dir /fixtures
-```
-
-With TLS certs mounted:
-
-```bash
-docker run --rm -p 18443:18443 \
-  -v $PWD/certs:/certs \
-  ghcr.io/ketang/zolem:latest \
-  -local-admin-addr 0.0.0.0:18443 \
-  -local-tls-cert /certs/localhost.pem \
-  -local-tls-key /certs/localhost-key.pem
-```
-
-Fixed-listener mode in a container:
-
-Fixed-listener mode enforces loopback-only binding, so it cannot listen on
-`0.0.0.0` inside a container. Use admin mode for containerized deployments
-(see examples above) or run the binary directly on the host:
-
-```bash
-zolem \
-  -local-addr 127.0.0.1:18080 \
-  -local-provider openai \
-  -local-backend lorem
-```
-
-Run `zolemc` against a containerized admin server from the host:
-
-```bash
-zolemc -admin-url http://127.0.0.1:18090 profiles create demo -backend lorem
-```
-
-## Artifact verification
-
-<details>
-<summary>Checksum, cosign signature, and SBOM verification</summary>
-
-### Checksums
-
-```bash
-sha256sum -c checksums.txt
-```
-
-### Cosign signature
-
-Archives are signed via GitHub Actions OIDC. Verify with [cosign](https://github.com/sigstore/cosign):
-
-```bash
-cosign verify-blob \
-  --bundle zolem-<version>-<os>-<arch>.tar.gz.bundle \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp "https://github.com/ketang/zolem/.github/workflows/release.yml@refs/tags/.*" \
-  zolem-<version>-<os>-<arch>.tar.gz
-```
-
-Exit code `0` means the signature is valid.
-
-### SBOMs
-
-Each archive has a paired `.sbom` file in [CycloneDX](https://cyclonedx.org/) format. Inspect with [syft](https://github.com/anchore/syft):
-
-```bash
-syft zolem-<version>-<os>-<arch>.tar.gz.sbom
-```
-
-</details>
+- [INSTALL.md](INSTALL.md) — installation, Docker, nightly builds, artifact verification
+- [docs/](docs/README.md) — full guides: local runtime, fixtures, WASM modules, E2E testing
+- [AGENTS.md](AGENTS.md) — contributor and agent tooling (refute, Shatter, verification gate)

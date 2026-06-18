@@ -565,25 +565,37 @@ expression inside `meta.yaml` and per-fixture `match.wasm` file are deprecated
 startup warning when a namespace has neither `fixtures.yaml` nor
 `selector.wasm`.
 
-Minimal example:
+Minimal example. A namespace holds one `fixtures.yaml` plus a subdirectory per
+fixture:
 
 ```text
 my-fixtures/
-└── anthropic-demo/
-    ├── meta.yaml
-    └── response.json
+└── team-a/
+    ├── fixtures.yaml
+    └── anthropic-demo/
+        ├── meta.yaml
+        └── response.json
 ```
 
-Example `meta.yaml`:
+Example `fixtures.yaml` (the namespace-level selector that routes requests to
+fixtures):
+
+```yaml
+provider: anthropic
+version: v1
+fixtures:
+  - expression: 'body["model"] == "claude-3-5-sonnet-20241022"'
+    fixture: anthropic-demo
+```
+
+Example `meta.yaml` (no per-fixture matcher; selection lives in
+`fixtures.yaml`):
 
 ```yaml
 id: anthropic-demo
 provider: anthropic
 version: v1
 status: 200
-match:
-  cel: 'body["model"] == "claude-3-5-sonnet-20241022"'
-  score: 1
 ```
 
 ### Deprecated: per-fixture matchers
@@ -658,14 +670,19 @@ fixture directory, then either add the routing expression to `fixtures.yaml`
 or, for logic that requires WASM, drop a namespace-level `selector.wasm` next
 to the fixture subdirectories.
 
-CEL is the recommended matcher for common request predicates. `match.cel`
-must evaluate to a boolean. When it returns `true`, the fixture is a candidate
-with `match.score`; when it returns `false`, the fixture is skipped. The score
-defaults to `1`, must be finite and non-negative, and participates in the same
-highest-score selection used by WASM matchers. Ties still use fixture load
-order.
+CEL is the recommended expression language for common request predicates. In
+the current model it is written as the `expression` field of a `fixtures.yaml`
+entry. Each expression must evaluate to a boolean; `fixtures.yaml` entries are
+evaluated in declared order and the first entry whose expression returns `true`
+selects its fixture.
 
-CEL matchers can read:
+(The deprecated per-fixture `match.cel` uses a different selection model: a
+`true` result makes the fixture a candidate with `match.score`, which defaults
+to `1`, must be finite and non-negative, and participates in highest-score
+selection with ties broken by fixture load order. New configurations should use
+`fixtures.yaml` instead.)
+
+CEL expressions can read:
 
 - `provider` as a string
 - `version` as a string
