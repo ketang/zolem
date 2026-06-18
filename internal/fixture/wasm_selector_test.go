@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"zolem.dev/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/fixture"
 )
 
 // Hand-crafted WASM blobs for selector tests. Each module exports `memory`

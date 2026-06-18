@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	runtimecfg "zolem.dev/zolem/internal/runtime"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
 // modelObject mirrors the OpenAI `model` resource returned by GET /v1/models.

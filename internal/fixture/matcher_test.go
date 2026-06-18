@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"testing"
 
-	"zolem.dev/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/fixture"
 )
 
 // Binary WASM constants for matcher tests.

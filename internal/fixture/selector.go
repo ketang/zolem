@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	runtimecfg "zolem.dev/zolem/internal/runtime"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
 // Selector picks at most one fixture from candidates filtered by provider/version.

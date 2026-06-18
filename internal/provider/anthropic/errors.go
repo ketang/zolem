@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	runtimecfg "zolem.dev/zolem/internal/runtime"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
 type errorEnvelope struct {

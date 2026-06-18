@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"zolem.dev/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/fixture"
 )
 
 func TestWatcher_ReloadsOnFileChange(t *testing.T) {

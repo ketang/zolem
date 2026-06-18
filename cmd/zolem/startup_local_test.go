@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"zolem.dev/zolem/internal/fixture"
-	"zolem.dev/zolem/internal/response"
-	runtimecfg "zolem.dev/zolem/internal/runtime"
+	"github.com/ketang/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/response"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
 type fakeFetcher map[string]fetchResult

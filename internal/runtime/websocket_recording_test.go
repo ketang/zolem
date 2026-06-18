@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	runtimecfg "zolem.dev/zolem/internal/runtime"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
 func TestWebSocketStatsContextLifecycle(t *testing.T) {

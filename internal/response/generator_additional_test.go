@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"zolem.dev/zolem/internal/response"
+	"github.com/ketang/zolem/internal/response"
 )
 
 func TestCountNonEmpty(t *testing.T) {

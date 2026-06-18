@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"zolem.dev/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/fixture"
 )
 
 func TestRenderBody_TemplateUsesFixtureRuntimeTimeAndSequences(t *testing.T) {

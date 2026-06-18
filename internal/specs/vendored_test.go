@@ -3,7 +3,7 @@ package specs_test
 import (
 	"testing"
 
-	"zolem.dev/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/specs"
 )
 
 func TestVendoredFallbacks_AnthropicSnapshotValidatesMessagesRequests(t *testing.T) {

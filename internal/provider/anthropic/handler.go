@@ -10,15 +10,15 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"zolem.dev/zolem/internal/fixture"
-	"zolem.dev/zolem/internal/ollama"
-	"zolem.dev/zolem/internal/provider/backend"
-	"zolem.dev/zolem/internal/response"
-	"zolem.dev/zolem/internal/router"
-	runtimecfg "zolem.dev/zolem/internal/runtime"
-	"zolem.dev/zolem/internal/specs"
-	"zolem.dev/zolem/internal/wasmgen"
-	"zolem.dev/zolem/internal/zolemerr"
+	"github.com/ketang/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/ollama"
+	"github.com/ketang/zolem/internal/provider/backend"
+	"github.com/ketang/zolem/internal/response"
+	"github.com/ketang/zolem/internal/router"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
+	"github.com/ketang/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/wasmgen"
+	"github.com/ketang/zolem/internal/zolemerr"
 )
 
 type Handler struct {

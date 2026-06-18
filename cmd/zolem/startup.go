@@ -13,15 +13,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"zolem.dev/zolem/internal/fixture"
-	"zolem.dev/zolem/internal/ollama"
-	"zolem.dev/zolem/internal/provider/anthropic"
-	"zolem.dev/zolem/internal/provider/gemini"
-	"zolem.dev/zolem/internal/provider/openai"
-	"zolem.dev/zolem/internal/response"
-	runtimecfg "zolem.dev/zolem/internal/runtime"
-	"zolem.dev/zolem/internal/specs"
-	"zolem.dev/zolem/internal/wasmgen"
+	"github.com/ketang/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/ollama"
+	"github.com/ketang/zolem/internal/provider/anthropic"
+	"github.com/ketang/zolem/internal/provider/gemini"
+	"github.com/ketang/zolem/internal/provider/openai"
+	"github.com/ketang/zolem/internal/response"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
+	"github.com/ketang/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/wasmgen"
 )
 
 type ollamaHTTPAdapter struct{}

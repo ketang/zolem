@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"zolem.dev/zolem/internal/provider/anthropic"
-	"zolem.dev/zolem/internal/provider/gemini"
+	"github.com/ketang/zolem/internal/provider/anthropic"
+	"github.com/ketang/zolem/internal/provider/gemini"
 )
 
 func TestMain_E2E(t *testing.T) {

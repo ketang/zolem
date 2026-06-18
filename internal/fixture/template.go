@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/brianvoe/gofakeit/v7"
-	runtimecfg "zolem.dev/zolem/internal/runtime"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
 type TemplateRuntimeContext struct {

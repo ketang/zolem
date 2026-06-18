@@ -77,10 +77,10 @@ zolem/
 
 ```bash
 cd /home/ketan/project/zolem
-go mod init zolem.dev/zolem
+go mod init github.com/ketang/zolem
 ```
 
-Expected output: `go: creating new go.mod: module zolem.dev/zolem`
+Expected output: `go: creating new go.mod: module github.com/ketang/zolem`
 
 - [x] **Step 2: Add dependencies**
 
@@ -103,7 +103,7 @@ import (
 	"log"
 	"net/http"
 
-	"zolem.dev/zolem/internal/config"
+	"github.com/ketang/zolem/internal/config"
 )
 
 func main() {
@@ -155,7 +155,7 @@ import (
 	"os"
 	"testing"
 
-	"zolem.dev/zolem/internal/config"
+	"github.com/ketang/zolem/internal/config"
 )
 
 func TestLoad(t *testing.T) {
@@ -325,8 +325,8 @@ package router_test
 import (
 	"testing"
 
-	"zolem.dev/zolem/internal/config"
-	"zolem.dev/zolem/internal/router"
+	"github.com/ketang/zolem/internal/config"
+	"github.com/ketang/zolem/internal/router"
 )
 
 func routes() []config.RouteConfig {
@@ -415,7 +415,7 @@ package router
 import (
 	"strings"
 
-	"zolem.dev/zolem/internal/config"
+	"github.com/ketang/zolem/internal/config"
 )
 
 // LabelsKey is the context key for virtual host labels.
@@ -529,7 +529,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"zolem.dev/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/specs"
 )
 
 func TestFetcher_FetchAndCache(t *testing.T) {
@@ -744,7 +744,7 @@ package specs_test
 import (
 	"testing"
 
-	"zolem.dev/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/specs"
 )
 
 // minimalSchema is a JSON Schema that requires a "model" string field.
@@ -926,7 +926,7 @@ import (
 	"strings"
 	"testing"
 
-	"zolem.dev/zolem/internal/response"
+	"github.com/ketang/zolem/internal/response"
 )
 
 func TestLoremGenerate_ReturnsTokens(t *testing.T) {
@@ -1037,7 +1037,7 @@ import (
 	"strings"
 	"testing"
 
-	"zolem.dev/zolem/internal/response"
+	"github.com/ketang/zolem/internal/response"
 )
 
 func TestSSEWriter_WriteEvent(t *testing.T) {
@@ -1218,7 +1218,7 @@ import (
 	"runtime"
 	"testing"
 
-	"zolem.dev/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/fixture"
 )
 
 func testdataDir() string {
@@ -1414,7 +1414,7 @@ import (
 	"context"
 	"testing"
 
-	"zolem.dev/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/fixture"
 )
 
 // alwaysMatchWAT is a minimal WAT module that always returns score 1.0.
@@ -1600,7 +1600,7 @@ import (
 	"context"
 	"testing"
 
-	"zolem.dev/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/fixture"
 )
 
 func TestMatcher_MatchesHighestScore(t *testing.T) {
@@ -1815,10 +1815,10 @@ import (
 	"strings"
 	"testing"
 
-	"zolem.dev/zolem/internal/fixture"
-	"zolem.dev/zolem/internal/provider/anthropic"
-	"zolem.dev/zolem/internal/response"
-	"zolem.dev/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/provider/anthropic"
+	"github.com/ketang/zolem/internal/response"
+	"github.com/ketang/zolem/internal/specs"
 )
 
 func newHandler(t *testing.T) *anthropic.Handler {
@@ -2000,7 +2000,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"zolem.dev/zolem/internal/response"
+	"github.com/ketang/zolem/internal/response"
 )
 
 func streamResponse(w http.ResponseWriter, model string, tokens []string, inputTokens int) {
@@ -2085,10 +2085,10 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"zolem.dev/zolem/internal/fixture"
-	"zolem.dev/zolem/internal/response"
-	"zolem.dev/zolem/internal/router"
-	"zolem.dev/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/response"
+	"github.com/ketang/zolem/internal/router"
+	"github.com/ketang/zolem/internal/specs"
 )
 
 // Handler implements http.Handler for the Anthropic provider.
@@ -2275,10 +2275,10 @@ import (
 	"strings"
 	"testing"
 
-	"zolem.dev/zolem/internal/fixture"
-	"zolem.dev/zolem/internal/provider/openai"
-	"zolem.dev/zolem/internal/response"
-	"zolem.dev/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/provider/openai"
+	"github.com/ketang/zolem/internal/response"
+	"github.com/ketang/zolem/internal/specs"
 )
 
 func newHandler(t *testing.T) *openai.Handler {
@@ -2458,7 +2458,7 @@ import (
 	"net/http"
 	"time"
 
-	"zolem.dev/zolem/internal/response"
+	"github.com/ketang/zolem/internal/response"
 )
 
 func streamResponse(w http.ResponseWriter, model string, tokens []string, promptTokens int) {
@@ -2532,10 +2532,10 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"zolem.dev/zolem/internal/fixture"
-	"zolem.dev/zolem/internal/response"
-	"zolem.dev/zolem/internal/router"
-	"zolem.dev/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/response"
+	"github.com/ketang/zolem/internal/router"
+	"github.com/ketang/zolem/internal/specs"
 )
 
 type Handler struct {
@@ -2707,10 +2707,10 @@ import (
 	"strings"
 	"testing"
 
-	"zolem.dev/zolem/internal/fixture"
-	"zolem.dev/zolem/internal/provider/gemini"
-	"zolem.dev/zolem/internal/response"
-	"zolem.dev/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/provider/gemini"
+	"github.com/ketang/zolem/internal/response"
+	"github.com/ketang/zolem/internal/specs"
 )
 
 func newHandler(t *testing.T) *gemini.Handler {
@@ -2878,7 +2878,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"zolem.dev/zolem/internal/response"
+	"github.com/ketang/zolem/internal/response"
 )
 
 func streamResponse(w http.ResponseWriter, model string, tokens []string, promptTokens int) {
@@ -2932,10 +2932,10 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"zolem.dev/zolem/internal/fixture"
-	"zolem.dev/zolem/internal/response"
-	"zolem.dev/zolem/internal/router"
-	"zolem.dev/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/response"
+	"github.com/ketang/zolem/internal/router"
+	"github.com/ketang/zolem/internal/specs"
 )
 
 type Handler struct {
@@ -3127,14 +3127,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"zolem.dev/zolem/internal/config"
-	"zolem.dev/zolem/internal/fixture"
-	"zolem.dev/zolem/internal/provider/anthropic"
-	"zolem.dev/zolem/internal/provider/gemini"
-	"zolem.dev/zolem/internal/provider/openai"
-	"zolem.dev/zolem/internal/response"
-	"zolem.dev/zolem/internal/router"
-	"zolem.dev/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/config"
+	"github.com/ketang/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/provider/anthropic"
+	"github.com/ketang/zolem/internal/provider/gemini"
+	"github.com/ketang/zolem/internal/provider/openai"
+	"github.com/ketang/zolem/internal/response"
+	"github.com/ketang/zolem/internal/router"
+	"github.com/ketang/zolem/internal/specs"
 )
 
 func buildServer(t *testing.T, routes []config.RouteConfig) http.Handler {
@@ -3243,14 +3243,14 @@ import (
 	"net/http"
 	"os"
 
-	"zolem.dev/zolem/internal/config"
-	"zolem.dev/zolem/internal/fixture"
-	"zolem.dev/zolem/internal/provider/anthropic"
-	"zolem.dev/zolem/internal/provider/gemini"
-	"zolem.dev/zolem/internal/provider/openai"
-	"zolem.dev/zolem/internal/response"
-	"zolem.dev/zolem/internal/router"
-	"zolem.dev/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/config"
+	"github.com/ketang/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/provider/anthropic"
+	"github.com/ketang/zolem/internal/provider/gemini"
+	"github.com/ketang/zolem/internal/provider/openai"
+	"github.com/ketang/zolem/internal/response"
+	"github.com/ketang/zolem/internal/router"
+	"github.com/ketang/zolem/internal/specs"
 )
 
 func main() {
@@ -3382,14 +3382,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"zolem.dev/zolem/internal/config"
-	"zolem.dev/zolem/internal/fixture"
-	"zolem.dev/zolem/internal/provider/anthropic"
-	"zolem.dev/zolem/internal/provider/gemini"
-	"zolem.dev/zolem/internal/provider/openai"
-	"zolem.dev/zolem/internal/response"
-	"zolem.dev/zolem/internal/router"
-	"zolem.dev/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/config"
+	"github.com/ketang/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/provider/anthropic"
+	"github.com/ketang/zolem/internal/provider/gemini"
+	"github.com/ketang/zolem/internal/provider/openai"
+	"github.com/ketang/zolem/internal/response"
+	"github.com/ketang/zolem/internal/router"
+	"github.com/ketang/zolem/internal/specs"
 )
 
 func buildServer(t *testing.T, routes []config.RouteConfig) http.Handler {

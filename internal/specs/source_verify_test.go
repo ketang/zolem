@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"zolem.dev/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/specs"
 )
 
 func TestSourceVerification_AnthropicV1SnapshotInvariants(t *testing.T) {

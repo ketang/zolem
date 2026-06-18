@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"zolem.dev/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/specs"
 )
 
 func TestNormalizeGeminiDiscovery_ValidatesGenerateContentRequests(t *testing.T) {

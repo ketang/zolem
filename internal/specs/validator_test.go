@@ -4,7 +4,7 @@ package specs_test
 import (
 	"testing"
 
-	"zolem.dev/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/specs"
 )
 
 const minimalSchema = `{

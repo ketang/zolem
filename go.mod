@@ -1,4 +1,4 @@
-module zolem.dev/zolem
+module github.com/ketang/zolem
 
 go 1.26.1
 

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"zolem.dev/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/specs"
 )
 
 func TestFetcher_FetchAndCache(t *testing.T) {

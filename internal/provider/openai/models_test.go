@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	runtimecfg "zolem.dev/zolem/internal/runtime"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
 func TestListModels_MissingAuth(t *testing.T) {

@@ -9,10 +9,10 @@ import (
 	"testing"
 
 	"github.com/gorilla/websocket"
-	"zolem.dev/zolem/internal/fixture"
-	"zolem.dev/zolem/internal/response"
-	runtimecfg "zolem.dev/zolem/internal/runtime"
-	"zolem.dev/zolem/internal/specs"
+	"github.com/ketang/zolem/internal/fixture"
+	"github.com/ketang/zolem/internal/response"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
+	"github.com/ketang/zolem/internal/specs"
 )
 
 type fixedTokenGenerator []string

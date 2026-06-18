@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"zolem.dev/zolem/internal/admincli"
+	"github.com/ketang/zolem/internal/admincli"
 )
 
 func TestZolemcLocalRuntimeE2E(t *testing.T) {

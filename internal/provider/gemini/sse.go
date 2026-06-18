@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"zolem.dev/zolem/internal/response"
-	runtimecfg "zolem.dev/zolem/internal/runtime"
+	"github.com/ketang/zolem/internal/response"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
 func streamResponse(ctx context.Context, w http.ResponseWriter, model string, tokens []string, promptTokens int) {
