@@ -113,8 +113,10 @@ func asValidationError(err error, out **jsonschema.ValidationError) bool {
 }
 
 func collectMessages(ve *jsonschema.ValidationError) []string {
+	if len(ve.Causes) == 0 {
+		return []string{ve.Error()}
+	}
 	var msgs []string
-	msgs = append(msgs, ve.Error())
 	for _, c := range ve.Causes {
 		msgs = append(msgs, collectMessages(c)...)
 	}

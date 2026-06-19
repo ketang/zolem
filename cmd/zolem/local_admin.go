@@ -397,7 +397,7 @@ func buildLocalAdminHandler(control *localControlPlane) http.Handler {
 			handleListenerPath(w, req, control)
 			return
 		default:
-			http.NotFound(w, req)
+			writeAdminError(w, http.StatusNotFound, "not found")
 		}
 	})
 }
@@ -411,7 +411,7 @@ func handleListenerPath(w http.ResponseWriter, req *http.Request, control *local
 	case len(segments) == 2 && segments[0] != "" && segments[1] == "calls":
 		handleListenerCalls(w, req, control, segments[0])
 	default:
-		http.NotFound(w, req)
+		writeAdminError(w, http.StatusNotFound, "not found")
 	}
 }
 
@@ -451,7 +451,7 @@ func handleListenerCalls(w http.ResponseWriter, req *http.Request, control *loca
 func handleProfileResource(w http.ResponseWriter, req *http.Request, control *localControlPlane) {
 	name, ok := localResourceName("/_zolem/profiles/", req.URL.Path)
 	if !ok {
-		http.NotFound(w, req)
+		writeAdminError(w, http.StatusNotFound, "not found")
 		return
 	}
 
@@ -550,16 +550,35 @@ func decodeRequestJSON(req *http.Request, v any) error {
 	decoder := json.NewDecoder(req.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(v); err != nil {
-		return err
+		return errors.New(sanitizeJSONDecodeError(err))
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
 		if err == nil {
 			return errors.New("request body must contain exactly one JSON object")
 		}
-		return err
+		return errors.New(sanitizeJSONDecodeError(err))
 	}
 	return nil
+}
+
+func sanitizeJSONDecodeError(err error) string {
+	var syntaxErr *json.SyntaxError
+	var unmarshalErr *json.UnmarshalTypeError
+	switch {
+	case errors.As(err, &syntaxErr):
+		return "malformed request body: invalid JSON"
+	case errors.As(err, &unmarshalErr):
+		if unmarshalErr.Field != "" {
+			return fmt.Sprintf("invalid value for field %q: expected %s", unmarshalErr.Field, unmarshalErr.Type)
+		}
+		return "malformed request body: unexpected value type"
+	}
+	msg := err.Error()
+	if after, ok := strings.CutPrefix(msg, "json: "); ok {
+		return after
+	}
+	return msg
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

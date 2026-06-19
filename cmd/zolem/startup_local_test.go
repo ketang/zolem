@@ -631,19 +631,4 @@ func TestStartupSmallHelpers(t *testing.T) {
 		t.Fatalf("splitKey without version = %q %q", provider, version)
 	}
 
-	rr := httptest.NewRecorder()
-	writeZolemError(rr, "startup failed")
-	if rr.Code != http.StatusBadGateway {
-		t.Fatalf("writeZolemError status = %d", rr.Code)
-	}
-	if rr.Header().Get("X-Zolem-Error") != "true" {
-		t.Fatalf("X-Zolem-Error = %q", rr.Header().Get("X-Zolem-Error"))
-	}
-	var payload map[string]string
-	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode zolem error: %v", err)
-	}
-	if payload["zolem_error"] != "startup failed" {
-		t.Fatalf("zolem_error = %q", payload["zolem_error"])
-	}
 }

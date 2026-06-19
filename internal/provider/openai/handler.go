@@ -41,6 +41,9 @@ func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator 
 	h.mux.Get("/v1/responses", h.handleResponses)
 	h.mux.Get("/v1/models", h.handleListModels)
 	h.mux.Get("/v1/models/*", h.handleListModels)
+	h.mux.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		writeInvalidRequest(r.Context(), w, "Not Found")
+	})
 	return h
 }
 
@@ -114,7 +117,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		}
 		tokens, err := h.generateWASM(r.Context(), matchReq)
 		if err != nil {
-			response.WriteZolemError(w, "wasm generator error: "+err.Error())
+			zolemerr.Write(w, "wasm generator error: "+err.Error())
 			return
 		}
 		if req.Stream {

@@ -2,6 +2,7 @@
 package specs_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ketang/zolem/internal/specs"
@@ -43,5 +44,22 @@ func TestValidator_UnknownProviderVersion(t *testing.T) {
 	err := v.Validate("unknown", "v99", []byte(`{}`))
 	if err != nil {
 		t.Errorf("unknown provider should not error, got: %v", err)
+	}
+}
+
+func TestValidator_ErrorDoesNotLeakMemURI(t *testing.T) {
+	v := specs.NewValidator()
+	v.LoadRaw("test", "v1", []byte(minimalSchema))
+
+	err := v.Validate("test", "v1", []byte(`{"stream":true}`))
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "mem://") {
+		t.Fatalf("validation error leaks mem:// URI: %q", msg)
+	}
+	if strings.Contains(msg, "jsonschema validation failed with") {
+		t.Fatalf("validation error leaks jsonschema internal message: %q", msg)
 	}
 }
