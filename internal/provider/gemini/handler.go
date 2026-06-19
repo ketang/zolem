@@ -15,7 +15,6 @@ import (
 	"github.com/ketang/zolem/internal/ollama"
 	"github.com/ketang/zolem/internal/provider/backend"
 	"github.com/ketang/zolem/internal/response"
-	"github.com/ketang/zolem/internal/router"
 	runtimecfg "github.com/ketang/zolem/internal/runtime"
 	"github.com/ketang/zolem/internal/specs"
 	"github.com/ketang/zolem/internal/wasmgen"
@@ -27,13 +26,12 @@ type Handler struct {
 	matcher       *fixture.Matcher
 	generator     response.Generator
 	wasmGenerator *wasmgen.Generator
-	ollamaClient  backend.TextGenerator
 	ollamaHTTP    backend.ChatGenerator
 	mux           *chi.Mux
 }
 
-func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, ollamaClient backend.TextGenerator, ollamaHTTP backend.ChatGenerator, wasmGenerator ...*wasmgen.Generator) *Handler {
-	h := &Handler{validator: validator, matcher: matcher, generator: generator, ollamaClient: ollamaClient, ollamaHTTP: ollamaHTTP}
+func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, ollamaHTTP backend.ChatGenerator, wasmGenerator ...*wasmgen.Generator) *Handler {
+	h := &Handler{validator: validator, matcher: matcher, generator: generator, ollamaHTTP: ollamaHTTP}
 	if len(wasmGenerator) > 0 {
 		h.wasmGenerator = wasmGenerator[0]
 	}
@@ -182,31 +180,6 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 		return
 	}
 
-	if text, ok := h.generateText(r.Context(), promptFromRequest(req)); ok {
-		completionTokens := len(strings.Fields(text))
-		if stream {
-			streamResponse(r.Context(), w, responseModel, tokenize(text), promptTokens)
-			return
-		}
-
-		resp := GenerateContentResponse{
-			Candidates: []Candidate{{
-				Content:      Content{Parts: []Part{{Text: text}}, Role: "model"},
-				FinishReason: "STOP",
-				Index:        0,
-			}},
-			UsageMetadata: UsageMetadata{
-				PromptTokenCount:     promptTokens,
-				CandidatesTokenCount: completionTokens,
-				TotalTokenCount:      promptTokens + completionTokens,
-			},
-			ModelVersion: responseModel,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-		return
-	}
-
 	tokens := h.generator.Generate(30)
 
 	if stream {
@@ -311,40 +284,6 @@ func estimatePromptTokens(req GenerateContentRequest) int {
 		}
 	}
 	return total
-}
-
-func promptFromRequest(req GenerateContentRequest) string {
-	var lines []string
-	for _, content := range req.Contents {
-		role := content.Role
-		if role == "" {
-			role = "user"
-		}
-		var parts []string
-		for _, part := range content.Parts {
-			if text := strings.TrimSpace(part.Text); text != "" {
-				parts = append(parts, text)
-			}
-		}
-		if len(parts) == 0 {
-			continue
-		}
-		lines = append(lines, role+": "+strings.Join(parts, " "))
-	}
-	return strings.Join(lines, "\n")
-}
-
-func (h *Handler) generateText(ctx context.Context, prompt string) (string, bool) {
-	if h.ollamaClient == nil {
-		return "", false
-	}
-
-	text, err := h.ollamaClient.Generate(ctx, prompt)
-	if err != nil {
-		return "", false
-	}
-	text = strings.TrimSpace(text)
-	return text, text != ""
 }
 
 func (h *Handler) generateWASM(ctx context.Context, req fixture.MatchRequest) ([]string, error) {
@@ -472,11 +411,6 @@ func geminiToChatMessages(req GenerateContentRequest) []ollama.ChatMessage {
 	return messages
 }
 
-func labelsFromContext(ctx context.Context) map[string]string {
-	if v := ctx.Value(router.LabelsKey{}); v != nil {
-		if labels, ok := v.(map[string]string); ok {
-			return labels
-		}
-	}
+func labelsFromContext(_ context.Context) map[string]string {
 	return map[string]string{}
 }

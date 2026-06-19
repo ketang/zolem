@@ -9,7 +9,6 @@ type RuntimeProfile struct {
 	ResponseModelPolicy string `json:"response_model_policy"`
 	ResponseModel       string `json:"response_model"`
 	FixtureNamespace    string `json:"fixture_namespace"`
-	Seed                *int64 `json:"seed,omitempty"`
 	OllamaUpstream      string `json:"ollama_upstream,omitempty"`
 	// AllowExternalOllamaUpstream opts a profile out of the default
 	// loopback/RFC1918 restriction on OllamaUpstream, permitting forwarding to an

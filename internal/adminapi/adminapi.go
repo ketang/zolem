@@ -13,7 +13,6 @@ type ProfilePayload struct {
 	ResponseModelPolicy         string                 `json:"response_model_policy,omitempty"`
 	ResponseModel               string                 `json:"response_model,omitempty"`
 	FixtureNamespace            string                 `json:"fixture_namespace,omitempty"`
-	Seed                        *int64                 `json:"seed,omitempty"`
 	OllamaUpstream              string                 `json:"ollama_upstream,omitempty"`
 	AllowExternalOllamaUpstream bool                   `json:"allow_external_ollama_upstream,omitempty"`
 	WASMModuleBase64            string                 `json:"wasm_module_base64,omitempty"`

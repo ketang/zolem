@@ -14,7 +14,6 @@ import (
 	"github.com/ketang/zolem/internal/ollama"
 	"github.com/ketang/zolem/internal/provider/backend"
 	"github.com/ketang/zolem/internal/response"
-	"github.com/ketang/zolem/internal/router"
 	runtimecfg "github.com/ketang/zolem/internal/runtime"
 	"github.com/ketang/zolem/internal/specs"
 	"github.com/ketang/zolem/internal/wasmgen"
@@ -26,13 +25,12 @@ type Handler struct {
 	matcher       *fixture.Matcher
 	generator     response.Generator
 	wasmGenerator *wasmgen.Generator
-	ollamaClient  backend.TextGenerator
 	ollamaHTTP    backend.ChatGenerator
 	mux           *chi.Mux
 }
 
-func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, ollamaClient backend.TextGenerator, ollamaHTTP backend.ChatGenerator, wasmGenerator ...*wasmgen.Generator) *Handler {
-	h := &Handler{validator: validator, matcher: matcher, generator: generator, ollamaClient: ollamaClient, ollamaHTTP: ollamaHTTP}
+func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, ollamaHTTP backend.ChatGenerator, wasmGenerator ...*wasmgen.Generator) *Handler {
+	h := &Handler{validator: validator, matcher: matcher, generator: generator, ollamaHTTP: ollamaHTTP}
 	if len(wasmGenerator) > 0 {
 		h.wasmGenerator = wasmGenerator[0]
 	}
@@ -67,12 +65,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	version := "v1"
-	if strings.HasPrefix(r.URL.Path, "/v1beta") {
-		version = "v1beta"
-	}
-
-	if err := h.validator.Validate("anthropic", version, body); err != nil {
+	if err := h.validator.Validate("anthropic", "v1", body); err != nil {
 		writeInvalidRequest(r.Context(), w, err.Error())
 		return
 	}
@@ -94,7 +87,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	if runtimecfg.UsesFixtures(r.Context()) {
 		matchReq := fixture.MatchRequest{
 			Provider: "anthropic",
-			Version:  version,
+			Version:  "v1",
 			Labels:   labelsFromContext(r.Context()),
 			Body:     json.RawMessage(body),
 		}
@@ -122,7 +115,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	if runtimecfg.BackendForRequest(r.Context()) == runtimecfg.BackendWASM {
 		matchReq := fixture.MatchRequest{
 			Provider: "anthropic",
-			Version:  version,
+			Version:  "v1",
 			Labels:   labelsFromContext(r.Context()),
 			Body:     json.RawMessage(body),
 		}
@@ -143,26 +136,6 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 			Model:      responseModel,
 			StopReason: "end_turn",
 			Usage:      Usage{InputTokens: inputTokens, OutputTokens: response.CountNonEmpty(tokens)},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-		return
-	}
-
-	if text, ok := h.generateText(r.Context(), promptFromRequest(req)); ok {
-		if req.Stream {
-			streamResponse(r.Context(), w, responseModel, tokenize(text), inputTokens)
-			return
-		}
-
-		resp := MessagesResponse{
-			ID:         newMessageID(),
-			Type:       "message",
-			Role:       "assistant",
-			Content:    []ContentBlock{{Type: "text", Text: text}},
-			Model:      responseModel,
-			StopReason: "end_turn",
-			Usage:      Usage{InputTokens: inputTokens, OutputTokens: len(strings.Fields(text))},
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
@@ -269,33 +242,6 @@ func estimateInputTokens(req MessagesRequest) int {
 	return total
 }
 
-func promptFromRequest(req MessagesRequest) string {
-	var lines []string
-	if system := strings.TrimSpace(req.System.PlainText()); system != "" {
-		lines = append(lines, "system: "+system)
-	}
-	for _, msg := range req.Messages {
-		line := strings.TrimSpace(msg.Role + ": " + msg.Content.PlainText())
-		if line != "" {
-			lines = append(lines, line)
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-func (h *Handler) generateText(ctx context.Context, prompt string) (string, bool) {
-	if h.ollamaClient == nil {
-		return "", false
-	}
-
-	text, err := h.ollamaClient.Generate(ctx, prompt)
-	if err != nil {
-		return "", false
-	}
-	text = strings.TrimSpace(text)
-	return text, text != ""
-}
-
 func (h *Handler) generateWASM(ctx context.Context, req fixture.MatchRequest) ([]string, error) {
 	if h.wasmGenerator == nil {
 		return nil, fmt.Errorf("wasm generator is not configured")
@@ -303,12 +249,7 @@ func (h *Handler) generateWASM(ctx context.Context, req fixture.MatchRequest) ([
 	return h.wasmGenerator.Generate(ctx, req)
 }
 
-func labelsFromContext(ctx context.Context) map[string]string {
-	if v := ctx.Value(router.LabelsKey{}); v != nil {
-		if labels, ok := v.(map[string]string); ok {
-			return labels
-		}
-	}
+func labelsFromContext(_ context.Context) map[string]string {
 	return map[string]string{}
 }
 

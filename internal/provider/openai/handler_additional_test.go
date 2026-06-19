@@ -12,7 +12,6 @@ import (
 	"github.com/ketang/zolem/internal/fixture"
 	"github.com/ketang/zolem/internal/provider/openai"
 	"github.com/ketang/zolem/internal/response"
-	"github.com/ketang/zolem/internal/router"
 	runtimecfg "github.com/ketang/zolem/internal/runtime"
 	"github.com/ketang/zolem/internal/specs"
 )
@@ -77,7 +76,7 @@ func newRunner(t *testing.T) *fixture.Runner {
 
 func newTestHandler(t *testing.T, validator *specs.Validator, runner *fixture.Runner, fixtures []fixture.Fixture) *openai.Handler {
 	t.Helper()
-	return openai.NewHandler(validator, fixture.NewMatcher(runner, fixtures, nil), response.NewLoremGenerator(), nil, nil)
+	return openai.NewHandler(validator, fixture.NewMatcher(runner, fixtures, nil), response.NewLoremGenerator(), nil)
 }
 
 func compileFixture(t *testing.T, runner *fixture.Runner, wasm []byte) fixture.CompiledModule {
@@ -526,65 +525,5 @@ func TestChatCompletions_FixtureStreamingFallbackOnBadPayload(t *testing.T) {
 	}
 	if !bytes.Equal(rr.Body.Bytes(), fixtureBody) {
 		t.Fatalf("body mismatch:\n got: %s\nwant: %s", rr.Body.Bytes(), fixtureBody)
-	}
-}
-
-func TestChatCompletions_LabelPropagationFromRoutingContext(t *testing.T) {
-	runner := newRunner(t)
-	mod := compileFixture(t, runner, []byte(labelLengthMatchWASM))
-	fixtureBody := []byte(`{"id":"label-matched","object":"chat.completion","created":1,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"matched by labels"},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}`)
-	h := newTestHandler(t, specs.NewValidator(), runner, []fixture.Fixture{{
-		ID:           "label-sensitive",
-		Provider:     "openai",
-		Version:      "v1",
-		Status:       http.StatusAccepted,
-		ResponseBody: fixtureBody,
-		Module:       &mod,
-	}})
-
-	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
-	withLabels := func(req *http.Request) *http.Request {
-		ctx := context.WithValue(req.Context(), router.LabelsKey{}, map[string]string{"tenant": "acme"})
-		return req.WithContext(ctx)
-	}
-
-	reqWithLabels := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(body))
-	reqWithLabels = withLabels(reqWithLabels)
-	reqWithLabels.Header.Set("Authorization", "Bearer sk-test")
-	reqWithLabels.Header.Set("Content-Type", "application/json")
-	rrWithLabels := httptest.NewRecorder()
-	h.ServeHTTP(rrWithLabels, reqWithLabels)
-
-	if rrWithLabels.Code != http.StatusAccepted {
-		t.Fatalf("labeled status: got %d, want %d", rrWithLabels.Code, http.StatusAccepted)
-	}
-	if !bytes.Equal(rrWithLabels.Body.Bytes(), fixtureBody) {
-		t.Fatalf("labeled body mismatch:\n got: %s\nwant: %s", rrWithLabels.Body.Bytes(), fixtureBody)
-	}
-
-	reqWithoutLabels := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(body))
-	reqWithoutLabels.Header.Set("Authorization", "Bearer sk-test")
-	reqWithoutLabels.Header.Set("Content-Type", "application/json")
-	rrWithoutLabels := httptest.NewRecorder()
-	h.ServeHTTP(rrWithoutLabels, reqWithoutLabels)
-
-	if rrWithoutLabels.Code != http.StatusOK {
-		t.Fatalf("unlabeled status: got %d, want %d", rrWithoutLabels.Code, http.StatusOK)
-	}
-	if bytes.Equal(rrWithoutLabels.Body.Bytes(), fixtureBody) {
-		t.Fatalf("expected unlabeled request to miss the fixture")
-	}
-
-	marshaledWithLabels, err := json.Marshal(fixture.MatchRequest{
-		Provider: "openai",
-		Version:  "v1",
-		Labels:   map[string]string{"tenant": "acme"},
-		Body:     json.RawMessage(body),
-	})
-	if err != nil {
-		t.Fatalf("marshal match request: %v", err)
-	}
-	if got := len(marshaledWithLabels); got != 133 {
-		t.Fatalf("match request length: got %d, want 133", got)
 	}
 }

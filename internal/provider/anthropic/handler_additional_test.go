@@ -14,7 +14,6 @@ import (
 	"github.com/ketang/zolem/internal/fixture"
 	"github.com/ketang/zolem/internal/provider/anthropic"
 	"github.com/ketang/zolem/internal/response"
-	"github.com/ketang/zolem/internal/router"
 	runtimecfg "github.com/ketang/zolem/internal/runtime"
 	"github.com/ketang/zolem/internal/specs"
 )
@@ -67,7 +66,7 @@ func newAnthropicHandler(t *testing.T, validator *specs.Validator, buildFixtures
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)
 	matcher := fixture.NewMatcher(runner, buildFixtures(runner), nil)
-	return anthropic.NewHandler(validator, matcher, response.NewLoremGenerator(), nil, nil)
+	return anthropic.NewHandler(validator, matcher, response.NewLoremGenerator(), nil)
 }
 
 func loadAnthropicVendoredSnapshot(t *testing.T, validator *specs.Validator) {
@@ -448,83 +447,4 @@ func TestMessages_MalformedFixtureFallsBackToRawJSON(t *testing.T) {
 	if strings.Contains(rr.Body.String(), "event:") {
 		t.Fatalf("expected raw JSON fallback, got stream:\n%s", rr.Body.String())
 	}
-}
-
-func TestMessages_LabelPropagationToMatcher(t *testing.T) {
-	body := `{"model":"claude-3-5-sonnet-20241022","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`
-	baseReq := fixture.MatchRequest{
-		Provider: "anthropic",
-		Version:  "v1",
-		Labels:   map[string]string{},
-		Body:     json.RawMessage(body),
-	}
-	labelledReq := baseReq
-	labelledReq.Labels = map[string]string{"tenant": "acme"}
-
-	baseBytes, err := json.Marshal(baseReq)
-	if err != nil {
-		t.Fatalf("marshal unlabeled request: %v", err)
-	}
-	labelledBytes, err := json.Marshal(labelledReq)
-	if err != nil {
-		t.Fatalf("marshal labelled request: %v", err)
-	}
-	if len(labelledBytes) <= len(baseBytes)+1 {
-		t.Fatalf("expected labels to materially increase matcher input size: unlabeled=%d labelled=%d", len(baseBytes), len(labelledBytes))
-	}
-	threshold := float32(len(baseBytes) + 1)
-
-	h := newAnthropicHandler(t, specs.NewValidator(), func(r *fixture.Runner) []fixture.Fixture {
-		lengthMod := compileWASM(t, r, anthropicLengthMatchWASM)
-		thresholdMod := compileWASM(t, r, constScoreWASM(threshold))
-		return []fixture.Fixture{
-			{
-				ID:           "threshold",
-				Provider:     "anthropic",
-				Version:      "v1",
-				Status:       200,
-				ResponseBody: []byte(`{"id":"threshold","type":"message","role":"assistant","content":[{"type":"text","text":"threshold"}],"model":"claude-3-5-sonnet-20241022","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`),
-				Module:       &thresholdMod,
-			},
-			{
-				ID:           "labels-win",
-				Provider:     "anthropic",
-				Version:      "v1",
-				Status:       200,
-				ResponseBody: []byte(`{"id":"labels-win","type":"message","role":"assistant","content":[{"type":"text","text":"labels"}],"model":"claude-3-5-sonnet-20241022","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`),
-				Module:       &lengthMod,
-			},
-		}
-	})
-
-	t.Run("without labels", func(t *testing.T) {
-		req := newAuthRequest(body)
-		rr := httptest.NewRecorder()
-
-		h.ServeHTTP(rr, req)
-
-		var resp anthropic.MessagesResponse
-		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("decode response: %v", err)
-		}
-		if resp.Content[0].Text != "threshold" {
-			t.Fatalf("fixture selected without labels: got %q, want threshold", resp.Content[0].Text)
-		}
-	})
-
-	t.Run("with labels", func(t *testing.T) {
-		req := newAuthRequest(body)
-		req = req.WithContext(context.WithValue(req.Context(), router.LabelsKey{}, map[string]string{"tenant": "acme"}))
-		rr := httptest.NewRecorder()
-
-		h.ServeHTTP(rr, req)
-
-		var resp anthropic.MessagesResponse
-		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("decode response: %v", err)
-		}
-		if resp.Content[0].Text != "labels" {
-			t.Fatalf("fixture selected with labels: got %q, want labels", resp.Content[0].Text)
-		}
-	})
 }
