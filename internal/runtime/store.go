@@ -154,6 +154,37 @@ func ValidateLoopbackAddr(addr string) error {
 	return validateLoopbackAddr(addr)
 }
 
+// HostHeaderAllowed reports whether an HTTP Host header may target a
+// loopback-only listener. It permits loopback IP literals, "localhost", and any
+// host in the explicit allowlist; everything else is rejected. This guards the
+// auth-less local listeners against DNS-rebinding attacks, where a browser
+// resolves an attacker-controlled name to 127.0.0.1 and drives the API with the
+// attacker's hostname in the Host header.
+func HostHeaderAllowed(hostHeader string, allow []string) bool {
+	host := hostHeader
+	if h, _, err := net.SplitHostPort(hostHeader); err == nil {
+		host = h
+	} else {
+		// No "host:port" split: a bare IPv6 literal still carries brackets.
+		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	}
+	if host == "" {
+		return false
+	}
+	for _, a := range allow {
+		if strings.EqualFold(host, a) {
+			return true
+		}
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return true
+	}
+	return false
+}
+
 func ValidateProfile(profile RuntimeProfile) error {
 	if profile.Name == "" {
 		return errors.New("profile name is required")
@@ -248,7 +279,28 @@ func validateOllamaUpstream(profile RuntimeProfile) error {
 	if u.Host == "" {
 		return errors.New("ollama_upstream must include a host")
 	}
+	if profile.AllowExternalOllamaUpstream {
+		return nil
+	}
+	if !ollamaUpstreamHostIsPrivate(u.Hostname()) {
+		return errors.New("ollama_upstream host must be loopback or a private (RFC1918/RFC4193) address; set allow_external_ollama_upstream to forward to an external host")
+	}
 	return nil
+}
+
+// ollamaUpstreamHostIsPrivate reports whether an ollama_upstream host stays
+// inside the no-egress posture: loopback or a private (RFC1918/RFC4193) address.
+// A non-literal hostname can resolve anywhere — and is itself a rebinding vector
+// — so only the "localhost" name is accepted without the opt-out flag.
+func ollamaUpstreamHostIsPrivate(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate()
 }
 
 func validateErrorProfile(profile RuntimeProfile) error {

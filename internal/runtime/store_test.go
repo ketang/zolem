@@ -255,6 +255,82 @@ func TestValidateProfile_OllamaUpstreamBadScheme(t *testing.T) {
 	}
 }
 
+func TestValidateProfile_OllamaUpstreamPrivateHostsAllowed(t *testing.T) {
+	for _, upstream := range []string{
+		"http://localhost:11434",
+		"http://127.0.0.1:11434",
+		"http://[::1]:11434",
+		"http://10.0.0.5:11434",
+		"http://172.16.3.4:11434",
+		"http://192.168.1.10:11434",
+	} {
+		err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+			Name:           "test",
+			Backend:        "ollama",
+			OllamaUpstream: upstream,
+		})
+		if err != nil {
+			t.Fatalf("private upstream %q should pass: %v", upstream, err)
+		}
+	}
+}
+
+func TestValidateProfile_OllamaUpstreamPublicHostRejectedByDefault(t *testing.T) {
+	for _, upstream := range []string{
+		"http://evil.example:11434",
+		"https://8.8.8.8",
+		"http://ollama.internal:11434",
+	} {
+		err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+			Name:           "test",
+			Backend:        "ollama",
+			OllamaUpstream: upstream,
+		})
+		if err == nil {
+			t.Fatalf("public upstream %q should be rejected without opt-out", upstream)
+		}
+	}
+}
+
+func TestValidateProfile_OllamaUpstreamPublicHostAllowedWithOptOut(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:                        "test",
+		Backend:                     "ollama",
+		OllamaUpstream:              "https://api.ollama.example",
+		AllowExternalOllamaUpstream: true,
+	})
+	if err != nil {
+		t.Fatalf("public upstream with opt-out should pass: %v", err)
+	}
+}
+
+func TestHostHeaderAllowed(t *testing.T) {
+	cases := []struct {
+		host  string
+		allow []string
+		want  bool
+	}{
+		{"127.0.0.1:8090", nil, true},
+		{"127.0.0.1", nil, true},
+		{"localhost:8090", nil, true},
+		{"localhost", nil, true},
+		{"[::1]:8090", nil, true},
+		{"[::1]", nil, true},
+		{"::1", nil, true},
+		{"evil.example", nil, false},
+		{"evil.example:8090", nil, false},
+		{"", nil, false},
+		{"8.8.8.8:80", nil, false},
+		{"zolem.test:8090", []string{"zolem.test"}, true},
+		{"zolem.test:8090", nil, false},
+	}
+	for _, tc := range cases {
+		if got := runtimecfg.HostHeaderAllowed(tc.host, tc.allow); got != tc.want {
+			t.Errorf("HostHeaderAllowed(%q, %v) = %v, want %v", tc.host, tc.allow, got, tc.want)
+		}
+	}
+}
+
 func TestValidateProfileRejectsErrorTypeWithoutErrorBackend(t *testing.T) {
 	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
 		Name:      "demo",

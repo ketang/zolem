@@ -2,18 +2,22 @@ package runtimecfg
 
 // RuntimeProfile describes the configured response behavior for a listener.
 type RuntimeProfile struct {
-	Name                  string      `json:"name"`
-	Backend               string      `json:"backend"`
-	BackendModel          string      `json:"backend_model"`
-	ErrorType             string      `json:"error_type"`
-	ResponseModelPolicy   string      `json:"response_model_policy"`
-	ResponseModel         string      `json:"response_model"`
-	FixtureNamespace      string      `json:"fixture_namespace"`
-	Seed                  *int64      `json:"seed,omitempty"`
-	OllamaUpstream        string      `json:"ollama_upstream,omitempty"`
-	WASMModuleBase64      string      `json:"wasm_module_base64,omitempty"`
-	WASMGenerateTimeoutMS int         `json:"wasm_generate_timeout_ms,omitempty"`
-	StreamDelay           StreamDelay `json:"stream_delay,omitempty"`
+	Name                string `json:"name"`
+	Backend             string `json:"backend"`
+	BackendModel        string `json:"backend_model"`
+	ErrorType           string `json:"error_type"`
+	ResponseModelPolicy string `json:"response_model_policy"`
+	ResponseModel       string `json:"response_model"`
+	FixtureNamespace    string `json:"fixture_namespace"`
+	Seed                *int64 `json:"seed,omitempty"`
+	OllamaUpstream      string `json:"ollama_upstream,omitempty"`
+	// AllowExternalOllamaUpstream opts a profile out of the default
+	// loopback/RFC1918 restriction on OllamaUpstream, permitting forwarding to an
+	// arbitrary external host. Off by default to preserve the no-egress posture.
+	AllowExternalOllamaUpstream bool        `json:"allow_external_ollama_upstream,omitempty"`
+	WASMModuleBase64            string      `json:"wasm_module_base64,omitempty"`
+	WASMGenerateTimeoutMS       int         `json:"wasm_generate_timeout_ms,omitempty"`
+	StreamDelay                 StreamDelay `json:"stream_delay,omitempty"`
 }
 
 // StreamDelay describes per-profile streaming pacing.
