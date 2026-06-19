@@ -1052,9 +1052,17 @@ Example response:
   "provider": "openai",
   "profile": "demo",
   "backend": "lorem",
-  "listener": "127.0.0.1:19001"
+  "listener": "127.0.0.1:19001",
+  "tls": false,
+  "schemas_loaded": ["openai:v1"],
+  "schema_validation": "enabled"
 }
 ```
+
+`schemas_loaded` lists the request schemas compiled into this listener's
+validator, and `schema_validation` reports whether every schema the served
+provider needs is present: `enabled`, `unavailable: <keys>` when one or more are
+missing, or `unsupported` for a provider with no known schema.
 
 ## End-To-End Verification
 

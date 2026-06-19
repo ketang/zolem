@@ -1,9 +1,14 @@
 # Zolem
 
-A local mock server for LLM provider APIs. Zolem validates requests against
-real OpenAPI/discovery specs and returns synthetic responses, so you can develop
-and test integrations against Anthropic, OpenAI, and Gemini without burning
-tokens.
+A local mock server for LLM provider APIs. Zolem validates incoming requests
+against bundled request schemas — normalized from each provider's source format
+(OpenAPI for OpenAI, API Discovery for Gemini, a vendored Messages schema for
+Anthropic) — and returns synthetic responses, so you can develop and test
+integrations against Anthropic, OpenAI, and Gemini without burning tokens. The
+schemas ship in the binary and are applied with no network egress; a request
+that violates its provider's schema is rejected with that provider's native 4xx
+error. The schemas are representative subsets focused on request structure
+rather than exhaustive copies of the upstream specs.
 
 Zolem currently has two supported local execution paths:
 
@@ -16,8 +21,8 @@ Zolem currently has two supported local execution paths:
 - OpenAI
 - Gemini
 
-Zolem also tracks OpenRouter's OpenAPI source for spec parsing and validation,
-but local runtime listeners currently serve Anthropic, OpenAI, and Gemini.
+OpenRouter shares OpenAI's chat-completions request shape; local runtime
+listeners currently serve (and validate) Anthropic, OpenAI, and Gemini.
 
 ## Response modes
 

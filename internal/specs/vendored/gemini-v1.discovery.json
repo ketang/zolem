@@ -1,0 +1,75 @@
+{
+  "resources": {
+    "models": {
+      "methods": {
+        "generateContent": {
+          "id": "models.generateContent",
+          "request": {
+            "$ref": "GenerateContentRequest"
+          }
+        },
+        "streamGenerateContent": {
+          "id": "models.streamGenerateContent",
+          "request": {
+            "$ref": "GenerateContentRequest"
+          }
+        }
+      }
+    }
+  },
+  "schemas": {
+    "GenerateContentRequest": {
+      "type": "object",
+      "required": [
+        "contents"
+      ],
+      "properties": {
+        "contents": {
+          "type": "array",
+          "items": {
+            "$ref": "Content"
+          }
+        },
+        "generationConfig": {
+          "$ref": "GenerationConfig"
+        }
+      }
+    },
+    "Content": {
+      "type": "object",
+      "required": [
+        "parts"
+      ],
+      "properties": {
+        "role": {
+          "type": "string"
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "$ref": "Part"
+          }
+        }
+      }
+    },
+    "Part": {
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "GenerationConfig": {
+      "type": "object",
+      "properties": {
+        "maxOutputTokens": {
+          "type": "integer"
+        }
+      }
+    }
+  }
+}

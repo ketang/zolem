@@ -1,0 +1,59 @@
+openapi: 3.1.0
+info:
+  title: OpenAI Chat Completions API
+  version: v1
+# Vendored, offline-first source document for the OpenAI chat completions
+# request schema. It is intentionally a small, representative subset of the
+# upstream OpenAPI document: it pins the fields zolem validates (model,
+# messages, message role/content) and leaves the request open to additional
+# optional fields (temperature, tools, stream_options, ...) by not setting
+# additionalProperties:false. It is normalized at startup by the OpenAPI
+# normalizer (see internal/specs/openapi.go). Improving content fidelity is
+# tracked separately (zolem-53m).
+paths:
+  /v1/chat/completions:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - model
+                - messages
+              properties:
+                model:
+                  type: string
+                messages:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/ChatMessage'
+                stream:
+                  type: boolean
+      responses:
+        '200':
+          description: ok
+components:
+  schemas:
+    ChatMessage:
+      type: object
+      required:
+        - role
+        - content
+      properties:
+        role:
+          type: string
+        content:
+          anyOf:
+            - type: string
+            - type: array
+              items:
+                $ref: '#/components/schemas/ContentPart'
+    ContentPart:
+      type: object
+      properties:
+        type:
+          type: string
+        text:
+          type: string
