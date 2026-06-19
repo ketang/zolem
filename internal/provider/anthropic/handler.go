@@ -21,18 +21,18 @@ import (
 )
 
 type Handler struct {
-	validator     *specs.Validator
-	matcher       *fixture.Matcher
-	generator     response.Generator
-	wasmGenerator *wasmgen.Generator
-	ollamaHTTP    backend.ChatGenerator
-	mux           *chi.Mux
+	validator  *specs.Validator
+	matcher    *fixture.Matcher
+	generator  response.Generator
+	wasmGen    *wasmgen.Generator
+	ollamaHTTP backend.ChatGenerator
+	mux        *chi.Mux
 }
 
 func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, ollamaHTTP backend.ChatGenerator, wasmGenerator ...*wasmgen.Generator) *Handler {
 	h := &Handler{validator: validator, matcher: matcher, generator: generator, ollamaHTTP: ollamaHTTP}
 	if len(wasmGenerator) > 0 {
-		h.wasmGenerator = wasmGenerator[0]
+		h.wasmGen = wasmGenerator[0]
 	}
 	h.mux = chi.NewRouter()
 	h.mux.Post("/v1/messages", h.handleMessages)
@@ -92,7 +92,6 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 			Body:     json.RawMessage(body),
 		}
 		matched, _ := h.matcher.Match(r.Context(), matchReq)
-
 		if matched != nil {
 			rendered, ok := renderFixtureBody(w, r.Context(), matched)
 			if !ok {
@@ -108,55 +107,35 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	inputTokens := estimateInputTokens(req)
 	responseModel := runtimecfg.ResponseModelForRequest(r.Context(), req.Model)
 
-	if runtimecfg.BackendForRequest(r.Context()) == runtimecfg.BackendOllama {
-		h.handleOllamaBackend(w, r, req, responseModel, inputTokens)
-		return
-	}
-	if runtimecfg.BackendForRequest(r.Context()) == runtimecfg.BackendWASM {
-		matchReq := fixture.MatchRequest{
-			Provider: "anthropic",
-			Version:  "v1",
-			Labels:   labelsFromContext(r.Context()),
-			Body:     json.RawMessage(body),
-		}
-		tokens, err := h.generateWASM(r.Context(), matchReq)
-		if err != nil {
-			zolemerr.Write(w, "wasm generator error: "+err.Error())
-			return
-		}
-		if req.Stream {
-			streamResponse(r.Context(), w, responseModel, tokens, inputTokens)
-			return
-		}
-		resp := MessagesResponse{
-			ID:         newMessageID(),
-			Type:       "message",
-			Role:       "assistant",
-			Content:    []ContentBlock{{Type: "text", Text: strings.Join(tokens, "")}},
-			Model:      responseModel,
-			StopReason: "end_turn",
-			Usage:      Usage{InputTokens: inputTokens, OutputTokens: response.CountNonEmpty(tokens)},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-		return
+	cb := backend.Resolve(r.Context(), h.generator, h.ollamaHTTP, h.wasmGen)
+	genReq := backend.GenerateRequest{
+		Messages: anthropicToChatMessages(req),
+		Model:    req.Model,
+		FixtureMatch: &fixture.MatchRequest{
+			Provider: "anthropic", Version: "v1",
+			Labels: labelsFromContext(r.Context()),
+			Body:   json.RawMessage(body),
+		},
 	}
 
-	tokens := h.generator.Generate(30)
 	if req.Stream {
-		streamResponse(r.Context(), w, responseModel, tokens, inputTokens)
+		streamMessages(r.Context(), w, cb, genReq, responseModel, inputTokens)
 		return
 	}
 
-	text := strings.Join(tokens, "")
+	tokens, err := cb.Tokens(r.Context(), genReq)
+	if err != nil {
+		writeBackendError(w, err)
+		return
+	}
 	resp := MessagesResponse{
 		ID:         newMessageID(),
 		Type:       "message",
 		Role:       "assistant",
-		Content:    []ContentBlock{{Type: "text", Text: text}},
+		Content:    []ContentBlock{{Type: "text", Text: strings.Join(tokens, "")}},
 		Model:      responseModel,
 		StopReason: "end_turn",
-		Usage:      Usage{InputTokens: inputTokens, OutputTokens: len(tokens)},
+		Usage:      Usage{InputTokens: inputTokens, OutputTokens: response.CountNonEmpty(tokens)},
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -217,21 +196,8 @@ func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture
 		return
 	}
 	text := msg.Content[0].Text
-	tokens := tokenize(text)
+	tokens := backend.Tokenize(text)
 	streamResponse(ctx, w, responseModel, tokens, msg.Usage.InputTokens)
-}
-
-func tokenize(text string) []string {
-	words := strings.Fields(text)
-	tokens := make([]string, len(words))
-	for i, w := range words {
-		if i < len(words)-1 {
-			tokens[i] = w + " "
-		} else {
-			tokens[i] = w
-		}
-	}
-	return tokens
 }
 
 func estimateInputTokens(req MessagesRequest) int {
@@ -242,117 +208,8 @@ func estimateInputTokens(req MessagesRequest) int {
 	return total
 }
 
-func (h *Handler) generateWASM(ctx context.Context, req fixture.MatchRequest) ([]string, error) {
-	if h.wasmGenerator == nil {
-		return nil, fmt.Errorf("wasm generator is not configured")
-	}
-	return h.wasmGenerator.Generate(ctx, req)
-}
-
 func labelsFromContext(_ context.Context) map[string]string {
 	return map[string]string{}
-}
-
-func (h *Handler) handleOllamaBackend(w http.ResponseWriter, r *http.Request, req MessagesRequest, responseModel string, inputTokens int) {
-	rt, _ := runtimecfg.ListenerRuntimeFromContext(r.Context())
-	upstream := rt.Profile.OllamaUpstream
-	if upstream == "" {
-		upstream = "http://localhost:11434"
-	}
-	model := rt.Profile.BackendModel
-	if model == "" {
-		model = req.Model
-	}
-
-	messages := anthropicToChatMessages(req)
-
-	if req.Stream {
-		h.handleOllamaStream(w, r.Context(), upstream, messages, model, responseModel, inputTokens)
-		return
-	}
-
-	text, err := h.ollamaHTTP.NonStreaming(r.Context(), upstream, messages, model)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "api_error", "ollama backend error: "+err.Error())
-		return
-	}
-
-	resp := MessagesResponse{
-		ID:         newMessageID(),
-		Type:       "message",
-		Role:       "assistant",
-		Content:    []ContentBlock{{Type: "text", Text: text}},
-		Model:      responseModel,
-		StopReason: "end_turn",
-		Usage:      Usage{InputTokens: inputTokens, OutputTokens: len(strings.Fields(text))},
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
-}
-
-func (h *Handler) handleOllamaStream(w http.ResponseWriter, ctx context.Context, upstream string, messages []ollama.ChatMessage, model, responseModel string, inputTokens int) {
-	sse := response.NewSSEWriter(w)
-	sse.SetHeaders()
-
-	msgID := "msg_zolem_" + fmt.Sprintf("%016x", pseudoRandID())
-
-	msgStart, _ := json.Marshal(map[string]any{
-		"type": "message_start",
-		"message": map[string]any{
-			"id": msgID, "type": "message", "role": "assistant",
-			"content": []any{}, "model": responseModel,
-			"stop_reason": nil, "stop_sequence": nil,
-			"usage": map[string]int{"input_tokens": inputTokens, "output_tokens": 1},
-		},
-	})
-	sse.WriteEvent("message_start", msgStart)
-	sse.Flush()
-
-	cbStart, _ := json.Marshal(map[string]any{
-		"type": "content_block_start", "index": 0,
-		"content_block": map[string]string{"type": "text", "text": ""},
-	})
-	sse.WriteEvent("content_block_start", cbStart)
-	sse.Flush()
-
-	sse.WriteEvent("ping", []byte(`{"type":"ping"}`))
-	sse.Flush()
-
-	outputTokens := 0
-	err := h.ollamaHTTP.Streaming(ctx, upstream, messages, model, func(delta string) error {
-		outputTokens++
-		d, _ := json.Marshal(map[string]any{
-			"type": "content_block_delta", "index": 0,
-			"delta": map[string]string{"type": "text_delta", "text": delta},
-		})
-		sse.WriteEvent("content_block_delta", d)
-		sse.Flush()
-		return nil
-	})
-
-	if err != nil {
-		errData, _ := json.Marshal(map[string]any{
-			"type":  "error",
-			"error": map[string]string{"type": "api_error", "message": "ollama backend error: " + err.Error()},
-		})
-		sse.WriteEvent("error", errData)
-		sse.Flush()
-		return
-	}
-
-	sse.WriteEvent("content_block_stop", []byte(`{"type":"content_block_stop","index":0}`))
-	sse.Flush()
-
-	msgDelta, _ := json.Marshal(map[string]any{
-		"type":  "message_delta",
-		"delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil},
-		"usage": map[string]int{"output_tokens": outputTokens},
-	})
-	sse.WriteEvent("message_delta", msgDelta)
-	sse.Flush()
-
-	sse.WriteEvent("message_stop", []byte(`{"type":"message_stop"}`))
-	sse.Flush()
 }
 
 func anthropicToChatMessages(req MessagesRequest) []ollama.ChatMessage {

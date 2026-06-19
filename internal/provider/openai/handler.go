@@ -103,55 +103,36 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	promptTokens := estimatePromptTokens(req)
 	responseModel := runtimecfg.ResponseModelForRequest(r.Context(), req.Model)
 
-	if runtimecfg.BackendForRequest(r.Context()) == runtimecfg.BackendOllama {
-		h.handleOllamaBackend(w, r, req, responseModel, promptTokens)
-		return
-	}
-	if runtimecfg.BackendForRequest(r.Context()) == runtimecfg.BackendWASM {
-		matchReq := fixture.MatchRequest{
+	cb := backend.Resolve(r.Context(), h.generator, h.ollamaHTTP, h.wasmGenerator)
+	genReq := backend.GenerateRequest{
+		Messages: openaiToChatMessages(req),
+		Model:    req.Model,
+		FixtureMatch: &fixture.MatchRequest{
 			Provider: "openai", Version: "v1",
 			Labels: labelsFromContext(r.Context()),
 			Body:   json.RawMessage(body),
-		}
-		tokens, err := h.generateWASM(r.Context(), matchReq)
-		if err != nil {
-			zolemerr.Write(w, "wasm generator error: "+err.Error())
-			return
-		}
-		if req.Stream {
-			streamResponse(r.Context(), w, responseModel, tokens, promptTokens, includeUsage(req))
-			return
-		}
-		text := strings.Join(tokens, "")
-		completionTokens := response.CountNonEmpty(tokens)
-		resp := ChatCompletionResponse{
-			ID:      fmt.Sprintf("chatcmpl-zolem%d", time.Now().UnixNano()),
-			Object:  "chat.completion",
-			Created: time.Now().Unix(),
-			Model:   responseModel,
-			Choices: []Choice{{Index: 0, Message: Message{Role: "assistant", Content: text}, FinishReason: "stop"}},
-			Usage:   Usage{PromptTokens: promptTokens, CompletionTokens: completionTokens, TotalTokens: promptTokens + completionTokens},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-		return
+		},
 	}
-
-	tokens := h.generator.Generate(30)
 
 	if req.Stream {
-		streamResponse(r.Context(), w, responseModel, tokens, promptTokens, includeUsage(req))
+		streamChatCompletions(r.Context(), w, cb, genReq, responseModel, promptTokens, includeUsage(req))
 		return
 	}
 
+	tokens, err := cb.Tokens(r.Context(), genReq)
+	if err != nil {
+		writeBackendError(w, err)
+		return
+	}
 	text := strings.Join(tokens, "")
+	completionTokens := response.CountNonEmpty(tokens)
 	resp := ChatCompletionResponse{
 		ID:      fmt.Sprintf("chatcmpl-zolem%d", time.Now().UnixNano()),
 		Object:  "chat.completion",
 		Created: time.Now().Unix(),
 		Model:   responseModel,
 		Choices: []Choice{{Index: 0, Message: Message{Role: "assistant", Content: text}, FinishReason: "stop"}},
-		Usage:   Usage{PromptTokens: promptTokens, CompletionTokens: len(tokens), TotalTokens: promptTokens + len(tokens)},
+		Usage:   Usage{PromptTokens: promptTokens, CompletionTokens: completionTokens, TotalTokens: promptTokens + completionTokens},
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -214,25 +195,12 @@ func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture
 		w.Write(f.ResponseBody)
 		return
 	}
-	tokens := tokenize(resp.Choices[0].Message.Content)
+	tokens := backend.Tokenize(resp.Choices[0].Message.Content)
 	streamResponse(ctx, w, responseModel, tokens, resp.Usage.PromptTokens, includeUsage(req))
 }
 
 func includeUsage(req ChatCompletionRequest) bool {
 	return req.StreamOptions != nil && req.StreamOptions.IncludeUsage
-}
-
-func tokenize(text string) []string {
-	words := strings.Fields(text)
-	tokens := make([]string, len(words))
-	for i, w := range words {
-		if i < len(words)-1 {
-			tokens[i] = w + " "
-		} else {
-			tokens[i] = w
-		}
-	}
-	return tokens
 }
 
 func estimatePromptTokens(req ChatCompletionRequest) int {
@@ -243,115 +211,8 @@ func estimatePromptTokens(req ChatCompletionRequest) int {
 	return total
 }
 
-func (h *Handler) generateWASM(ctx context.Context, req fixture.MatchRequest) ([]string, error) {
-	if h.wasmGenerator == nil {
-		return nil, fmt.Errorf("wasm generator is not configured")
-	}
-	return h.wasmGenerator.Generate(ctx, req)
-}
-
 func labelsFromContext(_ context.Context) map[string]string {
 	return map[string]string{}
-}
-
-func (h *Handler) handleOllamaBackend(w http.ResponseWriter, r *http.Request, req ChatCompletionRequest, responseModel string, promptTokens int) {
-	rt, _ := runtimecfg.ListenerRuntimeFromContext(r.Context())
-	upstream := rt.Profile.OllamaUpstream
-	if upstream == "" {
-		upstream = "http://localhost:11434"
-	}
-	model := rt.Profile.BackendModel
-	if model == "" {
-		model = req.Model
-	}
-
-	messages := openaiToChatMessages(req)
-
-	if req.Stream {
-		h.handleOllamaStream(w, r.Context(), upstream, messages, model, responseModel, promptTokens, includeUsage(req))
-		return
-	}
-
-	text, err := h.ollamaHTTP.NonStreaming(r.Context(), upstream, messages, model)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "server_error", "ollama backend error: "+err.Error(), nil)
-		return
-	}
-
-	completionTokens := len(strings.Fields(text))
-	resp := ChatCompletionResponse{
-		ID:      fmt.Sprintf("chatcmpl-zolem%d", time.Now().UnixNano()),
-		Object:  "chat.completion",
-		Created: time.Now().Unix(),
-		Model:   responseModel,
-		Choices: []Choice{{Index: 0, Message: Message{Role: "assistant", Content: text}, FinishReason: "stop"}},
-		Usage:   Usage{PromptTokens: promptTokens, CompletionTokens: completionTokens, TotalTokens: promptTokens + completionTokens},
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
-}
-
-func (h *Handler) handleOllamaStream(w http.ResponseWriter, ctx context.Context, upstream string, messages []ollama.ChatMessage, model, responseModel string, promptTokens int, includeUsage bool) {
-	sse := response.NewSSEWriter(w)
-	sse.SetHeaders()
-
-	id := fmt.Sprintf("chatcmpl-zolem%d", time.Now().UnixNano())
-	created := time.Now().Unix()
-
-	firstChunk := map[string]any{
-		"id": id, "object": "chat.completion.chunk", "created": created, "model": responseModel,
-		"choices": []map[string]any{{"index": 0, "delta": map[string]string{"role": "assistant", "content": ""}, "finish_reason": nil}},
-	}
-	data, _ := json.Marshal(firstChunk)
-	sse.WriteData(data)
-	sse.Flush()
-
-	completionTokens := 0
-	err := h.ollamaHTTP.Streaming(ctx, upstream, messages, model, func(delta string) error {
-		completionTokens++
-		chunk := map[string]any{
-			"id": id, "object": "chat.completion.chunk", "created": created, "model": responseModel,
-			"choices": []map[string]any{{"index": 0, "delta": map[string]string{"content": delta}, "finish_reason": nil}},
-		}
-		d, _ := json.Marshal(chunk)
-		sse.WriteData(d)
-		sse.Flush()
-		return nil
-	})
-
-	if err != nil {
-		errChunk := map[string]any{"error": map[string]string{"message": "ollama backend error: " + err.Error(), "type": "server_error"}}
-		d, _ := json.Marshal(errChunk)
-		sse.WriteData(d)
-		sse.Flush()
-		return
-	}
-
-	stop := "stop"
-	finalChunk := map[string]any{
-		"id": id, "object": "chat.completion.chunk", "created": created, "model": responseModel,
-		"choices": []map[string]any{{"index": 0, "delta": map[string]any{}, "finish_reason": stop}},
-	}
-	data, _ = json.Marshal(finalChunk)
-	sse.WriteData(data)
-	sse.Flush()
-
-	if includeUsage {
-		usageChunk := map[string]any{
-			"id": id, "object": "chat.completion.chunk", "created": created, "model": responseModel,
-			"choices": []any{},
-			"usage": map[string]int{
-				"prompt_tokens": promptTokens, "completion_tokens": completionTokens,
-				"total_tokens": promptTokens + completionTokens,
-			},
-		}
-		data, _ = json.Marshal(usageChunk)
-		sse.WriteData(data)
-		sse.Flush()
-	}
-
-	sse.WriteData([]byte("[DONE]"))
-	sse.Flush()
 }
 
 func openaiToChatMessages(req ChatCompletionRequest) []ollama.ChatMessage {
