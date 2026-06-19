@@ -44,7 +44,7 @@ type serviceProcess struct {
 func startFixedService(t *testing.T, provider string) *serviceProcess {
 	t.Helper()
 
-	repoRoot := repoRoot(t)
+	bin := buildZolemBinary(t)
 	workDir := t.TempDir()
 	fixturesDir := filepath.Join(workDir, "fixtures")
 	mustMkdir(t, fixturesDir)
@@ -74,11 +74,11 @@ func startFixedService(t *testing.T, provider string) *serviceProcess {
 
 	var logs bytes.Buffer
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, "go", "run", ".", "-local-addr", fmt.Sprintf("127.0.0.1:%d", port), "-local-provider", provider, "-local-profile", "demo", "-local-backend", "fixture", "-local-fixtures-dir", fixturesDir)
-	cmd.Dir = filepath.Join(repoRoot, "cmd", "zolem")
-	cmd.Env = append(os.Environ(), "GOCACHE="+filepath.Join(workDir, "gocache"))
+	cmd := exec.CommandContext(ctx, bin, "-local-addr", fmt.Sprintf("127.0.0.1:%d", port), "-local-provider", provider, "-local-profile", "demo", "-local-backend", "fixture", "-local-fixtures-dir", fixturesDir)
+	cmd.Env = os.Environ()
 	cmd.Stdout = &logs
 	cmd.Stderr = &logs
+	configureProcReaping(cmd)
 
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start zolem: %v", err)

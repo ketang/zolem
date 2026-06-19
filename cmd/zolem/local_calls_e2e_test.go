@@ -135,6 +135,7 @@ func TestLocalCallsFileJSONL_E2E(t *testing.T) {
 		)
 		cmd.Stdout = &logs
 		cmd.Stderr = &logs
+		configureProcReaping(cmd)
 		if err := cmd.Start(); err != nil {
 			t.Fatalf("start zolem: %v", err)
 		}
@@ -195,6 +196,7 @@ func startZolemWithCallsFile(t *testing.T, bin, callsFile string, requestBodyCap
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdout = &logs
 	cmd.Stderr = &logs
+	configureProcReaping(cmd)
 
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start zolem: %v", err)
