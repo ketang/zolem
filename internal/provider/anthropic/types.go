@@ -7,11 +7,24 @@ import (
 )
 
 type MessagesRequest struct {
-	Model     string         `json:"model"`
-	MaxTokens int            `json:"max_tokens"`
-	Messages  []Message      `json:"messages"`
-	System    MessageContent `json:"system,omitempty"`
-	Stream    bool           `json:"stream,omitempty"`
+	Model      string               `json:"model"`
+	MaxTokens  int                  `json:"max_tokens"`
+	Messages   []Message            `json:"messages"`
+	System     MessageContent       `json:"system,omitempty"`
+	Stream     bool                 `json:"stream,omitempty"`
+	Tools      []AnthropicTool      `json:"tools,omitempty"`
+	ToolChoice *AnthropicToolChoice `json:"tool_choice,omitempty"`
+}
+
+type AnthropicTool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	InputSchema json.RawMessage `json:"input_schema"`
+}
+
+type AnthropicToolChoice struct {
+	Type string `json:"type"`
+	Name string `json:"name,omitempty"`
 }
 
 type Message struct {

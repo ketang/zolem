@@ -1,8 +1,36 @@
 package gemini
 
+import "encoding/json"
+
 type GenerateContentRequest struct {
 	Contents         []Content         `json:"contents"`
 	GenerationConfig *GenerationConfig `json:"generationConfig,omitempty"`
+	Tools            []GeminiTool      `json:"tools,omitempty"`
+	ToolConfig       *ToolConfig       `json:"toolConfig,omitempty"`
+}
+
+type GeminiTool struct {
+	FunctionDeclarations []FunctionDeclaration `json:"functionDeclarations,omitempty"`
+}
+
+type FunctionDeclaration struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+type ToolConfig struct {
+	FunctionCallingConfig *FunctionCallingConfig `json:"functionCallingConfig,omitempty"`
+}
+
+type FunctionCallingConfig struct {
+	Mode                 string   `json:"mode,omitempty"`
+	AllowedFunctionNames []string `json:"allowedFunctionNames,omitempty"`
+}
+
+type FunctionCall struct {
+	Name string          `json:"name"`
+	Args json.RawMessage `json:"args"`
 }
 
 type Content struct {
@@ -11,7 +39,8 @@ type Content struct {
 }
 
 type Part struct {
-	Text string `json:"text,omitempty"`
+	Text         string        `json:"text,omitempty"`
+	FunctionCall *FunctionCall `json:"functionCall,omitempty"`
 }
 
 type GenerationConfig struct {

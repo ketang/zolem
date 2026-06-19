@@ -139,6 +139,11 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 	promptTokens := estimatePromptTokens(req)
 	responseModel := runtimecfg.ResponseModelForRequest(r.Context(), model)
 
+	if fd := geminiToolCallRequired(req); fd != nil {
+		serveGeminiFunctionCallResponse(r.Context(), w, req, fd, responseModel, promptTokens, stream)
+		return
+	}
+
 	cb := backend.Resolve(r.Context(), h.generator, h.ollamaHTTP, h.wasmGenerator)
 	genReq := backend.GenerateRequest{
 		Messages: geminiToChatMessages(req),
@@ -173,6 +178,30 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 			TotalTokenCount:      promptTokens + candidateTokens,
 		},
 		ModelVersion: responseModel,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func serveGeminiFunctionCallResponse(ctx context.Context, w http.ResponseWriter, req GenerateContentRequest, fd *FunctionDeclaration, model string, promptTokens int, stream bool) {
+	args := backend.SynthArgs(fd.Parameters)
+	fc := FunctionCall{Name: fd.Name, Args: json.RawMessage(args)}
+	if stream {
+		streamFunctionCallContent(ctx, w, fc, model, promptTokens)
+		return
+	}
+	resp := GenerateContentResponse{
+		Candidates: []Candidate{{
+			Content:      Content{Parts: []Part{{FunctionCall: &fc}}, Role: "model"},
+			FinishReason: "STOP",
+			Index:        0,
+		}},
+		UsageMetadata: UsageMetadata{
+			PromptTokenCount:     promptTokens,
+			CandidatesTokenCount: 1,
+			TotalTokenCount:      promptTokens + 1,
+		},
+		ModelVersion: model,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)

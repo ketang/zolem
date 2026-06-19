@@ -107,6 +107,13 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	inputTokens := estimateInputTokens(req)
 	responseModel := runtimecfg.ResponseModelForRequest(r.Context(), req.Model)
 
+	if required, name := anthropicToolChoiceRequiresCall(req.ToolChoice); required {
+		if tool := pickAnthropicTool(req.Tools, name); tool != nil {
+			serveAnthropicToolCallResponse(r.Context(), w, req, tool, responseModel, inputTokens)
+			return
+		}
+	}
+
 	cb := backend.Resolve(r.Context(), h.generator, h.ollamaHTTP, h.wasmGen)
 	genReq := backend.GenerateRequest{
 		Messages: anthropicToChatMessages(req),
@@ -136,6 +143,31 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		Model:      responseModel,
 		StopReason: "end_turn",
 		Usage:      Usage{InputTokens: inputTokens, OutputTokens: response.CountNonEmpty(tokens)},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func serveAnthropicToolCallResponse(ctx context.Context, w http.ResponseWriter, req MessagesRequest, tool *AnthropicTool, model string, inputTokens int) {
+	args := backend.SynthArgs(tool.InputSchema)
+	block := ContentBlock{
+		Type:  "tool_use",
+		ID:    newToolUseID(),
+		Name:  tool.Name,
+		Input: json.RawMessage(args),
+	}
+	if req.Stream {
+		streamToolUseResponse(ctx, w, model, block, inputTokens, 1)
+		return
+	}
+	resp := MessagesResponse{
+		ID:         newMessageID(),
+		Type:       "message",
+		Role:       "assistant",
+		Content:    []ContentBlock{block},
+		Model:      model,
+		StopReason: "tool_use",
+		Usage:      Usage{InputTokens: inputTokens, OutputTokens: 1},
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
