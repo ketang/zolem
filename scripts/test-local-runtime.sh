@@ -7,7 +7,12 @@ cd "$ROOT"
 export GOCACHE="${GOCACHE:-/tmp/zolem-local-runtime-go-cache}"
 mkdir -p "$GOCACHE"
 
-ADMIN_ADDR="${ADMIN_ADDR:-127.0.0.1:18090}"
+# Pick a free admin port dynamically so the script never collides with an
+# already-running admin server. Override by exporting ADMIN_ADDR explicitly.
+if [[ -z "${ADMIN_ADDR:-}" ]]; then
+  ADMIN_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
+  ADMIN_ADDR="127.0.0.1:${ADMIN_PORT}"
+fi
 LOCAL_TLS_CERT="${LOCAL_TLS_CERT:-}"
 LOCAL_TLS_KEY="${LOCAL_TLS_KEY:-}"
 LISTENER_TLS="${LISTENER_TLS:-0}"

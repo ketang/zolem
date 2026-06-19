@@ -32,6 +32,7 @@ func TestLocalErrorBackend_E2E(t *testing.T) {
 		)
 		cmd.Stdout = &logs
 		cmd.Stderr = &logs
+		configureProcReaping(cmd)
 		if err := cmd.Start(); err != nil {
 			t.Fatalf("start zolem: %v", err)
 		}

@@ -14,11 +14,58 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/ketang/zolem/internal/admincli"
 )
+
+// Each binary is compiled once per test process (with the normal build cache)
+// instead of paying a full `go run` rebuild on every invocation. The previous
+// per-call `go run` with a fresh GOCACHE dominated the package wall time.
+var (
+	zolemcBinOnce sync.Once
+	zolemcBinPath string
+	zolemcBinErr  error
+
+	zolemBinOnce sync.Once
+	zolemBinPath string
+	zolemBinErr  error
+)
+
+func buildZolemcBinary(t *testing.T, repoRoot string) string {
+	t.Helper()
+	zolemcBinOnce.Do(func() {
+		zolemcBinPath, zolemcBinErr = buildBinary(repoRoot, "./cmd/zolemc", "zolemc-e2e-test-bin")
+	})
+	if zolemcBinErr != nil {
+		t.Fatalf("build zolemc binary: %v", zolemcBinErr)
+	}
+	return zolemcBinPath
+}
+
+func buildZolemBinary(t *testing.T, repoRoot string) string {
+	t.Helper()
+	zolemBinOnce.Do(func() {
+		zolemBinPath, zolemBinErr = buildBinary(repoRoot, "./cmd/zolem", "zolem-e2e-zolemc-bin")
+	})
+	if zolemBinErr != nil {
+		t.Fatalf("build zolem binary: %v", zolemBinErr)
+	}
+	return zolemBinPath
+}
+
+func buildBinary(repoRoot, pkg, outName string) (string, error) {
+	outPath := filepath.Join(os.TempDir(), outName)
+	cmd := exec.Command("go", "build", "-buildvcs=false", "-o", outPath, pkg)
+	cmd.Dir = repoRoot
+	cmd.Env = os.Environ()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("go build %s: %w\n%s", pkg, err, out)
+	}
+	return outPath, nil
+}
 
 func TestZolemcLocalRuntimeE2E(t *testing.T) {
 	repoRoot := repoRoot(t)
@@ -974,9 +1021,9 @@ func runZolemcFail(t *testing.T, repoRoot string, args ...string) commandResult 
 func runZolemcRaw(t *testing.T, repoRoot string, args ...string) (commandResult, error) {
 	t.Helper()
 
-	cmd := exec.Command("go", append([]string{"run", "./cmd/zolemc"}, args...)...)
-	cmd.Dir = repoRoot
-	cmd.Env = append(os.Environ(), "GOCACHE="+filepath.Join(t.TempDir(), "gocache"))
+	bin := buildZolemcBinary(t, repoRoot)
+	cmd := exec.Command(bin, args...)
+	cmd.Env = os.Environ()
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -999,16 +1046,17 @@ type localAdminService struct {
 func startLocalAdminService(t *testing.T, repoRoot string) *localAdminService {
 	t.Helper()
 
+	bin := buildZolemBinary(t, repoRoot)
 	port := pickPort(t)
 	adminAddr := fmt.Sprintf("127.0.0.1:%d", port)
 
 	var logs bytes.Buffer
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, "go", "run", "./cmd/zolem", "-local-admin-addr", adminAddr)
-	cmd.Dir = repoRoot
-	cmd.Env = append(os.Environ(), "GOCACHE="+filepath.Join(t.TempDir(), "gocache"))
+	cmd := exec.CommandContext(ctx, bin, "-local-admin-addr", adminAddr)
+	cmd.Env = os.Environ()
 	cmd.Stdout = &logs
 	cmd.Stderr = &logs
+	configureProcReaping(cmd)
 
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start local admin: %v", err)

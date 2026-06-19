@@ -324,21 +324,21 @@ type tlsAdminService struct {
 func startLocalAdminServiceTLS(t *testing.T, repoRoot string, certs testCerts) *tlsAdminService {
 	t.Helper()
 
-	workDir := t.TempDir()
+	bin := buildZolemBinary(t)
 	port := pickPort(t)
 	adminAddr := fmt.Sprintf("127.0.0.1:%d", port)
 
 	var logs bytes.Buffer
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, "go", "run", ".",
+	cmd := exec.CommandContext(ctx, bin,
 		"-local-admin-addr", adminAddr,
 		"-local-tls-cert", certs.certPath,
 		"-local-tls-key", certs.keyPath,
 	)
-	cmd.Dir = filepath.Join(repoRoot, "cmd", "zolem")
-	cmd.Env = append(os.Environ(), "GOCACHE="+filepath.Join(workDir, "gocache"))
+	cmd.Env = os.Environ()
 	cmd.Stdout = &logs
 	cmd.Stderr = &logs
+	configureProcReaping(cmd)
 
 	if err := cmd.Start(); err != nil {
 		cancel()

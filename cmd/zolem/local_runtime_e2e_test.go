@@ -277,17 +277,17 @@ type localAdminService struct {
 func startLocalAdminService(t *testing.T, repoRoot string) *localAdminService {
 	t.Helper()
 
-	workDir := t.TempDir()
+	bin := buildZolemBinary(t)
 	port := pickPort(t)
 	adminAddr := fmt.Sprintf("127.0.0.1:%d", port)
 
 	var logs bytes.Buffer
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, "go", "run", ".", "-local-admin-addr", adminAddr)
-	cmd.Dir = filepath.Join(repoRoot, "cmd", "zolem")
-	cmd.Env = append(os.Environ(), "GOCACHE="+filepath.Join(workDir, "gocache"))
+	cmd := exec.CommandContext(ctx, bin, "-local-admin-addr", adminAddr)
+	cmd.Env = os.Environ()
 	cmd.Stdout = &logs
 	cmd.Stderr = &logs
+	configureProcReaping(cmd)
 
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start local admin: %v", err)
@@ -968,16 +968,17 @@ func writeYAMLNamespaceFixture(t *testing.T, root, id, content string) {
 func startLocalAdminServiceWithFixtures(t *testing.T, repoRoot, fixturesDir string) *localAdminService {
 	t.Helper()
 
+	bin := buildZolemBinary(t)
 	port := pickPort(t)
 	adminAddr := fmt.Sprintf("127.0.0.1:%d", port)
 
 	var logs bytes.Buffer
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, "go", "run", ".", "-local-admin-addr", adminAddr, "-local-fixtures-dir", fixturesDir)
-	cmd.Dir = filepath.Join(repoRoot, "cmd", "zolem")
+	cmd := exec.CommandContext(ctx, bin, "-local-admin-addr", adminAddr, "-local-fixtures-dir", fixturesDir)
 	cmd.Env = os.Environ()
 	cmd.Stdout = &logs
 	cmd.Stderr = &logs
+	configureProcReaping(cmd)
 
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start local admin: %v", err)
