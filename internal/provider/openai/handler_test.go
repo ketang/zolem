@@ -83,7 +83,6 @@ func TestChatCompletions_LoremStreaming(t *testing.T) {
 	}
 }
 
-
 func TestChatCompletions_ArrayContentParts_Streaming(t *testing.T) {
 	h := newHandler(t)
 	body := `{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"hello"},{"type":"text","text":"world"}]}]}`
@@ -104,7 +103,6 @@ func TestChatCompletions_ArrayContentParts_Streaming(t *testing.T) {
 		t.Errorf("missing [DONE] terminator, got:\n%s", body2)
 	}
 }
-
 
 type stubChatGenerator struct {
 	text string

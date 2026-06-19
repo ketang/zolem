@@ -448,4 +448,3 @@ func TestMessages_MalformedFixtureFallsBackToRawJSON(t *testing.T) {
 		t.Fatalf("expected raw JSON fallback, got stream:\n%s", rr.Body.String())
 	}
 }
-

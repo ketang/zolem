@@ -585,4 +585,3 @@ func TestGenerateContent_StreamFixtureFallbackWhenMalformed(t *testing.T) {
 		t.Fatalf("body mismatch: got %q", rr.Body.String())
 	}
 }
-

@@ -83,7 +83,6 @@ func TestStreamGenerateContent_SSE(t *testing.T) {
 	}
 }
 
-
 type stubChatGenerator struct {
 	text string
 	err  error

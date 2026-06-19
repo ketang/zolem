@@ -130,7 +130,6 @@ func TestMessages_LoremResponse_Streaming(t *testing.T) {
 	}
 }
 
-
 type stubChatGenerator struct {
 	text string
 	err  error
