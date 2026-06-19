@@ -15,56 +15,23 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ketang/zolem/internal/adminapi"
 	"github.com/ketang/zolem/internal/admincli"
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
-type localProfilePayload struct {
-	Backend               string `json:"backend,omitempty"`
-	BackendModel          string `json:"backend_model,omitempty"`
-	ErrorType             string `json:"error_type,omitempty"`
-	ResponseModelPolicy   string `json:"response_model_policy,omitempty"`
-	ResponseModel         string `json:"response_model,omitempty"`
-	FixtureNamespace      string `json:"fixture_namespace,omitempty"`
-	Seed                  *int64 `json:"seed,omitempty"`
-	WASMModuleBase64      string `json:"wasm_module_base64,omitempty"`
-	WASMGenerateTimeoutMS *int   `json:"wasm_generate_timeout_ms,omitempty"`
-}
+// Type aliases for the canonical wire types in internal/adminapi.
+type (
+	localProfilePayload  = adminapi.ProfilePayload
+	localListenerPayload = adminapi.ListenerPayload
+	localListenerView    = adminapi.ListenerView
+	listenerStateView    = adminapi.ListenerStateView
+)
 
-type localListenerPayload struct {
-	Addr     string `json:"addr"`
-	Provider string `json:"provider"`
-	Profile  string `json:"profile"`
-	TLS      bool   `json:"tls,omitempty"`
-}
-
-type localProfileView struct {
-	Name                string `json:"name"`
-	Backend             string `json:"backend"`
-	BackendModel        string `json:"backend_model,omitempty"`
-	ErrorType           string `json:"error_type,omitempty"`
-	ResponseModelPolicy string `json:"response_model_policy,omitempty"`
-	ResponseModel       string `json:"response_model,omitempty"`
-	FixtureNamespace    string `json:"fixture_namespace,omitempty"`
-	Seed                *int64 `json:"seed,omitempty"`
-}
-
-type localListenerView struct {
-	Name     string `json:"name"`
-	Addr     string `json:"addr"`
-	Provider string `json:"provider"`
-	Profile  string `json:"profile"`
-	Backend  string `json:"backend"`
-	TLS      bool   `json:"tls,omitempty"`
-	BaseURL  string `json:"base_url"`
-}
-
-type listenerStateView struct {
-	Provider string `json:"provider"`
-	Profile  string `json:"profile"`
-	Backend  string `json:"backend"`
-	Listener string `json:"listener"`
-	TLS      bool   `json:"tls"`
-}
+// localProfileView is the response shape for profile create/list operations.
+// The server returns runtimecfg.RuntimeProfile; this type captures the fields
+// zolemc displays.
+type localProfileView = runtimecfg.RuntimeProfile
 
 func main() {
 	if err := run(context.Background(), os.Args[1:], os.Stdout, os.Stderr); err != nil {
@@ -176,6 +143,7 @@ func runProfiles(ctx context.Context, client admincli.Client, opts admincli.Opti
 		var seedSet bool
 		var wasmModuleFile string
 		var wasmTimeoutMS int
+		var streamDelayMS, streamDelayMinMS, streamDelayMaxMS int
 		name, flagArgs := splitOptionalLeadingName(args[1:])
 		fs.StringVar(&payload.Backend, "backend", "lorem", "backend: lorem, faker, fixture, ollama, wasm, or error")
 		fs.StringVar(&payload.BackendModel, "backend-model", "", "backend model override")
@@ -187,6 +155,12 @@ func runProfiles(ctx context.Context, client admincli.Client, opts admincli.Opti
 		fs.BoolVar(&seedSet, "seed-set", false, "include the -seed value in the profile payload")
 		fs.StringVar(&wasmModuleFile, "wasm-module-file", "", "binary WASM generator module file; implies -backend wasm when -backend is unset")
 		fs.IntVar(&wasmTimeoutMS, "wasm-timeout-ms", 0, "WASM generation timeout in milliseconds; omitted when unset")
+		fs.StringVar(&payload.OllamaUpstream, "ollama-upstream", "", "ollama upstream URL (loopback or RFC1918 only, e.g. http://127.0.0.1:11434)")
+		fs.BoolVar(&payload.AllowExternalOllamaUpstream, "allow-external-ollama-upstream", false, "allow ollama-upstream to point outside loopback/RFC1918")
+		fs.StringVar(&payload.StreamDelay.Mode, "stream-delay-mode", "", "streaming pacing mode: fixed, uniform, or token")
+		fs.IntVar(&streamDelayMS, "stream-delay-ms", 0, "fixed streaming delay in milliseconds")
+		fs.IntVar(&streamDelayMinMS, "stream-delay-min-ms", 0, "minimum streaming delay in milliseconds (uniform mode)")
+		fs.IntVar(&streamDelayMaxMS, "stream-delay-max-ms", 0, "maximum streaming delay in milliseconds (uniform mode)")
 		if err := fs.Parse(flagArgs); err != nil {
 			return err
 		}
@@ -198,6 +172,15 @@ func runProfiles(ctx context.Context, client admincli.Client, opts admincli.Opti
 		}
 		if seedSet {
 			payload.Seed = &seed
+		}
+		if flagWasSet(fs, "stream-delay-ms") {
+			payload.StreamDelay.MS = streamDelayMS
+		}
+		if flagWasSet(fs, "stream-delay-min-ms") {
+			payload.StreamDelay.MinMS = streamDelayMinMS
+		}
+		if flagWasSet(fs, "stream-delay-max-ms") {
+			payload.StreamDelay.MaxMS = streamDelayMaxMS
 		}
 		backendSet := flagWasSet(fs, "backend")
 		wasmTimeoutSet := flagWasSet(fs, "wasm-timeout-ms")
