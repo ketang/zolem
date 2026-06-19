@@ -96,6 +96,10 @@ func writeServerError(w http.ResponseWriter) {
 	}})
 }
 
+func writeBackendError(w http.ResponseWriter, err error) {
+	writeError(w, http.StatusBadGateway, "INTERNAL", err.Error())
+}
+
 func writeForcedProfileError(ctx context.Context, w http.ResponseWriter) bool {
 	errorType, ok := runtimecfg.ForcedErrorTypeForRequest(ctx)
 	if !ok {

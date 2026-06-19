@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sync/atomic"
 
+	"github.com/ketang/zolem/internal/provider/backend"
 	"github.com/ketang/zolem/internal/response"
 	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
@@ -61,6 +62,75 @@ func streamResponse(ctx context.Context, w http.ResponseWriter, model string, to
 		"type":  "message_delta",
 		"delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil},
 		"usage": map[string]int{"output_tokens": response.CountNonEmpty(tokens)},
+	})
+	sse.WriteEvent("message_delta", msgDelta)
+	sse.Flush()
+
+	sse.WriteEvent("message_stop", []byte(`{"type":"message_stop"}`))
+	sse.Flush()
+}
+
+// streamMessages streams a response via ContentBackend.Stream, emitting
+// Anthropic-native SSE events (message_start, content_block_delta, …).
+// It replaces both the old streamResponse (lorem/wasm path) and the old
+// handleOllamaStream (ollama path) for live generation requests.
+func streamMessages(ctx context.Context, w http.ResponseWriter, cb backend.ContentBackend, req backend.GenerateRequest, model string, inputTokens int) {
+	sse := response.NewSSEWriter(w)
+	sse.SetHeaders()
+
+	msgID := newMessageID()
+
+	msgStart, _ := json.Marshal(map[string]any{
+		"type": "message_start",
+		"message": map[string]any{
+			"id": msgID, "type": "message", "role": "assistant",
+			"content": []any{}, "model": model,
+			"stop_reason": nil, "stop_sequence": nil,
+			"usage": map[string]int{"input_tokens": inputTokens, "output_tokens": 1},
+		},
+	})
+	sse.WriteEvent("message_start", msgStart)
+	sse.Flush()
+
+	cbStart, _ := json.Marshal(map[string]any{
+		"type": "content_block_start", "index": 0,
+		"content_block": map[string]string{"type": "text", "text": ""},
+	})
+	sse.WriteEvent("content_block_start", cbStart)
+	sse.Flush()
+
+	sse.WriteEvent("ping", []byte(`{"type":"ping"}`))
+	sse.Flush()
+
+	outputTokens := 0
+	err := cb.Stream(ctx, req, func(delta string) error {
+		outputTokens++
+		data, _ := json.Marshal(map[string]any{
+			"type": "content_block_delta", "index": 0,
+			"delta": map[string]string{"type": "text_delta", "text": delta},
+		})
+		sse.WriteEvent("content_block_delta", data)
+		sse.Flush()
+		return nil
+	})
+
+	if err != nil {
+		errEvent, _ := json.Marshal(map[string]any{
+			"type":  "error",
+			"error": map[string]any{"type": "api_error", "message": err.Error()},
+		})
+		sse.WriteEvent("error", errEvent)
+		sse.Flush()
+		return
+	}
+
+	sse.WriteEvent("content_block_stop", []byte(`{"type":"content_block_stop","index":0}`))
+	sse.Flush()
+
+	msgDelta, _ := json.Marshal(map[string]any{
+		"type":  "message_delta",
+		"delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil},
+		"usage": map[string]int{"output_tokens": outputTokens},
 	})
 	sse.WriteEvent("message_delta", msgDelta)
 	sse.Flush()

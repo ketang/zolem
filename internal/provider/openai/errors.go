@@ -51,6 +51,10 @@ func writeServerError(w http.ResponseWriter) {
 	writeError(w, http.StatusInternalServerError, "server_error", "The server had an error while processing your request.", nil)
 }
 
+func writeBackendError(w http.ResponseWriter, err error) {
+	writeError(w, http.StatusBadGateway, "server_error", err.Error(), nil)
+}
+
 func writeForcedProfileError(ctx context.Context, w http.ResponseWriter) bool {
 	errorType, ok := runtimecfg.ForcedErrorTypeForRequest(ctx)
 	if !ok {

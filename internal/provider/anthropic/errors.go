@@ -60,6 +60,10 @@ func writeServerError(w http.ResponseWriter) {
 	writeErrorWithRequestID(w, http.StatusInternalServerError, "api_error", "internal server error", "req_zolem_server")
 }
 
+func writeBackendError(w http.ResponseWriter, err error) {
+	writeError(w, http.StatusBadGateway, "api_error", err.Error())
+}
+
 func writeForcedProfileError(ctx context.Context, w http.ResponseWriter) bool {
 	errorType, ok := runtimecfg.ForcedErrorTypeForRequest(ctx)
 	if !ok {

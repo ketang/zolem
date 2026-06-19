@@ -3,7 +3,6 @@ package gemini
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -55,10 +54,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // from the wildcard path segment (e.g. "gemini-2.0-flash:generateContent").
 func (h *Handler) handleCatchAll(version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// wildcard contains everything after /v1/models/ or /v1beta/models/
 		wildcard := chi.URLParam(r, "*")
 
-		// split on ':' to get model and action
 		colonIdx := strings.LastIndex(wildcard, ":")
 		if colonIdx == -1 {
 			http.NotFound(w, r)
@@ -67,7 +64,6 @@ func (h *Handler) handleCatchAll(version string) http.HandlerFunc {
 		model := wildcard[:colonIdx]
 		action := wildcard[colonIdx+1:]
 
-		// strip any query string from action (e.g. "streamGenerateContent?alt=sse")
 		if qIdx := strings.Index(action, "?"); qIdx != -1 {
 			action = action[:qIdx]
 		}
@@ -140,64 +136,41 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 		}
 	}
 
-	if runtimecfg.BackendForRequest(r.Context()) == runtimecfg.BackendOllama {
-		h.handleOllamaBackend(w, r, req, version, model, stream)
-		return
-	}
-
 	promptTokens := estimatePromptTokens(req)
 	responseModel := runtimecfg.ResponseModelForRequest(r.Context(), model)
-	if runtimecfg.BackendForRequest(r.Context()) == runtimecfg.BackendWASM {
-		matchReq := fixture.MatchRequest{
+
+	cb := backend.Resolve(r.Context(), h.generator, h.ollamaHTTP, h.wasmGenerator)
+	genReq := backend.GenerateRequest{
+		Messages: geminiToChatMessages(req),
+		Model:    model,
+		FixtureMatch: &fixture.MatchRequest{
 			Provider: "gemini", Version: version,
 			Labels: labelsFromContext(r.Context()),
 			Body:   json.RawMessage(body),
-		}
-		tokens, err := h.generateWASM(r.Context(), matchReq)
-		if err != nil {
-			zolemerr.Write(w, "wasm generator error: "+err.Error())
-			return
-		}
-		if stream {
-			streamResponse(r.Context(), w, responseModel, tokens, promptTokens)
-			return
-		}
-		resp := GenerateContentResponse{
-			Candidates: []Candidate{{
-				Content:      Content{Parts: []Part{{Text: strings.Join(tokens, "")}}, Role: "model"},
-				FinishReason: "STOP",
-				Index:        0,
-			}},
-			UsageMetadata: UsageMetadata{
-				PromptTokenCount:     promptTokens,
-				CandidatesTokenCount: response.CountNonEmpty(tokens),
-				TotalTokenCount:      promptTokens + response.CountNonEmpty(tokens),
-			},
-			ModelVersion: responseModel,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-		return
+		},
 	}
-
-	tokens := h.generator.Generate(30)
 
 	if stream {
-		streamResponse(r.Context(), w, responseModel, tokens, promptTokens)
+		streamGenerateContent(r.Context(), w, cb, genReq, responseModel, promptTokens)
 		return
 	}
 
-	text := strings.Join(tokens, "")
+	tokens, err := cb.Tokens(r.Context(), genReq)
+	if err != nil {
+		writeBackendError(w, err)
+		return
+	}
+	candidateTokens := response.CountNonEmpty(tokens)
 	resp := GenerateContentResponse{
 		Candidates: []Candidate{{
-			Content:      Content{Parts: []Part{{Text: text}}, Role: "model"},
+			Content:      Content{Parts: []Part{{Text: strings.Join(tokens, "")}}, Role: "model"},
 			FinishReason: "STOP",
 			Index:        0,
 		}},
 		UsageMetadata: UsageMetadata{
 			PromptTokenCount:     promptTokens,
-			CandidatesTokenCount: len(tokens),
-			TotalTokenCount:      promptTokens + len(tokens),
+			CandidatesTokenCount: candidateTokens,
+			TotalTokenCount:      promptTokens + candidateTokens,
 		},
 		ModelVersion: responseModel,
 	}
@@ -259,21 +232,8 @@ func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture
 	if len(resp.Candidates[0].Content.Parts) > 0 {
 		text = resp.Candidates[0].Content.Parts[0].Text
 	}
-	tokens := tokenize(text)
+	tokens := backend.Tokenize(text)
 	streamResponse(ctx, w, responseModel, tokens, resp.UsageMetadata.PromptTokenCount)
-}
-
-func tokenize(text string) []string {
-	words := strings.Fields(text)
-	tokens := make([]string, len(words))
-	for i, w := range words {
-		if i < len(words)-1 {
-			tokens[i] = w + " "
-		} else {
-			tokens[i] = w
-		}
-	}
-	return tokens
 }
 
 func estimatePromptTokens(req GenerateContentRequest) int {
@@ -286,105 +246,8 @@ func estimatePromptTokens(req GenerateContentRequest) int {
 	return total
 }
 
-func (h *Handler) generateWASM(ctx context.Context, req fixture.MatchRequest) ([]string, error) {
-	if h.wasmGenerator == nil {
-		return nil, errors.New("wasm generator is not configured")
-	}
-	return h.wasmGenerator.Generate(ctx, req)
-}
-
-func (h *Handler) handleOllamaBackend(w http.ResponseWriter, r *http.Request, req GenerateContentRequest, version, model string, stream bool) {
-	rt, _ := runtimecfg.ListenerRuntimeFromContext(r.Context())
-	upstream := rt.Profile.OllamaUpstream
-	if upstream == "" {
-		upstream = "http://localhost:11434"
-	}
-	ollamaModel := rt.Profile.BackendModel
-	if ollamaModel == "" {
-		ollamaModel = model
-	}
-
-	promptTokens := estimatePromptTokens(req)
-	responseModel := runtimecfg.ResponseModelForRequest(r.Context(), model)
-	messages := geminiToChatMessages(req)
-
-	if stream {
-		h.handleOllamaStream(w, r.Context(), upstream, messages, ollamaModel, responseModel, promptTokens)
-		return
-	}
-
-	text, err := h.ollamaHTTP.NonStreaming(r.Context(), upstream, messages, ollamaModel)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "INTERNAL", "ollama backend error: "+err.Error())
-		return
-	}
-
-	completionTokens := len(strings.Fields(text))
-	resp := GenerateContentResponse{
-		Candidates: []Candidate{{
-			Content:      Content{Parts: []Part{{Text: text}}, Role: "model"},
-			FinishReason: "STOP",
-			Index:        0,
-		}},
-		UsageMetadata: UsageMetadata{
-			PromptTokenCount:     promptTokens,
-			CandidatesTokenCount: completionTokens,
-			TotalTokenCount:      promptTokens + completionTokens,
-		},
-		ModelVersion: responseModel,
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
-}
-
-func (h *Handler) handleOllamaStream(w http.ResponseWriter, ctx context.Context, upstream string, messages []ollama.ChatMessage, model, responseModel string, promptTokens int) {
-	sse := response.NewSSEWriter(w)
-	sse.SetHeaders()
-
-	completionTokens := 0
-	err := h.ollamaHTTP.Streaming(ctx, upstream, messages, model, func(delta string) error {
-		completionTokens++
-		chunk := GenerateContentResponse{
-			Candidates: []Candidate{{
-				Content: Content{Parts: []Part{{Text: delta}}, Role: "model"},
-				Index:   0,
-			}},
-			UsageMetadata: UsageMetadata{
-				PromptTokenCount: promptTokens,
-			},
-			ModelVersion: responseModel,
-		}
-		data, _ := json.Marshal(chunk)
-		sse.WriteData(data)
-		sse.Flush()
-		return nil
-	})
-
-	if err != nil {
-		errData, _ := json.Marshal(map[string]any{
-			"error": map[string]any{"code": 502, "message": "ollama backend error: " + err.Error(), "status": "INTERNAL"},
-		})
-		sse.WriteData(errData)
-		sse.Flush()
-		return
-	}
-
-	finalChunk := GenerateContentResponse{
-		Candidates: []Candidate{{
-			Content:      Content{Parts: []Part{{Text: ""}}, Role: "model"},
-			FinishReason: "STOP",
-			Index:        0,
-		}},
-		UsageMetadata: UsageMetadata{
-			PromptTokenCount:     promptTokens,
-			CandidatesTokenCount: completionTokens,
-			TotalTokenCount:      promptTokens + completionTokens,
-		},
-		ModelVersion: responseModel,
-	}
-	data, _ := json.Marshal(finalChunk)
-	sse.WriteData(data)
-	sse.Flush()
+func labelsFromContext(_ context.Context) map[string]string {
+	return map[string]string{}
 }
 
 func geminiToChatMessages(req GenerateContentRequest) []ollama.ChatMessage {
@@ -409,8 +272,4 @@ func geminiToChatMessages(req GenerateContentRequest) []ollama.ChatMessage {
 		messages = append(messages, ollama.ChatMessage{Role: role, Content: strings.Join(parts, " ")})
 	}
 	return messages
-}
-
-func labelsFromContext(_ context.Context) map[string]string {
-	return map[string]string{}
 }
