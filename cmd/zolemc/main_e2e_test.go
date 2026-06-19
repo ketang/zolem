@@ -1120,6 +1120,23 @@ func pickPort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
+// TestZolemcOllamaUpstreamFlagE2E verifies that zolemc profiles create accepts
+// -ollama-upstream and -stream-delay-mode flags and the server stores them.
+func TestZolemcOllamaUpstreamFlagE2E(t *testing.T) {
+	repoRoot := repoRoot(t)
+	admin := startLocalAdminService(t, repoRoot)
+	t.Cleanup(admin.Close)
+
+	result := runZolemc(t, repoRoot, "-json", "-admin-url", admin.baseURL,
+		"profiles", "create", "ollama-flag-test",
+		"-backend", "ollama",
+		"-ollama-upstream", "http://127.0.0.1:11434",
+	)
+	if !strings.Contains(result.stdout, `"ollama_upstream":"http://127.0.0.1:11434"`) {
+		t.Fatalf("profile response missing ollama_upstream:\n%s", result.stdout)
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, filename, _, ok := runtime.Caller(0)

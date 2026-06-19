@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ketang/zolem/internal/adminapi"
 	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
@@ -26,52 +27,23 @@ type localAdminOptions struct {
 	AllowedHosts []string
 }
 
-type localProfilePayload struct {
-	Backend                     string                 `json:"backend"`
-	BackendModel                string                 `json:"backend_model"`
-	ErrorType                   string                 `json:"error_type"`
-	ResponseModelPolicy         string                 `json:"response_model_policy"`
-	ResponseModel               string                 `json:"response_model"`
-	FixtureNamespace            string                 `json:"fixture_namespace"`
-	Seed                        *int64                 `json:"seed"`
-	OllamaUpstream              string                 `json:"ollama_upstream"`
-	AllowExternalOllamaUpstream bool                   `json:"allow_external_ollama_upstream"`
-	WASMModuleBase64            string                 `json:"wasm_module_base64"`
-	WASMGenerateTimeoutMS       int                    `json:"wasm_generate_timeout_ms"`
-	StreamDelay                 runtimecfg.StreamDelay `json:"stream_delay"`
-}
+// localProfilePayload, localListenerPayload, and localListenerView are type
+// aliases for the canonical wire types in internal/adminapi. Aliases keep
+// existing call sites unchanged while enforcing a single definition.
+type (
+	localProfilePayload  = adminapi.ProfilePayload
+	localListenerPayload = adminapi.ListenerPayload
+	localListenerView    = adminapi.ListenerView
+)
 
-type localListenerPayload struct {
-	Addr                       string `json:"addr"`
-	Provider                   string `json:"provider"`
-	Profile                    string `json:"profile"`
-	TLS                        bool   `json:"tls,omitempty"`
-	RecordRequestBodyCapBytes  *int   `json:"record_request_body_cap_bytes,omitempty"`
-	RecordResponseBodyCapBytes *int   `json:"record_response_body_cap_bytes,omitempty"`
-	RecordStreamEventCap       *int   `json:"record_stream_event_cap,omitempty"`
-}
-
-type localListenerView struct {
-	Name                       string `json:"name"`
-	Addr                       string `json:"addr"`
-	Provider                   string `json:"provider"`
-	Profile                    string `json:"profile"`
-	Backend                    string `json:"backend"`
-	TLS                        bool   `json:"tls,omitempty"`
-	BaseURL                    string `json:"base_url"`
-	RecordRequestBodyCapBytes  int    `json:"record_request_body_cap_bytes"`
-	RecordResponseBodyCapBytes int    `json:"record_response_body_cap_bytes"`
-	RecordStreamEventCap       int    `json:"record_stream_event_cap"`
-}
-
-func newLocalListenerView(runtime runtimecfg.ListenerRuntime, baseURL string, caps RecordCaps) localListenerView {
-	spec := runtime.Spec
+func newLocalListenerView(rt runtimecfg.ListenerRuntime, baseURL string, caps RecordCaps) localListenerView {
+	spec := rt.Spec
 	return localListenerView{
 		Name:                       spec.Name,
 		Addr:                       spec.Addr,
 		Provider:                   spec.Provider,
 		Profile:                    spec.Profile,
-		Backend:                    runtime.Profile.Backend,
+		Backend:                    rt.Profile.Backend,
 		TLS:                        spec.TLS,
 		BaseURL:                    baseURL,
 		RecordRequestBodyCapBytes:  caps.RequestBodyCapBytes,
@@ -165,6 +137,10 @@ func (c *localControlPlane) Close() error {
 }
 
 func (c *localControlPlane) UpsertProfile(name string, payload localProfilePayload) (runtimecfg.RuntimeProfile, error) {
+	wasmTimeoutMS := 0
+	if payload.WASMGenerateTimeoutMS != nil {
+		wasmTimeoutMS = *payload.WASMGenerateTimeoutMS
+	}
 	profile := runtimecfg.RuntimeProfile{
 		Name:                        name,
 		Backend:                     payload.Backend,
@@ -177,7 +153,7 @@ func (c *localControlPlane) UpsertProfile(name string, payload localProfilePaylo
 		OllamaUpstream:              payload.OllamaUpstream,
 		AllowExternalOllamaUpstream: payload.AllowExternalOllamaUpstream,
 		WASMModuleBase64:            payload.WASMModuleBase64,
-		WASMGenerateTimeoutMS:       payload.WASMGenerateTimeoutMS,
+		WASMGenerateTimeoutMS:       wasmTimeoutMS,
 		StreamDelay:                 payload.StreamDelay,
 	}
 	if profile.Backend == "" {
