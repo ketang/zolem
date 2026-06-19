@@ -139,8 +139,6 @@ func runProfiles(ctx context.Context, client admincli.Client, opts admincli.Opti
 		fs := flag.NewFlagSet("zolemc profiles create", flag.ContinueOnError)
 		fs.SetOutput(stderr)
 		payload := localProfilePayload{}
-		var seed int64
-		var seedSet bool
 		var wasmModuleFile string
 		var wasmTimeoutMS int
 		var streamDelayMS, streamDelayMinMS, streamDelayMaxMS int
@@ -151,8 +149,6 @@ func runProfiles(ctx context.Context, client admincli.Client, opts admincli.Opti
 		fs.StringVar(&payload.ResponseModelPolicy, "response-model-policy", "", "response model policy")
 		fs.StringVar(&payload.ResponseModel, "response-model", "", "response model override")
 		fs.StringVar(&payload.FixtureNamespace, "fixture-namespace", "", "relative fixture namespace")
-		fs.Int64Var(&seed, "seed", 0, "deterministic random seed")
-		fs.BoolVar(&seedSet, "seed-set", false, "include the -seed value in the profile payload")
 		fs.StringVar(&wasmModuleFile, "wasm-module-file", "", "binary WASM generator module file; implies -backend wasm when -backend is unset")
 		fs.IntVar(&wasmTimeoutMS, "wasm-timeout-ms", 0, "WASM generation timeout in milliseconds; omitted when unset")
 		fs.StringVar(&payload.OllamaUpstream, "ollama-upstream", "", "ollama upstream URL (loopback or RFC1918 only, e.g. http://127.0.0.1:11434)")
@@ -169,9 +165,6 @@ func runProfiles(ctx context.Context, client admincli.Client, opts admincli.Opti
 		}
 		if name == "" || fs.NArg() > 1 {
 			return errors.New("profiles create requires exactly one profile name")
-		}
-		if seedSet {
-			payload.Seed = &seed
 		}
 		if flagWasSet(fs, "stream-delay-ms") {
 			payload.StreamDelay.MS = streamDelayMS

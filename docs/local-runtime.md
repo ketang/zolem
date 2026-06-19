@@ -707,7 +707,7 @@ documented in [wasm-modules.md](wasm-modules.md).
 For a templated fixture, replace `response.json` with `response.json.tmpl`.
 Zolem parses, executes, and validates the rendered JSON when the fixture-backed
 listener is created. Bad template syntax or invalid rendered JSON fails startup
-or hot reload before the fixture can serve traffic.
+before the fixture can serve traffic.
 
 Template example:
 

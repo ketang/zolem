@@ -360,9 +360,9 @@ func loadFixtures(fixturesDir string, listenerRuntime runtimecfg.ListenerRuntime
 }
 
 func buildLocalHandler(runtimePtr *atomic.Pointer[runtimecfg.ListenerRuntime], counters *runtimecfg.ProfileCounters, validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, wasmGenerator *wasmgen.Generator) http.Handler {
-	anthropicH := anthropic.NewHandler(validator, matcher, generator, nil, &ollamaHTTPAdapter{}, wasmGenerator)
-	openaiH := openai.NewHandler(validator, matcher, generator, nil, &ollamaHTTPAdapter{}, wasmGenerator)
-	geminiH := gemini.NewHandler(validator, matcher, generator, nil, &ollamaHTTPAdapter{}, wasmGenerator)
+	anthropicH := anthropic.NewHandler(validator, matcher, generator, &ollamaHTTPAdapter{}, wasmGenerator)
+	openaiH := openai.NewHandler(validator, matcher, generator, &ollamaHTTPAdapter{}, wasmGenerator)
+	geminiH := gemini.NewHandler(validator, matcher, generator, &ollamaHTTPAdapter{}, wasmGenerator)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		listenerRuntime := *runtimePtr.Load()

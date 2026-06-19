@@ -11,7 +11,6 @@ import (
 	"github.com/ketang/zolem/internal/fixture"
 	"github.com/ketang/zolem/internal/provider/gemini"
 	"github.com/ketang/zolem/internal/response"
-	"github.com/ketang/zolem/internal/router"
 	runtimecfg "github.com/ketang/zolem/internal/runtime"
 	"github.com/ketang/zolem/internal/specs"
 )
@@ -54,7 +53,7 @@ func newGeminiAdditionalHandler(t *testing.T, runner *fixture.Runner, fixtures [
 		}
 	}
 
-	return gemini.NewHandler(validator, fixture.NewMatcher(runner, fixtures, nil), response.NewLoremGenerator(), nil, nil)
+	return gemini.NewHandler(validator, fixture.NewMatcher(runner, fixtures, nil), response.NewLoremGenerator(), nil)
 }
 
 func compileGeminiFixture(t *testing.T, runner *fixture.Runner, id, version string, status int, responseBody []byte, threshold uint32) fixture.Fixture {
@@ -587,51 +586,3 @@ func TestGenerateContent_StreamFixtureFallbackWhenMalformed(t *testing.T) {
 	}
 }
 
-func TestGenerateContent_LabelPropagationFromRoutingContext(t *testing.T) {
-	runner := fixture.NewRunner()
-	t.Cleanup(runner.Close)
-
-	body := `{"contents":[{"role":"user","parts":[{"text":"hello"}]}],"generationConfig":{"maxOutputTokens":4}}`
-	routeLabels := map[string]string{"tenant": strings.Repeat("route-only-", 8)}
-
-	baseLen := matchRequestJSONLen(t, body, map[string]string{})
-	labeledLen := matchRequestJSONLen(t, body, routeLabels)
-	if labeledLen <= baseLen {
-		t.Fatalf("expected labels to increase matcher payload length: unlabeled=%d labeled=%d", baseLen, labeledLen)
-	}
-
-	fixtureBody := fixtureGenerateContentBody(t, "matched by labels", 11, "fixture-labels")
-	fixtures := []fixture.Fixture{
-		compileGeminiFixture(t, runner, "label-match", "v1", http.StatusAccepted, fixtureBody, uint32(baseLen+1)),
-	}
-	h := newGeminiAdditionalHandler(t, runner, fixtures, nil)
-
-	labeledReq := httptest.NewRequest(http.MethodPost, geminiGeneratePath, strings.NewReader(body))
-	labeledReq.Header.Set("Content-Type", "application/json")
-	labeledReq.Header.Set("x-goog-api-key", "test-key")
-	labeledReq = labeledReq.WithContext(context.WithValue(labeledReq.Context(), router.LabelsKey{}, routeLabels))
-
-	labeledRR := httptest.NewRecorder()
-	h.ServeHTTP(labeledRR, labeledReq)
-
-	if labeledRR.Code != http.StatusAccepted {
-		t.Fatalf("labeled status: got %d, want 202", labeledRR.Code)
-	}
-	if labeledRR.Body.String() != string(fixtureBody) {
-		t.Fatalf("labeled body mismatch:\ngot  %s\nwant %s", labeledRR.Body.String(), string(fixtureBody))
-	}
-
-	unlabeledReq := httptest.NewRequest(http.MethodPost, geminiGeneratePath, strings.NewReader(body))
-	unlabeledReq.Header.Set("Content-Type", "application/json")
-	unlabeledReq.Header.Set("x-goog-api-key", "test-key")
-
-	unlabeledRR := httptest.NewRecorder()
-	h.ServeHTTP(unlabeledRR, unlabeledReq)
-
-	if unlabeledRR.Code != http.StatusOK {
-		t.Fatalf("unlabeled status: got %d, want 200", unlabeledRR.Code)
-	}
-	if unlabeledRR.Body.String() == string(fixtureBody) {
-		t.Fatalf("expected unlabeled request to fall back to lorem response")
-	}
-}

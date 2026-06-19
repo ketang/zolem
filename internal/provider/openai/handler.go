@@ -14,7 +14,6 @@ import (
 	"github.com/ketang/zolem/internal/ollama"
 	"github.com/ketang/zolem/internal/provider/backend"
 	"github.com/ketang/zolem/internal/response"
-	"github.com/ketang/zolem/internal/router"
 	runtimecfg "github.com/ketang/zolem/internal/runtime"
 	"github.com/ketang/zolem/internal/specs"
 	"github.com/ketang/zolem/internal/wasmgen"
@@ -26,13 +25,12 @@ type Handler struct {
 	matcher       *fixture.Matcher
 	generator     response.Generator
 	wasmGenerator *wasmgen.Generator
-	ollamaClient  backend.TextGenerator
 	ollamaHTTP    backend.ChatGenerator
 	mux           *chi.Mux
 }
 
-func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, ollamaClient backend.TextGenerator, ollamaHTTP backend.ChatGenerator, wasmGenerator ...*wasmgen.Generator) *Handler {
-	h := &Handler{validator: validator, matcher: matcher, generator: generator, ollamaClient: ollamaClient, ollamaHTTP: ollamaHTTP}
+func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator response.Generator, ollamaHTTP backend.ChatGenerator, wasmGenerator ...*wasmgen.Generator) *Handler {
+	h := &Handler{validator: validator, matcher: matcher, generator: generator, ollamaHTTP: ollamaHTTP}
 	if len(wasmGenerator) > 0 {
 		h.wasmGenerator = wasmGenerator[0]
 	}
@@ -126,26 +124,6 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		}
 		text := strings.Join(tokens, "")
 		completionTokens := response.CountNonEmpty(tokens)
-		resp := ChatCompletionResponse{
-			ID:      fmt.Sprintf("chatcmpl-zolem%d", time.Now().UnixNano()),
-			Object:  "chat.completion",
-			Created: time.Now().Unix(),
-			Model:   responseModel,
-			Choices: []Choice{{Index: 0, Message: Message{Role: "assistant", Content: text}, FinishReason: "stop"}},
-			Usage:   Usage{PromptTokens: promptTokens, CompletionTokens: completionTokens, TotalTokens: promptTokens + completionTokens},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-		return
-	}
-
-	if text, ok := h.generateText(r.Context(), promptFromRequest(req)); ok {
-		completionTokens := len(strings.Fields(text))
-		if req.Stream {
-			streamResponse(r.Context(), w, responseModel, tokenize(text), promptTokens, includeUsage(req))
-			return
-		}
-
 		resp := ChatCompletionResponse{
 			ID:      fmt.Sprintf("chatcmpl-zolem%d", time.Now().UnixNano()),
 			Object:  "chat.completion",
@@ -265,30 +243,6 @@ func estimatePromptTokens(req ChatCompletionRequest) int {
 	return total
 }
 
-func promptFromRequest(req ChatCompletionRequest) string {
-	var lines []string
-	for _, msg := range req.Messages {
-		line := strings.TrimSpace(msg.Role + ": " + msg.Content.Text())
-		if line != "" {
-			lines = append(lines, line)
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-func (h *Handler) generateText(ctx context.Context, prompt string) (string, bool) {
-	if h.ollamaClient == nil {
-		return "", false
-	}
-
-	text, err := h.ollamaClient.Generate(ctx, prompt)
-	if err != nil {
-		return "", false
-	}
-	text = strings.TrimSpace(text)
-	return text, text != ""
-}
-
 func (h *Handler) generateWASM(ctx context.Context, req fixture.MatchRequest) ([]string, error) {
 	if h.wasmGenerator == nil {
 		return nil, fmt.Errorf("wasm generator is not configured")
@@ -296,12 +250,7 @@ func (h *Handler) generateWASM(ctx context.Context, req fixture.MatchRequest) ([
 	return h.wasmGenerator.Generate(ctx, req)
 }
 
-func labelsFromContext(ctx context.Context) map[string]string {
-	if v := ctx.Value(router.LabelsKey{}); v != nil {
-		if labels, ok := v.(map[string]string); ok {
-			return labels
-		}
-	}
+func labelsFromContext(_ context.Context) map[string]string {
 	return map[string]string{}
 }
 

@@ -149,7 +149,6 @@ func (c *localControlPlane) UpsertProfile(name string, payload localProfilePaylo
 		ResponseModelPolicy:         payload.ResponseModelPolicy,
 		ResponseModel:               payload.ResponseModel,
 		FixtureNamespace:            payload.FixtureNamespace,
-		Seed:                        payload.Seed,
 		OllamaUpstream:              payload.OllamaUpstream,
 		AllowExternalOllamaUpstream: payload.AllowExternalOllamaUpstream,
 		WASMModuleBase64:            payload.WASMModuleBase64,

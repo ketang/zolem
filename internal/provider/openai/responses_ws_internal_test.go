@@ -46,7 +46,7 @@ func TestResponsesAuthorization(t *testing.T) {
 }
 
 func TestResponsesWSRejectsMissingAuthorization(t *testing.T) {
-	h := NewHandler(specs.NewValidator(), nil, response.NewLoremGenerator(), nil, nil)
+	h := NewHandler(specs.NewValidator(), nil, response.NewLoremGenerator(), nil)
 	req := httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
 	rr := httptest.NewRecorder()
 
@@ -61,7 +61,7 @@ func TestResponsesWSRejectsMissingAuthorization(t *testing.T) {
 }
 
 func TestResponsesWSPrewarmAndGeneratedEvents(t *testing.T) {
-	h := NewHandler(specs.NewValidator(), nil, fixedTokenGenerator{"hello", " ", "world"}, nil, nil)
+	h := NewHandler(specs.NewValidator(), nil, fixedTokenGenerator{"hello", " ", "world"}, nil)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		rt := runtimecfg.ListenerRuntime{Profile: runtimecfg.RuntimeProfile{Backend: runtimecfg.BackendLorem}}
 		h.ServeHTTP(w, req.WithContext(runtimecfg.WithListenerRuntime(req.Context(), rt)))
@@ -114,7 +114,7 @@ func TestResponseCreateEventsFixtures(t *testing.T) {
 		Provider:     "openai",
 		Version:      "v1-responses",
 		ResponseBody: fixtureBody,
-	}}, firstFixtureSelector{}), response.NewLoremGenerator(), nil, nil)
+	}}, firstFixtureSelector{}), response.NewLoremGenerator(), nil)
 
 	ctx := runtimecfg.WithListenerRuntime(context.Background(), runtimecfg.ListenerRuntime{
 		Profile: runtimecfg.RuntimeProfile{Backend: runtimecfg.BackendFixture},
@@ -132,7 +132,7 @@ func TestResponseCreateEventsFixtures(t *testing.T) {
 		Provider:     "openai",
 		Version:      "v1-responses",
 		ResponseBody: []byte(`{"not":"an array"}`),
-	}}, firstFixtureSelector{}), response.NewLoremGenerator(), nil, nil)
+	}}, firstFixtureSelector{}), response.NewLoremGenerator(), nil)
 	_, err = h.responseCreateEvents(ctx, []byte(`{"type":"response.create"}`))
 	if err == nil || !strings.Contains(err.Error(), "must be a JSON array") {
 		t.Fatalf("bad fixture error = %v", err)
