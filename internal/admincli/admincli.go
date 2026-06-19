@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -113,6 +114,10 @@ func (c Client) DoJSON(ctx context.Context, method, p string, in, out any) error
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
+		var opErr *net.OpError
+		if errors.As(err, &opErr) && opErr.Op == "dial" {
+			return fmt.Errorf("%w\n  hint: is the zolem admin server running at %s? Start it with: zolem -local-admin-addr <addr>", err, c.baseURL)
+		}
 		return err
 	}
 	defer resp.Body.Close()

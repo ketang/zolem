@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -793,5 +794,40 @@ func TestLocalAdminHandler_ProfilePublicOllamaUpstreamAllowedWithOptOut(t *testi
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("public ollama_upstream with opt-out: got %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestLocalAdminHandler_UnknownPathReturnsJSON404(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	handler := buildLocalAdminHandler(control)
+
+	req := httptestRequest(http.MethodGet, "/_zolem/does-not-exist", bytes.NewBuffer(nil))
+	resp := doRequest(t, handler, req)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown path: got %d, want 404", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("unknown path Content-Type = %q, want application/json", ct)
+	}
+}
+
+func TestLocalAdminHandler_BadJSONDoesNotLeakGoInternals(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	handler := buildLocalAdminHandler(control)
+
+	// DisallowUnknownFields: "json: unknown field" should be stripped to "unknown field"
+	req := httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"bakend":"lorem"}`))
+	resp := doRequest(t, handler, req)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad field name: got %d, want 400", resp.StatusCode)
+	}
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if strings.Contains(string(rawBody), "json:") {
+		t.Fatalf("error leaks 'json:' prefix: %q", rawBody)
 	}
 }

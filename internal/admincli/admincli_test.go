@@ -7,6 +7,22 @@ import (
 	"testing"
 )
 
+func TestDialErrorHint(t *testing.T) {
+	// Port 1 is reserved; dialing it should fail with a connection error.
+	c := NewClient("http://127.0.0.1:1", nil)
+	err := c.GetJSON(context.Background(), "/_zolem/health", nil)
+	if err == nil {
+		t.Skip("dial to port 1 unexpectedly succeeded; skipping hint test")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "hint:") {
+		t.Fatalf("expected dial error to contain hint, got: %v", err)
+	}
+	if !strings.Contains(msg, "zolem -local-admin-addr") {
+		t.Fatalf("expected hint to mention zolem -local-admin-addr, got: %v", err)
+	}
+}
+
 func TestNewInertOptions(t *testing.T) {
 	opts := NewInertOptions()
 	if opts.AdminURL != InertURL || opts.BaseURL != InertURL {

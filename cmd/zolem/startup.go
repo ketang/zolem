@@ -22,6 +22,7 @@ import (
 	runtimecfg "github.com/ketang/zolem/internal/runtime"
 	"github.com/ketang/zolem/internal/specs"
 	"github.com/ketang/zolem/internal/wasmgen"
+	"github.com/ketang/zolem/internal/zolemerr"
 )
 
 type ollamaHTTPAdapter struct{}
@@ -388,7 +389,7 @@ func buildLocalHandler(runtimePtr *atomic.Pointer[runtimecfg.ListenerRuntime], c
 		case "gemini":
 			geminiH.ServeHTTP(w, req)
 		default:
-			writeZolemError(w, "unknown provider: "+listenerRuntime.Spec.Provider)
+			zolemerr.Write(w, "unknown provider: "+listenerRuntime.Spec.Provider)
 		}
 	})
 }
@@ -425,12 +426,6 @@ func wasmGenerateTimeout(profile runtimecfg.RuntimeProfile) time.Duration {
 		return 100 * time.Millisecond
 	}
 	return time.Duration(profile.WASMGenerateTimeoutMS) * time.Millisecond
-}
-
-func writeZolemError(w http.ResponseWriter, message string) {
-	w.Header().Set("X-Zolem-Error", "true")
-	w.WriteHeader(http.StatusBadGateway)
-	_ = json.NewEncoder(w).Encode(map[string]string{"zolem_error": message})
 }
 
 func splitKey(key string) (string, string) {

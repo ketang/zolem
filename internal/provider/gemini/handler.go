@@ -43,6 +43,9 @@ func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator 
 	// the action suffix (:generateContent vs :streamGenerateContent).
 	h.mux.Post("/v1/models/*", h.handleCatchAll("v1"))
 	h.mux.Post("/v1beta/models/*", h.handleCatchAll("v1beta"))
+	h.mux.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		writeInvalidRequest(r.Context(), w, "Not Found")
+	})
 	return h
 }
 
@@ -154,7 +157,7 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 		}
 		tokens, err := h.generateWASM(r.Context(), matchReq)
 		if err != nil {
-			response.WriteZolemError(w, "wasm generator error: "+err.Error())
+			zolemerr.Write(w, "wasm generator error: "+err.Error())
 			return
 		}
 		if stream {
