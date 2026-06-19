@@ -20,20 +20,25 @@ type localAdminOptions struct {
 	Addr        string
 	FixturesDir string
 	TLS         localTLSConfig
+	// AllowedHosts are extra Host-header values accepted on the admin and data
+	// listeners in addition to loopback literals and "localhost". Empty by
+	// default, which keeps the listeners reachable only as a loopback address.
+	AllowedHosts []string
 }
 
 type localProfilePayload struct {
-	Backend               string                 `json:"backend"`
-	BackendModel          string                 `json:"backend_model"`
-	ErrorType             string                 `json:"error_type"`
-	ResponseModelPolicy   string                 `json:"response_model_policy"`
-	ResponseModel         string                 `json:"response_model"`
-	FixtureNamespace      string                 `json:"fixture_namespace"`
-	Seed                  *int64                 `json:"seed"`
-	OllamaUpstream        string                 `json:"ollama_upstream"`
-	WASMModuleBase64      string                 `json:"wasm_module_base64"`
-	WASMGenerateTimeoutMS int                    `json:"wasm_generate_timeout_ms"`
-	StreamDelay           runtimecfg.StreamDelay `json:"stream_delay"`
+	Backend                     string                 `json:"backend"`
+	BackendModel                string                 `json:"backend_model"`
+	ErrorType                   string                 `json:"error_type"`
+	ResponseModelPolicy         string                 `json:"response_model_policy"`
+	ResponseModel               string                 `json:"response_model"`
+	FixtureNamespace            string                 `json:"fixture_namespace"`
+	Seed                        *int64                 `json:"seed"`
+	OllamaUpstream              string                 `json:"ollama_upstream"`
+	AllowExternalOllamaUpstream bool                   `json:"allow_external_ollama_upstream"`
+	WASMModuleBase64            string                 `json:"wasm_module_base64"`
+	WASMGenerateTimeoutMS       int                    `json:"wasm_generate_timeout_ms"`
+	StreamDelay                 runtimecfg.StreamDelay `json:"stream_delay"`
 }
 
 type localListenerPayload struct {
@@ -90,12 +95,13 @@ type managedLocalListener struct {
 }
 
 type localControlPlane struct {
-	deps        startupDeps
-	store       *runtimecfg.Store
-	fixturesDir string
-	tls         localTLSConfig
-	startServer func(runtimecfg.ListenerSpec, localTLSConfig, http.Handler) (localServer, error)
-	counters    *runtimecfg.ProfileCounters
+	deps         startupDeps
+	store        *runtimecfg.Store
+	fixturesDir  string
+	tls          localTLSConfig
+	startServer  func(runtimecfg.ListenerSpec, localTLSConfig, http.Handler) (localServer, error)
+	counters     *runtimecfg.ProfileCounters
+	allowedHosts []string
 
 	mu        sync.Mutex
 	listeners map[string]*managedLocalListener
@@ -118,22 +124,24 @@ func runLocalAdmin(opts localAdminOptions, deps startupDeps) error {
 	control := newLocalControlPlane(opts, deps)
 	defer control.Close()
 
+	handler := hostGuard(buildLocalAdminHandler(control), control.allowedHosts)
 	deps.logf("zolem local admin on %s", addr)
 	if opts.TLS.enabled() {
-		return deps.listenTLS(addr, opts.TLS.CertFile, opts.TLS.KeyFile, buildLocalAdminHandler(control))
+		return deps.listenTLS(addr, opts.TLS.CertFile, opts.TLS.KeyFile, handler)
 	}
-	return deps.listen(addr, buildLocalAdminHandler(control))
+	return deps.listen(addr, handler)
 }
 
 func newLocalControlPlane(opts localAdminOptions, deps startupDeps) *localControlPlane {
 	return &localControlPlane{
-		deps:        deps.withDefaults(),
-		store:       runtimecfg.NewStore(),
-		fixturesDir: opts.FixturesDir,
-		tls:         opts.TLS,
-		startServer: startLocalServer,
-		counters:    runtimecfg.NewProfileCounters(),
-		listeners:   make(map[string]*managedLocalListener),
+		deps:         deps.withDefaults(),
+		store:        runtimecfg.NewStore(),
+		fixturesDir:  opts.FixturesDir,
+		tls:          opts.TLS,
+		startServer:  startLocalServer,
+		counters:     runtimecfg.NewProfileCounters(),
+		allowedHosts: opts.AllowedHosts,
+		listeners:    make(map[string]*managedLocalListener),
 	}
 }
 
@@ -158,18 +166,19 @@ func (c *localControlPlane) Close() error {
 
 func (c *localControlPlane) UpsertProfile(name string, payload localProfilePayload) (runtimecfg.RuntimeProfile, error) {
 	profile := runtimecfg.RuntimeProfile{
-		Name:                  name,
-		Backend:               payload.Backend,
-		BackendModel:          payload.BackendModel,
-		ErrorType:             payload.ErrorType,
-		ResponseModelPolicy:   payload.ResponseModelPolicy,
-		ResponseModel:         payload.ResponseModel,
-		FixtureNamespace:      payload.FixtureNamespace,
-		Seed:                  payload.Seed,
-		OllamaUpstream:        payload.OllamaUpstream,
-		WASMModuleBase64:      payload.WASMModuleBase64,
-		WASMGenerateTimeoutMS: payload.WASMGenerateTimeoutMS,
-		StreamDelay:           payload.StreamDelay,
+		Name:                        name,
+		Backend:                     payload.Backend,
+		BackendModel:                payload.BackendModel,
+		ErrorType:                   payload.ErrorType,
+		ResponseModelPolicy:         payload.ResponseModelPolicy,
+		ResponseModel:               payload.ResponseModel,
+		FixtureNamespace:            payload.FixtureNamespace,
+		Seed:                        payload.Seed,
+		OllamaUpstream:              payload.OllamaUpstream,
+		AllowExternalOllamaUpstream: payload.AllowExternalOllamaUpstream,
+		WASMModuleBase64:            payload.WASMModuleBase64,
+		WASMGenerateTimeoutMS:       payload.WASMGenerateTimeoutMS,
+		StreamDelay:                 payload.StreamDelay,
 	}
 	if profile.Backend == "" {
 		profile.Backend = "lorem"
@@ -252,7 +261,7 @@ func (c *localControlPlane) UpsertListener(name string, payload localListenerPay
 	// across the whole swap closes the gap where two concurrent PUTs could both
 	// bind and have the loser orphan the winner's server + listener (a goroutine
 	// and port leak that survived until process exit).
-	server, err := c.startServer(spec, c.tls, app.handler)
+	server, err := c.startServer(spec, c.tls, hostGuard(app.handler, c.allowedHosts))
 	if err != nil {
 		app.close()
 		return localListenerView{}, warnings, err
@@ -376,6 +385,21 @@ func (c *localControlPlane) ClearCalls(name string) (int, error) {
 		return 0, nil
 	}
 	return entry.recorder.Clear(), nil
+}
+
+// hostGuard rejects requests whose Host header is not a loopback literal,
+// "localhost", or an explicitly allowed host. The local admin and data
+// listeners are auth-less by design (loopback only); without this check a
+// DNS-rebinding page in a browser could resolve an attacker-controlled name to
+// 127.0.0.1 and drive the API with the attacker's hostname in the Host header.
+func hostGuard(next http.Handler, allow []string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if !runtimecfg.HostHeaderAllowed(req.Host, allow) {
+			writeAdminError(w, http.StatusForbidden, fmt.Sprintf("host %q not allowed; this listener serves loopback clients only", req.Host))
+			return
+		}
+		next.ServeHTTP(w, req)
+	})
 }
 
 func buildLocalAdminHandler(control *localControlPlane) http.Handler {

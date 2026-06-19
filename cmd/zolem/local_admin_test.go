@@ -730,3 +730,68 @@ func TestLocalBaseURL(t *testing.T) {
 		t.Fatalf("TLS base URL = %q", tls)
 	}
 }
+
+func TestHostGuard_RejectsNonLoopbackHost(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	handler := hostGuard(buildLocalAdminHandler(control), control.allowedHosts)
+
+	req := httptestRequest(http.MethodGet, "/_zolem/health", bytes.NewBuffer(nil))
+	req.Host = "evil.example"
+	resp := doRequest(t, handler, req)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status: got %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestHostGuard_AllowsLoopbackHosts(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	handler := hostGuard(buildLocalAdminHandler(control), control.allowedHosts)
+
+	for _, host := range []string{"127.0.0.1:8090", "localhost", "localhost:8090", "[::1]:8090"} {
+		req := httptestRequest(http.MethodGet, "/_zolem/health", bytes.NewBuffer(nil))
+		req.Host = host
+		resp := doRequest(t, handler, req)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("host %q: got %d, want 200", host, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+}
+
+func TestHostGuard_AllowsConfiguredHost(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{AllowedHosts: []string{"zolem.test"}})
+	handler := hostGuard(buildLocalAdminHandler(control), control.allowedHosts)
+
+	req := httptestRequest(http.MethodGet, "/_zolem/health", bytes.NewBuffer(nil))
+	req.Host = "zolem.test:8090"
+	resp := doRequest(t, handler, req)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestLocalAdminHandler_ProfilePublicOllamaUpstreamRejected(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	handler := buildLocalAdminHandler(control)
+
+	req := httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"ollama","ollama_upstream":"http://evil.example:11434"}`))
+	resp := doRequest(t, handler, req)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("public ollama_upstream without opt-out: got %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestLocalAdminHandler_ProfilePublicOllamaUpstreamAllowedWithOptOut(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{})
+	handler := buildLocalAdminHandler(control)
+
+	req := httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"ollama","ollama_upstream":"http://evil.example:11434","allow_external_ollama_upstream":true}`))
+	resp := doRequest(t, handler, req)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("public ollama_upstream with opt-out: got %d, want 200", resp.StatusCode)
+	}
+}
