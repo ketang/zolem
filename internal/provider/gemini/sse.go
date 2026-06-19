@@ -64,6 +64,30 @@ func streamGenerateContent(ctx context.Context, w http.ResponseWriter, cb backen
 	sse.Flush()
 }
 
+// streamFunctionCallContent emits a single Gemini SSE chunk containing the
+// synthesized functionCall Part.
+func streamFunctionCallContent(ctx context.Context, w http.ResponseWriter, fc FunctionCall, model string, promptTokens int) {
+	sse := response.NewSSEWriter(w)
+	sse.SetHeaders()
+
+	chunk := GenerateContentResponse{
+		Candidates: []Candidate{{
+			Content:      Content{Parts: []Part{{FunctionCall: &fc}}, Role: "model"},
+			FinishReason: "STOP",
+			Index:        0,
+		}},
+		UsageMetadata: UsageMetadata{
+			PromptTokenCount:     promptTokens,
+			CandidatesTokenCount: 1,
+			TotalTokenCount:      promptTokens + 1,
+		},
+		ModelVersion: model,
+	}
+	data, _ := json.Marshal(chunk)
+	sse.WriteData(data)
+	sse.Flush()
+}
+
 func streamResponse(ctx context.Context, w http.ResponseWriter, model string, tokens []string, promptTokens int) {
 	sse := response.NewSSEWriter(w)
 	sse.SetHeaders()

@@ -103,6 +103,13 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	promptTokens := estimatePromptTokens(req)
 	responseModel := runtimecfg.ResponseModelForRequest(r.Context(), req.Model)
 
+	if required, name := toolChoiceRequiresCall(req.ToolChoice); required {
+		if tool := pickTool(req.Tools, name); tool != nil {
+			serveToolCallResponse(r.Context(), w, req, tool, responseModel, promptTokens)
+			return
+		}
+	}
+
 	cb := backend.Resolve(r.Context(), h.generator, h.ollamaHTTP, h.wasmGenerator)
 	genReq := backend.GenerateRequest{
 		Messages: openaiToChatMessages(req),
@@ -213,6 +220,36 @@ func estimatePromptTokens(req ChatCompletionRequest) int {
 
 func labelsFromContext(_ context.Context) map[string]string {
 	return map[string]string{}
+}
+
+func serveToolCallResponse(ctx context.Context, w http.ResponseWriter, req ChatCompletionRequest, tool *Tool, model string, promptTokens int) {
+	args := backend.SynthArgs(tool.Function.Parameters)
+	tc := ToolCall{
+		ID:   newToolCallID(),
+		Type: "function",
+		Function: ToolCallFunction{
+			Name:      tool.Function.Name,
+			Arguments: string(args),
+		},
+	}
+	if req.Stream {
+		streamToolCallCompletions(ctx, w, tc, model, promptTokens, includeUsage(req))
+		return
+	}
+	resp := ChatCompletionResponse{
+		ID:      fmt.Sprintf("chatcmpl-zolem%d", time.Now().UnixNano()),
+		Object:  "chat.completion",
+		Created: time.Now().Unix(),
+		Model:   model,
+		Choices: []Choice{{
+			Index:        0,
+			Message:      Message{Role: "assistant", ToolCalls: []ToolCall{tc}},
+			FinishReason: "tool_calls",
+		}},
+		Usage: Usage{PromptTokens: promptTokens, CompletionTokens: 1, TotalTokens: promptTokens + 1},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func openaiToChatMessages(req ChatCompletionRequest) []ollama.ChatMessage {

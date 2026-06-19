@@ -203,6 +203,10 @@ func newMessageID() string {
 	return "msg_zolem_" + fmt.Sprintf("%016x", pseudoRandID())
 }
 
+func newToolUseID() string {
+	return "toolu_zolem_" + fmt.Sprintf("%016x", pseudoRandID())
+}
+
 func pseudoRandID() uint64 {
 	return atomic.AddUint64(&pseudoCounter, 1)
 }
