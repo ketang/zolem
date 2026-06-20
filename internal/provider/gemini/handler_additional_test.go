@@ -370,6 +370,18 @@ func TestGenerateContent_InvalidActionSuffix(t *testing.T) {
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status: got %d, want 404", rr.Code)
 	}
+	var envelope struct {
+		Error struct {
+			Code   int    `json:"code"`
+			Status string `json:"status"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode error envelope: %v", err)
+	}
+	if envelope.Error.Status != "NOT_FOUND" {
+		t.Errorf("error status: got %q, want NOT_FOUND", envelope.Error.Status)
+	}
 }
 
 func TestGenerateContent_V1BetaRoutingUsesVersion(t *testing.T) {

@@ -39,8 +39,8 @@ func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator 
 	h.mux.Get("/v1/responses", h.handleResponses)
 	h.mux.Get("/v1/models", h.handleListModels)
 	h.mux.Get("/v1/models/*", h.handleListModels)
-	h.mux.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		writeInvalidRequest(r.Context(), w, "Not Found")
+	h.mux.NotFound(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusNotFound, "invalid_request_error", "Not found.", nil)
 	})
 	return h
 }
