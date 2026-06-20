@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1129,6 +1130,47 @@ func TestZolemcOllamaUpstreamFlagE2E(t *testing.T) {
 	)
 	if !strings.Contains(result.stdout, `"ollama_upstream":"http://127.0.0.1:11434"`) {
 		t.Fatalf("profile response missing ollama_upstream:\n%s", result.stdout)
+	}
+}
+
+// TestZolemcStreamDelaySeedFlag verifies that zolemc profiles create accepts
+// -stream-delay-seed and forwards it to the admin API inside the stream_delay
+// payload. Seed is a *int64 on the profile, so the flag must only set the
+// pointer when explicitly provided.
+func TestZolemcStreamDelaySeedFlag(t *testing.T) {
+	var capturedBody []byte
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut && req.URL.Path == "/_zolem/profiles/seed-test" {
+			capturedBody, _ = io.ReadAll(req.Body)
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"name":"seed-test","backend":"lorem"}`)
+			return
+		}
+		t.Errorf("unexpected request: %s %s", req.Method, req.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(admin.Close)
+
+	var stdout, stderr bytes.Buffer
+	args := []string{"-json", "-admin-url", admin.URL,
+		"profiles", "create", "seed-test", "-stream-delay-seed", "42"}
+	if err := run(context.Background(), args, &stdout, &stderr); err != nil {
+		t.Fatalf("profiles create with -stream-delay-seed failed: %v\nstderr:\n%s", err, stderr.String())
+	}
+
+	var payload struct {
+		StreamDelay struct {
+			Seed *int64 `json:"seed"`
+		} `json:"stream_delay"`
+	}
+	if err := json.Unmarshal(capturedBody, &payload); err != nil {
+		t.Fatalf("decode captured PUT body: %v\nbody:\n%s", err, capturedBody)
+	}
+	if payload.StreamDelay.Seed == nil {
+		t.Fatalf("stream_delay.seed missing from payload:\n%s", capturedBody)
+	}
+	if *payload.StreamDelay.Seed != 42 {
+		t.Fatalf("stream_delay.seed = %d, want 42\nbody:\n%s", *payload.StreamDelay.Seed, capturedBody)
 	}
 }
 
