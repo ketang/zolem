@@ -5,12 +5,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/ketang/zolem/internal/provider/backend"
 	"github.com/ketang/zolem/internal/response"
 	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
+
+var chatcmplCounter uint64
+
+// newChatcmplID returns a unique streaming completion ID. Concurrent callers
+// must never collide.
+func newChatcmplID() string {
+	return fmt.Sprintf("chatcmpl-zolem%016x", atomic.AddUint64(&chatcmplCounter, 1))
+}
 
 // streamChatCompletions streams a response via ContentBackend.Stream, emitting
 // OpenAI chat.completion.chunk SSE events. It replaces both the old
@@ -20,7 +29,7 @@ func streamChatCompletions(ctx context.Context, w http.ResponseWriter, cb backen
 	sse := response.NewSSEWriter(w)
 	sse.SetHeaders()
 
-	id := fmt.Sprintf("chatcmpl-zolem%d", time.Now().UnixNano())
+	id := newChatcmplID()
 	created := time.Now().Unix()
 
 	firstChunk := map[string]any{
@@ -85,7 +94,7 @@ func streamToolCallCompletions(ctx context.Context, w http.ResponseWriter, tc To
 	sse := response.NewSSEWriter(w)
 	sse.SetHeaders()
 
-	id := fmt.Sprintf("chatcmpl-zolem%d", time.Now().UnixNano())
+	id := newChatcmplID()
 	created := time.Now().Unix()
 
 	// Role chunk
@@ -150,7 +159,7 @@ func streamResponse(ctx context.Context, w http.ResponseWriter, model string, to
 	sse.SetHeaders()
 	delay := runtimecfg.StreamDelayForRequest(ctx)
 
-	id := fmt.Sprintf("chatcmpl-zolem%d", time.Now().UnixNano())
+	id := newChatcmplID()
 	created := time.Now().Unix()
 
 	firstChunk := map[string]any{
