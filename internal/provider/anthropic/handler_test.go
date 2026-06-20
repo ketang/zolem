@@ -47,6 +47,40 @@ func TestMessages_MissingAuthHeader(t *testing.T) {
 	}
 }
 
+func TestNotFound_ReturnsNative404(t *testing.T) {
+	h := newHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "/v1/does-not-exist", nil)
+	rr := httptest.NewRecorder()
+
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status: got %d, want 404. body: %s", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("content-type: got %q, want application/json", ct)
+	}
+	var envelope struct {
+		Type  string `json:"type"`
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode error envelope: %v", err)
+	}
+	if envelope.Type != "error" {
+		t.Errorf("envelope type: got %q, want error", envelope.Type)
+	}
+	if envelope.Error.Type != "not_found_error" {
+		t.Errorf("error type: got %q, want not_found_error", envelope.Error.Type)
+	}
+	if envelope.Error.Message == "" {
+		t.Error("expected non-empty error message")
+	}
+}
+
 func TestMessages_LoremResponse_NonStreaming(t *testing.T) {
 	h := newHandler(t)
 	body := `{"model":"claude-3-5-sonnet-20241022","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`

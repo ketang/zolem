@@ -40,8 +40,8 @@ func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator 
 	// the action suffix (:generateContent vs :streamGenerateContent).
 	h.mux.Post("/v1/models/*", h.handleCatchAll("v1"))
 	h.mux.Post("/v1beta/models/*", h.handleCatchAll("v1beta"))
-	h.mux.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		writeInvalidRequest(r.Context(), w, "Not Found")
+	h.mux.NotFound(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Not found.")
 	})
 	return h
 }
@@ -58,7 +58,7 @@ func (h *Handler) handleCatchAll(version string) http.HandlerFunc {
 
 		colonIdx := strings.LastIndex(wildcard, ":")
 		if colonIdx == -1 {
-			http.NotFound(w, r)
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Not found.")
 			return
 		}
 		model := wildcard[:colonIdx]
@@ -78,7 +78,7 @@ func (h *Handler) handleCatchAll(version string) http.HandlerFunc {
 			h.handleCountTokens(w, r)
 			return
 		default:
-			http.NotFound(w, r)
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Not found.")
 			return
 		}
 

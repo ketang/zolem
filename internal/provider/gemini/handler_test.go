@@ -25,6 +25,39 @@ func newHandler(t *testing.T) *gemini.Handler {
 	return gemini.NewHandler(specs.NewValidator(), fixture.NewMatcher(runner, nil, nil), response.NewLoremGenerator(), nil)
 }
 
+func TestNotFound_ReturnsNative404(t *testing.T) {
+	h := newHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "/v1/does-not-exist", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status: got %d, want 404. body: %s", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("content-type: got %q, want application/json", ct)
+	}
+	var envelope struct {
+		Error struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+			Status  string `json:"status"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode error envelope: %v", err)
+	}
+	if envelope.Error.Code != http.StatusNotFound {
+		t.Errorf("error code: got %d, want 404", envelope.Error.Code)
+	}
+	if envelope.Error.Status != "NOT_FOUND" {
+		t.Errorf("error status: got %q, want NOT_FOUND", envelope.Error.Status)
+	}
+	if envelope.Error.Message == "" {
+		t.Error("expected non-empty error message")
+	}
+}
+
 func TestGenerateContent_MissingAuth(t *testing.T) {
 	h := newHandler(t)
 	body := `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`

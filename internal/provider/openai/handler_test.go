@@ -43,6 +43,35 @@ func TestChatCompletions_MissingAuth(t *testing.T) {
 	}
 }
 
+func TestNotFound_ReturnsNative404(t *testing.T) {
+	h := newHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "/v1/does-not-exist", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status: got %d, want 404. body: %s", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("content-type: got %q, want application/json", ct)
+	}
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode error envelope: %v", err)
+	}
+	if envelope.Error.Type != "invalid_request_error" {
+		t.Errorf("error type: got %q, want invalid_request_error", envelope.Error.Type)
+	}
+	if envelope.Error.Message == "" {
+		t.Error("expected non-empty error message")
+	}
+}
+
 func TestChatCompletions_LoremNonStreaming(t *testing.T) {
 	h := newHandler(t)
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
