@@ -967,6 +967,31 @@ Limitations:
 - Only text content is translated. Tool calls, function definitions, and multimodal content are not forwarded.
 - Gemini `systemInstruction` is not translated (the field is not in Zolem's Gemini request type).
 
+## Tool Calling
+
+The local runtime can synthesize a function/tool call when the request
+*mandates* one, so SDKs that force a tool call get a structurally valid
+response instead of lorem text. Synthesis fires only for the "required" mode of
+each provider:
+
+- OpenAI: `tool_choice` of `"required"` or a specific `{"type":"function",...}`
+- Anthropic: `tool_choice` `{"type":"any"}` or `{"type":"tool",...}`
+- Gemini: `toolConfig.functionCallingConfig.mode = "ANY"`
+
+For Gemini specifically:
+
+- `mode = "ANY"` synthesizes a `functionCall` part (honoring
+  `allowedFunctionNames` when present).
+- `mode = "AUTO"` lets the model decide whether to call a function. Because the
+  local runtime does not run a model, it cannot make that decision, so an AUTO
+  request **falls through to the lorem/backend text path and returns a text
+  part — not a `functionCall`**. An SDK expecting a function call in AUTO mode
+  will receive a text response.
+- `mode = "NONE"` likewise returns text.
+
+If you need a guaranteed function call from the local runtime, send
+`mode = "ANY"`.
+
 ## Response Model Policy
 
 Local runtime listeners can shape the provider-visible `model` field without

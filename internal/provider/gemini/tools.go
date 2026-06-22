@@ -3,6 +3,13 @@ package gemini
 // geminiToolCallRequired reports whether the request's ToolConfig mandates a
 // function call (mode == "ANY"). Returns the first matching FunctionDeclaration
 // to call, or nil if no call is required.
+//
+// Only mode "ANY" synthesizes a function call. Modes "AUTO" (let the model
+// decide) and "NONE" return nil and fall through to the lorem/backend text
+// path: the local runtime does not run a model, so it cannot decide to call a
+// function on the request's behalf. An SDK that expects a function call in
+// AUTO mode will therefore receive a text response. See
+// TestFunctionCallModeAUTO_ReturnsText.
 func geminiToolCallRequired(req GenerateContentRequest) *FunctionDeclaration {
 	if req.ToolConfig == nil || req.ToolConfig.FunctionCallingConfig == nil {
 		return nil
