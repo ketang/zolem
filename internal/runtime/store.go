@@ -154,6 +154,40 @@ func ValidateLoopbackAddr(addr string) error {
 	return validateLoopbackAddr(addr)
 }
 
+// stripHostPort normalizes a Host-header or allowlist value to a bare hostname
+// by removing any trailing port and IPv6 brackets.
+func stripHostPort(value string) string {
+	host := value
+	if h, _, err := net.SplitHostPort(value); err == nil {
+		host = h
+	} else {
+		// No "host:port" split: a bare IPv6 literal still carries brackets.
+		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	}
+	return host
+}
+
+// NormalizeAllowedHosts strips ports and IPv6 brackets from each allowlist
+// entry so that values written as "host:port" still match the bare host that
+// HostHeaderAllowed extracts from an incoming Host header. Without this, an
+// entry like "zolem.test:8090" would never match and every request would be
+// silently rejected with a 403. Blank entries (empty after trimming) are
+// dropped. A nil or empty input is returned unchanged.
+func NormalizeAllowedHosts(allow []string) []string {
+	if len(allow) == 0 {
+		return allow
+	}
+	out := make([]string, 0, len(allow))
+	for _, a := range allow {
+		host := stripHostPort(strings.TrimSpace(a))
+		if host == "" {
+			continue
+		}
+		out = append(out, host)
+	}
+	return out
+}
+
 // HostHeaderAllowed reports whether an HTTP Host header may target a
 // loopback-only listener. It permits loopback IP literals, "localhost", and any
 // host in the explicit allowlist; everything else is rejected. This guards the
@@ -161,13 +195,7 @@ func ValidateLoopbackAddr(addr string) error {
 // resolves an attacker-controlled name to 127.0.0.1 and drives the API with the
 // attacker's hostname in the Host header.
 func HostHeaderAllowed(hostHeader string, allow []string) bool {
-	host := hostHeader
-	if h, _, err := net.SplitHostPort(hostHeader); err == nil {
-		host = h
-	} else {
-		// No "host:port" split: a bare IPv6 literal still carries brackets.
-		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
-	}
+	host := stripHostPort(hostHeader)
 	if host == "" {
 		return false
 	}

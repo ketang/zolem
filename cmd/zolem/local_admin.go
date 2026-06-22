@@ -24,6 +24,8 @@ type localAdminOptions struct {
 	// AllowedHosts are extra Host-header values accepted on the admin and data
 	// listeners in addition to loopback literals and "localhost". Empty by
 	// default, which keeps the listeners reachable only as a loopback address.
+	// Entries are normalized to bare hostnames on load (any port is stripped),
+	// so "zolem.test:8090" and "zolem.test" are equivalent.
 	AllowedHosts []string
 }
 
@@ -112,7 +114,7 @@ func newLocalControlPlane(opts localAdminOptions, deps startupDeps) *localContro
 		tls:          opts.TLS,
 		startServer:  startLocalServer,
 		counters:     runtimecfg.NewProfileCounters(),
-		allowedHosts: opts.AllowedHosts,
+		allowedHosts: runtimecfg.NormalizeAllowedHosts(opts.AllowedHosts),
 		listeners:    make(map[string]*managedLocalListener),
 	}
 }

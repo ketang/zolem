@@ -331,6 +331,49 @@ func TestHostHeaderAllowed(t *testing.T) {
 	}
 }
 
+func TestNormalizeAllowedHosts(t *testing.T) {
+	cases := []struct {
+		name  string
+		allow []string
+		want  []string
+	}{
+		{"nil", nil, nil},
+		{"bare host unchanged", []string{"zolem.test"}, []string{"zolem.test"}},
+		{"strips port", []string{"zolem.test:8090"}, []string{"zolem.test"}},
+		{"strips ipv6 brackets and port", []string{"[::1]:8090"}, []string{"::1"}},
+		{"strips bare ipv6 brackets", []string{"[::1]"}, []string{"::1"}},
+		{"trims whitespace", []string{"  zolem.test:8090  "}, []string{"zolem.test"}},
+		{"drops empty entries", []string{"", "  ", "zolem.test:8090"}, []string{"zolem.test"}},
+		{"mixed", []string{"a.test", "b.test:443"}, []string{"a.test", "b.test"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := runtimecfg.NormalizeAllowedHosts(tc.allow)
+			if len(got) != len(tc.want) {
+				t.Fatalf("NormalizeAllowedHosts(%v) = %v, want %v", tc.allow, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("NormalizeAllowedHosts(%v) = %v, want %v", tc.allow, got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// TestHostHeaderAllowedWithNormalizedAllowlist guards the end-to-end fix: an
+// allowlist entry that carried a port must match once normalized, so a user who
+// writes "zolem.test:8090" does not silently get a 403 on every request.
+func TestHostHeaderAllowedWithNormalizedAllowlist(t *testing.T) {
+	allow := runtimecfg.NormalizeAllowedHosts([]string{"zolem.test:8090"})
+	if !runtimecfg.HostHeaderAllowed("zolem.test:8090", allow) {
+		t.Errorf("host with port should match normalized allowlist entry")
+	}
+	if !runtimecfg.HostHeaderAllowed("zolem.test", allow) {
+		t.Errorf("bare host should match normalized allowlist entry")
+	}
+}
+
 func TestValidateProfileRejectsErrorTypeWithoutErrorBackend(t *testing.T) {
 	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
 		Name:      "demo",

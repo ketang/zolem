@@ -773,6 +773,25 @@ func TestHostGuard_AllowsConfiguredHost(t *testing.T) {
 	}
 }
 
+// TestHostGuard_AllowsConfiguredHostWithPort guards against the silent-403 bug:
+// an AllowedHosts entry written with a port (e.g. "zolem.test:8090") is
+// normalized on load so requests still pass the host guard instead of being
+// rejected because the entry never matched the port-stripped Host header.
+func TestHostGuard_AllowsConfiguredHostWithPort(t *testing.T) {
+	control := newTestLocalControlPlane(t, localAdminOptions{AllowedHosts: []string{"zolem.test:8090"}})
+	handler := hostGuard(buildLocalAdminHandler(control), control.allowedHosts)
+
+	for _, host := range []string{"zolem.test:8090", "zolem.test"} {
+		req := httptestRequest(http.MethodGet, "/_zolem/health", bytes.NewBuffer(nil))
+		req.Host = host
+		resp := doRequest(t, handler, req)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("host %q: got %d, want 200", host, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+}
+
 func TestLocalAdminHandler_ProfilePublicOllamaUpstreamRejected(t *testing.T) {
 	control := newTestLocalControlPlane(t, localAdminOptions{})
 	handler := buildLocalAdminHandler(control)
