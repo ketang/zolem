@@ -2,7 +2,6 @@ package backend
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/ketang/zolem/internal/fixture"
@@ -145,10 +144,10 @@ type wasmContentBackend struct{ gen *wasmgen.Generator }
 
 func (b *wasmContentBackend) Tokens(ctx context.Context, req GenerateRequest) ([]string, error) {
 	if b.gen == nil {
-		return nil, fmt.Errorf("wasm generator is not configured")
+		return nil, &BackendError{Msg: "the requested backend is not available"}
 	}
 	if req.FixtureMatch == nil {
-		return nil, fmt.Errorf("wasm backend requires a fixture match request")
+		return nil, &BackendError{Msg: "the requested backend is not available"}
 	}
 	return b.gen.Generate(ctx, *req.FixtureMatch)
 }
