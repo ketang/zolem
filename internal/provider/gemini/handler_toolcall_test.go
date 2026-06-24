@@ -100,6 +100,37 @@ func TestFunctionCallModeNONE_ReturnsText(t *testing.T) {
 	}
 }
 
+func TestFunctionCallModeAUTO_ReturnsText(t *testing.T) {
+	// mode AUTO lets the model decide whether to call a function. The local
+	// runtime does not run a model, so it does not synthesize a function call:
+	// only mode ANY (a mandatory call) is synthesized. AUTO therefore falls
+	// through to the lorem/backend text path. An SDK expecting a function call
+	// in AUTO mode will get a text response. See geminiToolCallRequired.
+	h := newHandler(t)
+	body := `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[` + geminiFuncDecl + `],"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}}}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/models/gemini-2.0-flash:generateContent", bytes.NewBufferString(body))
+	req.Header.Set("x-goog-api-key", "test-key")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(rr.Body).Decode(&resp)
+	candidates := resp["candidates"].([]any)
+	candidate := candidates[0].(map[string]any)
+	content := candidate["content"].(map[string]any)
+	parts := content["parts"].([]any)
+	part := parts[0].(map[string]any)
+	if _, hasFc := part["functionCall"]; hasFc {
+		t.Error("mode AUTO should return text, not a synthesized functionCall")
+	}
+	if _, hasText := part["text"]; !hasText {
+		t.Error("mode AUTO should return a text part")
+	}
+}
+
 func TestFunctionCallAllowedNames_Filtered(t *testing.T) {
 	h := newHandler(t)
 	twoFuncs := `[{"functionDeclarations":[{"name":"get_weather"},{"name":"search","parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}}]}]`
