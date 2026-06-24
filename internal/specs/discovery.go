@@ -40,6 +40,7 @@ type discoverySchema struct {
 	Properties           map[string]discoverySchema `json:"properties,omitempty"`
 	Items                *discoverySchema           `json:"items,omitempty"`
 	AdditionalProperties *discoverySchema           `json:"additionalProperties,omitempty"`
+	OneOf                []discoverySchema          `json:"oneOf,omitempty"`
 }
 
 // LoadProviderSchema normalizes provider-specific source documents before
@@ -188,6 +189,17 @@ func (b discoveryBuilder) convert(schema discoverySchema) (map[string]any, error
 	}
 	if len(schema.Enum) > 0 {
 		out["enum"] = slices.Clone(schema.Enum)
+	}
+	if len(schema.OneOf) > 0 {
+		branches := make([]any, 0, len(schema.OneOf))
+		for i, branch := range schema.OneOf {
+			normalized, err := b.convert(branch)
+			if err != nil {
+				return nil, fmt.Errorf("oneOf[%d]: %w", i, err)
+			}
+			branches = append(branches, normalized)
+		}
+		out["oneOf"] = branches
 	}
 
 	switch schemaType(schema) {

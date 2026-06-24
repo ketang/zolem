@@ -54,11 +54,60 @@
     },
     "Part": {
       "type": "object",
-      "required": [
-        "text"
+      "oneOf": [
+        {
+          "required": [
+            "text"
+          ]
+        },
+        {
+          "required": [
+            "functionCall"
+          ]
+        },
+        {
+          "required": [
+            "inlineData"
+          ]
+        }
       ],
       "properties": {
         "text": {
+          "type": "string"
+        },
+        "functionCall": {
+          "$ref": "FunctionCall"
+        },
+        "inlineData": {
+          "$ref": "Blob"
+        }
+      }
+    },
+    "FunctionCall": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "args": {
+          "type": "object"
+        }
+      }
+    },
+    "Blob": {
+      "type": "object",
+      "required": [
+        "mimeType",
+        "data"
+      ],
+      "properties": {
+        "mimeType": {
+          "type": "string"
+        },
+        "data": {
           "type": "string"
         }
       }

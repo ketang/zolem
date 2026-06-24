@@ -33,6 +33,46 @@ func TestNormalizeGeminiDiscovery_ValidatesGenerateContentRequests(t *testing.T)
 	}
 }
 
+func TestNormalizeGeminiDiscovery_AllowsNonTextParts(t *testing.T) {
+	for _, fixture := range []string{"gemini-discovery-v1.json", "gemini-discovery-v1beta.json"} {
+		t.Run(fixture, func(t *testing.T) {
+			data := readDiscoveryFixture(t, fixture)
+
+			normalized, err := specs.NormalizeGeminiDiscovery("v1", data)
+			if err != nil {
+				t.Fatalf("normalize discovery: %v", err)
+			}
+
+			validator := specs.NewValidator()
+			if err := validator.LoadRaw("gemini", "v1", normalized); err != nil {
+				t.Fatalf("load normalized schema: %v", err)
+			}
+
+			functionCall := []byte(`{"contents":[{"role":"model","parts":[{"functionCall":{"name":"get_weather","args":{"location":"SF"}}}]}]}`)
+			if err := validator.Validate("gemini", "v1", functionCall); err != nil {
+				t.Fatalf("expected functionCall part to validate, got %v", err)
+			}
+
+			inlineData := []byte(`{"contents":[{"role":"user","parts":[{"inlineData":{"mimeType":"image/png","data":"aGVsbG8="}}]}]}`)
+			if err := validator.Validate("gemini", "v1", inlineData); err != nil {
+				t.Fatalf("expected inlineData part to validate, got %v", err)
+			}
+
+			// An empty part still violates the oneof constraint.
+			empty := []byte(`{"contents":[{"role":"user","parts":[{}]}]}`)
+			if err := validator.Validate("gemini", "v1", empty); err == nil {
+				t.Fatal("expected empty part to fail validation")
+			}
+
+			// A part setting two variants at once violates oneof exactness.
+			both := []byte(`{"contents":[{"role":"user","parts":[{"text":"hi","functionCall":{"name":"f"}}]}]}`)
+			if err := validator.Validate("gemini", "v1", both); err == nil {
+				t.Fatal("expected part with multiple variants to fail validation")
+			}
+		})
+	}
+}
+
 func TestLoadProviderSchema_GeminiDiscoveryVersions(t *testing.T) {
 	validator := specs.NewValidator()
 
