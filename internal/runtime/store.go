@@ -307,6 +307,13 @@ func validateOllamaUpstream(profile RuntimeProfile) error {
 	if u.Host == "" {
 		return errors.New("ollama_upstream must include a host")
 	}
+	// Link-local addresses (IPv4 169.254.0.0/16, IPv6 fe80::/10) are never
+	// permitted, even with the opt-out flag: they include the cloud metadata
+	// endpoint 169.254.169.254 (AWS/GCP/Azure) and forwarding to them enables
+	// SSRF against instance metadata.
+	if ollamaUpstreamHostIsLinkLocal(u.Hostname()) {
+		return errors.New("ollama_upstream host must not be a link-local address (169.254.0.0/16 or fe80::/10); these include the cloud metadata endpoint and cannot be forwarded to even with allow_external_ollama_upstream")
+	}
 	if profile.AllowExternalOllamaUpstream {
 		return nil
 	}
@@ -314,6 +321,20 @@ func validateOllamaUpstream(profile RuntimeProfile) error {
 		return errors.New("ollama_upstream host must be loopback or a private (RFC1918/RFC4193) address; set allow_external_ollama_upstream to forward to an external host")
 	}
 	return nil
+}
+
+// ollamaUpstreamHostIsLinkLocal reports whether an ollama_upstream host is an
+// IP literal in a link-local range (IPv4 169.254.0.0/16 or IPv6 fe80::/10).
+// IsLinkLocalUnicast covers both families and the cloud metadata IP
+// 169.254.169.254. A non-literal hostname returns false here; resolving it is
+// itself a rebinding vector, so name-based external targets stay gated behind
+// the opt-out flag and the private-host check.
+func ollamaUpstreamHostIsLinkLocal(host string) bool {
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLinkLocalUnicast()
 }
 
 // ollamaUpstreamHostIsPrivate reports whether an ollama_upstream host stays

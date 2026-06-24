@@ -304,6 +304,26 @@ func TestValidateProfile_OllamaUpstreamPublicHostAllowedWithOptOut(t *testing.T)
 	}
 }
 
+func TestValidateProfile_OllamaUpstreamLinkLocalRejectedEvenWithOptOut(t *testing.T) {
+	for _, upstream := range []string{
+		"http://169.254.169.254",         // AWS/GCP/Azure cloud metadata endpoint
+		"http://169.254.169.254:80",      // metadata endpoint with explicit port
+		"http://169.254.1.1:11434",       // other IPv4 link-local
+		"http://[fe80::1]:11434",         // IPv6 link-local
+		"http://[fe80::a00:27ff:fe00:1]", // IPv6 link-local
+	} {
+		err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+			Name:                        "test",
+			Backend:                     "ollama",
+			OllamaUpstream:              upstream,
+			AllowExternalOllamaUpstream: true,
+		})
+		if err == nil {
+			t.Fatalf("link-local upstream %q must be rejected even with opt-out", upstream)
+		}
+	}
+}
+
 func TestHostHeaderAllowed(t *testing.T) {
 	cases := []struct {
 		host  string
