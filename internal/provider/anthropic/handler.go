@@ -39,8 +39,8 @@ func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator 
 	h.mux.Post("/v1/messages/count_tokens", h.handleCountTokens)
 	h.mux.Get("/v1/models", h.handleListModels)
 	h.mux.Get("/v1/models/{model}", h.handleListModels)
-	h.mux.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		writeInvalidRequest(r.Context(), w, "Not Found")
+	h.mux.NotFound(func(w http.ResponseWriter, _ *http.Request) {
+		writeErrorWithRequestID(w, http.StatusNotFound, "not_found_error", "Not found.", "req_zolem_not_found")
 	})
 	return h
 }
