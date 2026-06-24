@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -17,6 +16,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ketang/zolem/internal/freeport"
 )
 
 var alwaysMatchWASM = []byte{
@@ -283,12 +284,7 @@ func mustMkdir(t *testing.T, dir string) {
 
 func pickPort(t *testing.T) int {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Skipf("loopback listeners are not permitted in this environment: %v", err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
+	return freeport.Pick(t)
 }
 
 func repoRoot(t *testing.T) string {

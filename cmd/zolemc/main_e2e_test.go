@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ketang/zolem/internal/admincli"
+	"github.com/ketang/zolem/internal/freeport"
 )
 
 // Each binary is compiled once per test process (with the normal build cache)
@@ -1112,12 +1112,7 @@ func (s *localAdminService) Close() {
 
 func pickPort(t *testing.T) int {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Skipf("loopback listeners are not permitted in this environment: %v", err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
+	return freeport.Pick(t)
 }
 
 // TestZolemcOllamaUpstreamFlagE2E verifies that zolemc profiles create accepts
