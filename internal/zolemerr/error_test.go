@@ -26,7 +26,7 @@ func TestWrite(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if payload["zolem_error"] != "failed" {
-		t.Fatalf("zolem_error = %q", payload["zolem_error"])
+	if payload["error"] != "failed" {
+		t.Fatalf("error = %q", payload["error"])
 	}
 }

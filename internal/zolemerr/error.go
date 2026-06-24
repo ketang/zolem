@@ -9,5 +9,5 @@ func Write(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Zolem-Error", "true")
 	w.WriteHeader(http.StatusBadGateway)
-	_ = json.NewEncoder(w).Encode(map[string]string{"zolem_error": message})
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
