@@ -142,6 +142,7 @@ func runProfiles(ctx context.Context, client admincli.Client, opts admincli.Opti
 		var wasmModuleFile string
 		var wasmTimeoutMS int
 		var streamDelayMS, streamDelayMinMS, streamDelayMaxMS int
+		var streamDelaySeed int64
 		name, flagArgs := splitOptionalLeadingName(args[1:])
 		fs.StringVar(&payload.Backend, "backend", "lorem", "backend: lorem, faker, fixture, ollama, wasm, or error")
 		fs.StringVar(&payload.BackendModel, "backend-model", "", "backend model override")
@@ -157,6 +158,7 @@ func runProfiles(ctx context.Context, client admincli.Client, opts admincli.Opti
 		fs.IntVar(&streamDelayMS, "stream-delay-ms", 0, "fixed streaming delay in milliseconds")
 		fs.IntVar(&streamDelayMinMS, "stream-delay-min-ms", 0, "minimum streaming delay in milliseconds (uniform mode)")
 		fs.IntVar(&streamDelayMaxMS, "stream-delay-max-ms", 0, "maximum streaming delay in milliseconds (uniform mode)")
+		fs.Int64Var(&streamDelaySeed, "stream-delay-seed", 0, "seed for deterministic streaming pacing (uniform mode); omitted when unset")
 		if err := fs.Parse(flagArgs); err != nil {
 			return err
 		}
@@ -174,6 +176,10 @@ func runProfiles(ctx context.Context, client admincli.Client, opts admincli.Opti
 		}
 		if flagWasSet(fs, "stream-delay-max-ms") {
 			payload.StreamDelay.MaxMS = streamDelayMaxMS
+		}
+		if flagWasSet(fs, "stream-delay-seed") {
+			seed := streamDelaySeed
+			payload.StreamDelay.Seed = &seed
 		}
 		backendSet := flagWasSet(fs, "backend")
 		wasmTimeoutSet := flagWasSet(fs, "wasm-timeout-ms")
