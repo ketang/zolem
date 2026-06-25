@@ -5,8 +5,11 @@ examples, and [INSTALL.md](../INSTALL.md) for installation.
 
 ## Guides
 
-- [local-runtime.md](local-runtime.md) — full local runtime and fixed-listener
-  reference: profiles, listeners, backends, fixtures, and the flag reference.
+- [local-runtime.md](local-runtime.md) — overview of the two local execution modes
+- [admin-mode.md](admin-mode.md) — local runtime mode (admin server): profiles, listeners, backends, call history
+- [fixed-listener.md](fixed-listener.md) — fixed-listener mode: single-listener startup, call recording
+- [fixture-authoring.md](fixture-authoring.md) — fixture authoring: namespace layout, fixtures.yaml, templated fixtures
+- [recipes/bubblewrap.md](recipes/bubblewrap.md) — no-egress client smoke tests with Bubblewrap
 - [wasm-modules.md](wasm-modules.md) — building freestanding WASM content
   generators and selector/matcher modules.
 - [testing-e2e.md](testing-e2e.md) — the end-to-end testing standard for the

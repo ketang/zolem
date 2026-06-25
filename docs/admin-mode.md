@@ -1,0 +1,703 @@
+# Local Runtime Mode
+
+Local runtime mode lets you create mock behavior at runtime through a localhost
+control plane instead of restarting Zolem for each setup change.
+
+This mode is designed for local development only right now:
+
+- profiles are stored in memory
+- listeners are stored in memory
+- all addresses must bind to loopback
+- there is no auth or TTL enforcement yet
+- the current local runtime backends are `lorem`, `faker`, `fixture`, `ollama`, `wasm`, and `error`
+- TLS is available when you provide local cert and key files
+
+## Concepts
+
+There are two resources:
+
+- profile: describes the response behavior, such as `lorem` or `faker`
+- listener: binds one local address to one provider and one profile
+
+Each listener exposes:
+
+- provider-compatible endpoints such as `/v1/chat/completions` or `/v1/messages`
+- a local health endpoint at `/_zolem/health`
+- a local introspection endpoint at `/_zolem/state`
+
+Profile fields you can use today:
+
+- `backend`: `lorem`, `faker`, `fixture`, `ollama`, `wasm`, or `error`
+- `error_type`: required when `backend` is `error`
+- `fixture_namespace`: optional relative subdirectory under `-local-fixtures-dir`
+- `response_model_policy`: `echo_request`, `force_literal`, or `force_backend`
+- `response_model`: required when `response_model_policy` is `force_literal`
+- `backend_model`: used when `response_model_policy` is `force_backend`; also selects the model sent to Ollama when `backend` is `ollama`
+- `ollama_upstream`: base URL of the Ollama server (default `http://localhost:11434`); must be `http` or `https`
+- `wasm_module_base64`: required when `backend` is `wasm`; base64-encoded binary WASM generator module
+- `wasm_generate_timeout_ms`: optional timeout for one WASM generation interaction; defaults to 100ms and must be between 1 and 5000 when set
+- `stream_delay`: optional streaming delay config for generated chunks
+
+## Error Backend
+
+The `error` backend is for deterministic client error-path testing.
+
+Goals:
+
+- an error profile should deterministically fail every provider request on that listener
+- provider error payloads should always be high fidelity when Zolem emits an error
+- profile config should stay semantic and provider-agnostic
+
+Profile shape:
+
+```json
+{
+  "backend": "error",
+  "error_type": "authentication"
+}
+```
+
+Supported `error_type` values:
+
+- `authentication`
+- `permission`
+- `invalid_request`
+- `rate_limit`
+- `server_error`
+
+Behavior:
+
+- `backend=error` means the listener always returns an error
+- the selected `error_type` maps to a provider-native status code and body
+- Zolem owns the exact message and envelope shape for fidelity
+- profile config should not override the error message, because custom messages reduce fidelity with the reference provider API
+- success backends such as `lorem`, `faker`, and `fixture` are bypassed entirely for error profiles
+
+Example:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"backend":"error","error_type":"rate_limit"}' \
+  http://127.0.0.1:18090/_zolem/profiles/rate-limit-demo
+```
+
+Bind that profile to a listener:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"addr":"127.0.0.1:0","provider":"openai","profile":"rate-limit-demo"}' \
+  http://127.0.0.1:18090/_zolem/listeners/openai-rate-limit
+```
+
+Every request sent to that listener's provider endpoint returns the configured
+provider-native error instead of a generated or fixture-backed success response.
+
+For the fixed-listener equivalent, see [fixed-listener.md#error-backend](fixed-listener.md#error-backend).
+
+## Start The Admin Server
+
+Run:
+
+```bash
+go run ./cmd/zolem -local-admin-addr 127.0.0.1:18090
+```
+
+To run the admin server over HTTPS:
+
+```bash
+./scripts/generate-certs.sh
+
+go run ./cmd/zolem \
+  -local-admin-addr 127.0.0.1:18443 \
+  -local-tls-cert certs/localhost.pem \
+  -local-tls-key certs/localhost-key.pem
+```
+
+Health check:
+
+```bash
+curl http://127.0.0.1:18090/_zolem/health
+```
+
+HTTPS health check:
+
+```bash
+curl https://127.0.0.1:18443/_zolem/health
+```
+
+Expected response:
+
+```json
+{"status":"ok"}
+```
+
+## Manage Profiles
+
+Create a `lorem` profile:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"backend":"lorem"}' \
+  http://127.0.0.1:18090/_zolem/profiles/demo
+```
+
+Create a `faker` profile:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"backend":"faker"}' \
+  http://127.0.0.1:18090/_zolem/profiles/faker-demo
+```
+
+Create a `fixture` profile:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"backend":"fixture"}' \
+  http://127.0.0.1:18090/_zolem/profiles/fixture-demo
+```
+
+Create an `error` profile:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"backend":"error","error_type":"rate_limit"}' \
+  http://127.0.0.1:18090/_zolem/profiles/error-demo
+```
+
+Create a profile that forces the returned `model` field:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"backend":"lorem","response_model_policy":"force_literal","response_model":"mock-openai-model"}' \
+  http://127.0.0.1:18090/_zolem/profiles/openai-shaped
+```
+
+List profiles:
+
+```bash
+curl http://127.0.0.1:18090/_zolem/profiles
+```
+
+Delete a profile:
+
+```bash
+curl -X DELETE http://127.0.0.1:18090/_zolem/profiles/demo
+```
+
+Notes:
+
+- a profile cannot be deleted while a listener is still using it
+- unsupported backends are rejected at profile creation time
+- `error` profiles require `error_type`
+- `fixture` profiles only become usable when the admin server or fixed listener was started with `-local-fixtures-dir`
+- `error_type` is only valid when `backend=error`
+- `fixture_namespace` must be a normalized relative subdirectory such as `team-a` or `team-a/smoke`
+- `response_model_policy=force_literal` requires `response_model`
+- `response_model_policy=force_backend` uses `backend_model` when present and otherwise falls back to the request model
+- `wasm_module_base64` and `wasm_generate_timeout_ms` are only valid when `backend=wasm`
+
+## Manage Listeners
+
+Create a listener on an automatically assigned port:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"addr":"127.0.0.1:0","provider":"openai","profile":"demo"}' \
+  http://127.0.0.1:18090/_zolem/listeners/openai-demo
+```
+
+Example response:
+
+```json
+{
+  "name": "openai-demo",
+  "addr": "127.0.0.1:19001",
+  "provider": "openai",
+  "profile": "demo",
+  "backend": "lorem",
+  "base_url": "http://127.0.0.1:19001"
+}
+```
+
+Create an HTTPS listener when the admin server was started with local TLS certs:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"addr":"127.0.0.1:0","provider":"openai","profile":"demo","tls":true}' \
+  https://127.0.0.1:18443/_zolem/listeners/openai-demo
+```
+
+List listeners:
+
+```bash
+curl http://127.0.0.1:18090/_zolem/listeners
+```
+
+Delete a listener:
+
+```bash
+curl -X DELETE http://127.0.0.1:18090/_zolem/listeners/openai-demo
+```
+
+Listener rules:
+
+- the address must be loopback-only
+- the provider must currently be `openai`, `anthropic`, or `gemini`
+- the referenced profile must already exist
+- `tls: true` requires the admin server to have been started with `-local-tls-cert` and `-local-tls-key`
+- `fixture` listeners require the admin server to have been started with `-local-fixtures-dir`
+
+## Call History
+
+Each admin-mode listener keeps an in-memory call history for post-hoc test
+assertions. The history is always recorded for local runtime listeners, is
+scoped to one listener, and disappears when that listener or the admin server
+stops. Fixed-listener mode uses the JSONL recording file described in
+[Call Recording](fixed-listener.md#call-recording) instead; fixed-listener calls are not
+available through the admin API or `zolemc listeners calls`.
+
+Create a listener with the default recording caps:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"addr":"127.0.0.1:0","provider":"openai","profile":"demo"}' \
+  http://127.0.0.1:18090/_zolem/listeners/openai-demo
+```
+
+You can override the caps per listener:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "addr": "127.0.0.1:0",
+    "provider": "openai",
+    "profile": "demo",
+    "record_request_body_cap_bytes": 65536,
+    "record_response_body_cap_bytes": 65536,
+    "record_stream_event_cap": 256
+  }' \
+  http://127.0.0.1:18090/_zolem/listeners/openai-demo
+```
+
+| Field | Default | Purpose |
+| --- | --- | --- |
+| `record_request_body_cap_bytes` | `262144` | Maximum bytes of request body stored in history. Excess bytes are counted in `body_truncated_bytes`. |
+| `record_response_body_cap_bytes` | `262144` | Maximum bytes of response body stored in history. Excess bytes use the same truncation field. |
+| `record_stream_event_cap` | `1024` | Maximum SSE events stored for a streamed response. Excess events are counted in `events_truncated`. |
+
+Caps only limit what is recorded. Zolem still serves the full request and
+response to the client.
+
+List calls through the admin API:
+
+```bash
+curl http://127.0.0.1:18090/_zolem/listeners/openai-demo/calls
+```
+
+Response:
+
+```json
+{
+  "calls": [
+    {
+      "call_id": 1,
+      "listener": "openai-demo",
+      "received_at": "2026-05-22T16:34:12Z",
+      "latency_ms": 12,
+      "request": {
+        "method": "POST",
+        "path": "/v1/chat/completions"
+      },
+      "response": {
+        "status": 200,
+        "stream": null
+      }
+    }
+  ]
+}
+```
+
+Clear the history and reset the next `call_id` to `1`:
+
+```bash
+curl -X DELETE http://127.0.0.1:18090/_zolem/listeners/openai-demo/calls
+```
+
+Response:
+
+```json
+{"cleared": 1}
+```
+
+The same operations are available through `zolemc`:
+
+```bash
+zolemc -admin-url http://127.0.0.1:18090 \
+  listeners calls list openai-demo
+
+zolemc -admin-url http://127.0.0.1:18090 \
+  listeners calls list openai-demo -since 5
+
+zolemc -admin-url http://127.0.0.1:18090 \
+  listeners calls clear openai-demo
+```
+
+`listeners calls list` prints a table with call ID, method, path, status,
+latency, and timestamp. Use `-json` to print the raw `{"calls":[...]}` API
+payload. `-since <call_id>` filters client-side to calls with a higher
+`call_id`; the admin API still returns the full list. For streamed responses,
+the table prefixes the HTTP status with `~`, for example `~200`, to indicate
+the status was sent before streaming completed.
+
+## Fixture Backend
+
+The `fixture` backend uses the existing fixture loader and matcher. Start the
+admin server with a fixture root:
+
+```bash
+go run ./cmd/zolem \
+  -local-admin-addr 127.0.0.1:18090 \
+  -local-fixtures-dir ./testdata/fixtures
+```
+
+See [fixture-authoring.md](fixture-authoring.md) for how to write fixtures,
+organize namespaces, use `fixtures.yaml` selectors, and author templated
+responses.
+
+## WASM Backend
+
+The `wasm` backend lets a profile provide a freestanding WebAssembly content
+generator. The generator returns assistant content only; Zolem still owns the
+OpenAI, Anthropic, and Gemini response envelopes and streaming wire formats.
+
+Profile shape:
+
+```json
+{
+  "backend": "wasm",
+  "wasm_module_base64": "AGFzbQEAAA...",
+  "wasm_generate_timeout_ms": 100,
+  "stream_delay": {
+    "mode": "fixed",
+    "ms": 75
+  }
+}
+```
+
+Create the same profile with `zolemc` from a binary `.wasm` file:
+
+```bash
+zolemc -admin-url http://127.0.0.1:18090 \
+  profiles create wasm-demo \
+  -wasm-module-file ./generator.wasm \
+  -wasm-timeout-ms 100
+# If running from source: go run ./cmd/zolemc -admin-url http://127.0.0.1:18090 ...
+```
+
+`-wasm-module-file` reads and base64-encodes the module for the profile payload.
+When `-backend` is not explicitly set, it selects `backend=wasm`; explicit
+non-WASM backends are rejected with the WASM flags.
+
+For deterministic random streaming pauses:
+
+```json
+{
+  "backend": "wasm",
+  "wasm_module_base64": "AGFzbQEAAA...",
+  "stream_delay": {
+    "mode": "random",
+    "seed": 12345,
+    "min_ms": 40,
+    "max_ms": 250
+  }
+}
+```
+
+The WASM generator receives the same JSON input shape as fixture `match.wasm`:
+
+```json
+{
+  "provider": "openai",
+  "version": "v1",
+  "labels": {},
+  "body": {}
+}
+```
+
+The module must return UTF-8 JSON bytes that decode to `[]string`. For
+non-streaming requests, Zolem joins the strings into one assistant message. For
+streaming requests, Zolem emits each string as one provider-native content
+delta, including empty strings.
+
+Required exports:
+
+```text
+memory
+alloc(len: i32) -> i32
+dealloc(ptr: i32, len: i32)
+generate(input_ptr: i32, input_len: i32) -> i32
+result_ptr(handle: i32) -> i32
+result_len(handle: i32) -> i32
+result_free(handle: i32)
+```
+
+Constraints:
+
+- modules must be binary WASM encoded as base64; WAT text is not accepted
+- modules must not import anything, including WASI or `env`
+- the exported surface must be exactly the required ABI exports above
+- Zolem compiles the module at profile write/listener setup time and creates a fresh WASM instance per request
+- each instance has a fixed 16 MiB host memory limit
+- result bytes are capped at 1 MiB
+- decoded result arrays are capped at 4096 strings
+- empty arrays and empty strings are valid
+- WASM validation, runtime, timeout, or result-shape failures return a Zolem internal error response
+
+Zolem does not require source headers or generated bindings for WASM modules.
+Build instructions and examples for Rust, C, and fixture selection modules are
+in [wasm-modules.md](wasm-modules.md).
+
+## Ollama Backend
+
+The `ollama` backend forwards generation to a local Ollama instance using its
+OpenAI-compatible HTTP API. Unlike the other backends, there is no fallback: if
+Ollama is unreachable or returns an error, the request fails with a
+provider-appropriate 502 error.
+
+Ollama must be running and serving its HTTP API (default `http://localhost:11434`).
+
+Create an ollama profile:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"backend":"ollama","backend_model":"gemma3:4b"}' \
+  http://127.0.0.1:18090/_zolem/profiles/ollama-demo
+```
+
+Create a listener and call it:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"addr":"127.0.0.1:0","provider":"openai","profile":"ollama-demo"}' \
+  http://127.0.0.1:18090/_zolem/listeners/openai-ollama
+
+curl -X POST \
+  -H 'Authorization: Bearer sk-test' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}' \
+  http://127.0.0.1:19001/v1/chat/completions
+```
+
+The request arrives shaped as OpenAI, Anthropic, or Gemini (depending on the
+listener's provider), and Zolem translates it into an OpenAI-compatible chat
+completion request for Ollama. The response text is wrapped back in the
+provider's native envelope.
+
+Streaming works: if the incoming request asks for streaming, Zolem streams from
+Ollama and re-emits each token in the provider's SSE format.
+
+Profile options:
+
+- `backend_model`: the model Ollama should use (e.g. `gemma3:4b`). If omitted, the model from the incoming request is forwarded as-is.
+- `ollama_upstream`: base URL of the Ollama server. Defaults to `http://localhost:11434`.
+
+To point at a non-default Ollama instance:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"backend":"ollama","backend_model":"gemma3:4b","ollama_upstream":"http://192.168.1.50:11434"}' \
+  http://127.0.0.1:18090/_zolem/profiles/remote-ollama
+```
+
+Limitations:
+
+- Only text content is translated. Tool calls, function definitions, and multimodal content are not forwarded.
+- Gemini `systemInstruction` is not translated (the field is not in Zolem's Gemini request type).
+
+For the fixed-listener equivalent, see [fixed-listener.md#ollama-backend](fixed-listener.md#ollama-backend).
+
+## Tool Calling
+
+The local runtime can synthesize a function/tool call when the request
+*mandates* one, so SDKs that force a tool call get a structurally valid
+response instead of lorem text. Synthesis fires only for the "required" mode of
+each provider:
+
+- OpenAI: `tool_choice` of `"required"` or a specific `{"type":"function",...}`
+- Anthropic: `tool_choice` `{"type":"any"}` or `{"type":"tool",...}`
+- Gemini: `toolConfig.functionCallingConfig.mode = "ANY"`
+
+For Gemini specifically:
+
+- `mode = "ANY"` synthesizes a `functionCall` part (honoring
+  `allowedFunctionNames` when present).
+- `mode = "AUTO"` lets the model decide whether to call a function. Because the
+  local runtime does not run a model, it cannot make that decision, so an AUTO
+  request **falls through to the lorem/backend text path and returns a text
+  part — not a `functionCall`**. An SDK expecting a function call in AUTO mode
+  will receive a text response.
+- `mode = "NONE"` likewise returns text.
+
+If you need a guaranteed function call from the local runtime, send
+`mode = "ANY"`.
+
+## Response Model Policy
+
+Local runtime listeners can shape the provider-visible `model` field without
+changing the incoming request.
+
+Policies:
+
+- `echo_request`: return the same model the client requested
+- `force_literal`: always return `response_model`
+- `force_backend`: return `backend_model` when set
+
+Example:
+
+```bash
+curl -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"backend":"lorem","response_model_policy":"force_backend","backend_model":"gpt-4.1-mini"}' \
+  http://127.0.0.1:18090/_zolem/profiles/openai-backend-shaped
+```
+
+That profile still serves generated output locally, but its responses will say
+`"model": "gpt-4.1-mini"` instead of echoing the incoming request model.
+
+## Use A Listener
+
+After listener creation, use the returned `base_url` as the client base URL.
+Everything else should remain provider-shaped.
+
+OpenAI example:
+
+```bash
+curl -X POST \
+  -H 'Authorization: Bearer sk-test' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}' \
+  http://127.0.0.1:19001/v1/chat/completions
+```
+
+OpenAI HTTPS example:
+
+```bash
+curl -X POST \
+  -H 'Authorization: Bearer sk-test' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}' \
+  https://127.0.0.1:19443/v1/chat/completions
+```
+
+Anthropic example:
+
+```bash
+curl -X POST \
+  -H 'x-api-key: test-key' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"user","content":"hi"}]}' \
+  http://127.0.0.1:19101/v1/messages
+```
+
+## Introspection
+
+Listener health:
+
+```bash
+curl http://127.0.0.1:19001/_zolem/health
+```
+
+Expected response:
+
+```json
+{"status":"ok"}
+```
+
+Each listener exposes:
+
+```bash
+curl http://127.0.0.1:19001/_zolem/state
+```
+
+Example response:
+
+```json
+{
+  "provider": "openai",
+  "profile": "demo",
+  "backend": "lorem",
+  "listener": "127.0.0.1:19001",
+  "tls": false,
+  "schemas_loaded": ["openai:v1"],
+  "schema_validation": "enabled"
+}
+```
+
+`schemas_loaded` lists the request schemas compiled into this listener's
+validator, and `schema_validation` reports whether every schema the served
+provider needs is present: `enabled`, `unavailable: <keys>` when one or more are
+missing, or `unsupported` for a provider with no known schema.
+
+## End-To-End Verification
+
+Run the repo script:
+
+```bash
+./scripts/test-local-runtime.sh
+```
+
+Run the same flow over HTTPS:
+
+```bash
+LOCAL_TLS_CERT=certs/localhost.pem \
+LOCAL_TLS_KEY=certs/localhost-key.pem \
+LISTENER_TLS=1 \
+./scripts/test-local-runtime.sh
+```
+
+This script:
+
+- runs the package tests
+- starts the local admin server
+- creates a demo profile
+- creates either an OpenAI or Anthropic listener depending on backend
+- verifies `/_zolem/health`
+- verifies `/_zolem/state`
+- calls a provider-compatible endpoint
+- deletes the listener and profile
+
+To verify fixture mode:
+
+```bash
+PROFILE_BACKEND=fixture ./scripts/test-local-runtime.sh
+```
+
+## Certificates
+
+Use [scripts/generate-certs.sh](../scripts/generate-certs.sh) to generate local certificates with `mkcert`.
+
+It creates:
+
+- `certs/localhost.pem`
+- `certs/localhost-key.pem`
+
+Those files can be used for:
+
+- the local admin server
+- fixed local listener mode
+- dynamic local runtime listeners created with `"tls": true`
