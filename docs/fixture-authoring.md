@@ -21,29 +21,11 @@ my-fixtures/
         └── response.json
 ```
 
-For OpenAI Responses WebSocket fixtures, set `version: v1-responses` and make
-`response.json` a JSON array of Responses API event objects. Zolem sends each
-array element as one WebSocket text frame when the client sends a generated
-`response.create` frame. Codex may send a `response.create` frame with
-`generate:false` before the first real turn; Zolem answers that warmup frame
-without advancing fixture sequences.
-
 ## Selection With fixtures.yaml (Recommended)
 
 Selection is configured at the namespace level via `fixtures.yaml`. The
 historical per-fixture `match.cel` and `match.wasm` mechanisms are deprecated
 (see [Appendix: Deprecated Per-Fixture Matchers](#appendix-deprecated-per-fixture-matchers)).
-
-Minimal example:
-
-```text
-my-fixtures/
-└── team-a/
-    ├── fixtures.yaml
-    └── anthropic-demo/
-        ├── meta.yaml
-        └── response.json
-```
 
 Example `fixtures.yaml` (the namespace-level selector that routes requests to
 fixtures):

@@ -699,5 +699,5 @@ It creates:
 Those files can be used for:
 
 - the local admin server
-- fixed local listener mode
+- fixed-listener mode
 - dynamic local runtime listeners created with `"tls": true`

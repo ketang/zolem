@@ -125,8 +125,8 @@ func TestBuildLocalStartupAppForRuntime_DeprecationWarnings(t *testing.T) {
 	if !strings.Contains(joined, `fixture "wasm-only": match.wasm is deprecated`) {
 		t.Errorf("expected match.wasm deprecation warning, got: %v", warnings)
 	}
-	if !strings.Contains(joined, "docs/local-runtime.md") {
-		t.Errorf("warning should reference docs/local-runtime.md, got: %v", warnings)
+	if !strings.Contains(joined, "docs/fixture-authoring.md") {
+		t.Errorf("warning should reference docs/fixture-authoring.md, got: %v", warnings)
 	}
 
 	// Fixture still serves.
