@@ -24,7 +24,7 @@ Zolem currently has two supported local execution paths:
 OpenRouter shares OpenAI's chat-completions request shape; local runtime
 listeners currently serve (and validate) Anthropic, OpenAI, and Gemini.
 
-## Response modes
+## Backends
 
 | Mode | Description |
 |------|-------------|
@@ -127,11 +127,11 @@ Current local runtime limitations:
 
 Local runtime also supports an `error` backend for deterministic client
 error-path testing. See
-[docs/local-runtime.md](docs/local-runtime.md)
+[docs/admin-mode.md](docs/admin-mode.md)
 for examples and behavior.
 
 For no-egress Codex and Claude client smoke tests with Bubblewrap, see
-[docs/local-runtime.md#no-egress-client-smoke-tests-with-bubblewrap](docs/local-runtime.md#no-egress-client-smoke-tests-with-bubblewrap).
+[docs/recipes/bubblewrap.md](docs/recipes/bubblewrap.md).
 
 For WASM-generator profiles, pass a compiled binary module through `zolemc`:
 
@@ -145,7 +145,7 @@ zolemc -admin-url http://127.0.0.1:18090 \
 `-wasm-module-file` reads and base64-encodes the module for the admin API and
 selects the `wasm` backend when `-backend` is not set explicitly.
 The generator ABI, input shape, and runtime constraints are documented in
-[docs/local-runtime.md#wasm-backend](docs/local-runtime.md#wasm-backend).
+[docs/admin-mode.md#wasm-backend](docs/admin-mode.md#wasm-backend).
 Build examples for freestanding WASM modules are in
 [docs/wasm-modules.md](docs/wasm-modules.md).
 
@@ -183,7 +183,7 @@ For error-backed fixed listeners, pass `-local-backend error` together with
 error for every request. `-local-backend error` without `-local-error-type`
 is rejected at startup.
 
-Full guide: [docs/local-runtime.md](docs/local-runtime.md)
+Full guide: [docs/fixed-listener.md](docs/fixed-listener.md)
 
 ## Verification
 

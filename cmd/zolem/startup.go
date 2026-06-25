@@ -333,11 +333,11 @@ func loadFixtures(fixturesDir string, listenerRuntime runtimecfg.ListenerRuntime
 		if isLegacy {
 			if legacy.HasCEL(fixtures[i].ID) {
 				warnings = append(warnings, fmt.Sprintf(
-					"fixture %q: match.cel is deprecated; migrate to fixtures.yaml — see docs/local-runtime.md", fixtures[i].ID))
+					"fixture %q: match.cel is deprecated; migrate to fixtures.yaml — see docs/fixture-authoring.md", fixtures[i].ID))
 			}
 			if fixtures[i].WASMPath != "" {
 				warnings = append(warnings, fmt.Sprintf(
-					"fixture %q: match.wasm is deprecated; migrate to fixtures.yaml or a namespace-level selector.wasm — see docs/local-runtime.md", fixtures[i].ID))
+					"fixture %q: match.wasm is deprecated; migrate to fixtures.yaml or a namespace-level selector.wasm — see docs/fixture-authoring.md", fixtures[i].ID))
 			}
 		}
 		if fixtures[i].WASMPath == "" {

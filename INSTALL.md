@@ -164,6 +164,5 @@ Nightly builds are not recommended for production use.
 
 ## Next steps
 
-See [README.md](README.md) for quick-start examples and response modes, and
-[docs/local-runtime.md](docs/local-runtime.md) for the full local runtime and
-flag reference.
+See [README.md](README.md) for quick-start examples and backends, and
+[docs/](docs/README.md) for the full local runtime guides and flag reference.
