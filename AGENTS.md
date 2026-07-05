@@ -93,9 +93,14 @@ cover.
 
 - Never invoke `shatter scan` (or the `shatter` binary) directly against this
   repo. Direct invocation bypasses the Docker sandbox and the host-write guard.
-- Always run Shatter through the sandboxed entry point: `make shatter`, which
-  runs `scripts/shatter-full-scan.sh`. That script enforces the sandbox backend
-  and fails if the target writes into the repo or host `/tmp`.
+- Always run Shatter through a sandboxed entry point: `make shatter` (full
+  scan, `scripts/shatter-full-scan.sh`) or `make shatter-focused
+  INCLUDE='<glob> [<glob>...]'` (targeted scan,
+  `scripts/shatter-focused-scan.sh`). Both enforce the sandbox backend and
+  fail if the target writes into the repo or host `/tmp`.
+- Prefer `make shatter-focused` while iterating on specific files or packages
+  — it completes in minutes. Reserve `make shatter` for whole-repo baselines.
+  Focused reports land under `shatter-report/focused/<slug>.{md,json}`.
 - `make shatter` scans the non-test Go source under `cmd/` and `internal/`. By
   default it uses `~/project/shatter/target/release/shatter`; set
   `SHATTER_BIN=/path/to/shatter` to use a different binary. Reports are written
@@ -111,11 +116,12 @@ cover.
   ./scripts/test-shatter-setup.sh
   ```
 
-- Sandbox wrapper check (verifies the full-scan invocation passes Docker
-  sandbox settings and rejects host writes to the repo or `/tmp`):
+- Sandbox wrapper checks (verify the full-scan and focused-scan invocations
+  pass Docker sandbox settings and reject host writes to the repo or `/tmp`):
 
   ```bash
   ./scripts/test-shatter-full-scan-sandbox.sh
+  ./scripts/test-shatter-focused-scan-sandbox.sh
   ```
 
 ## Local Binding
