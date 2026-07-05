@@ -109,6 +109,25 @@ functions:
       version: "v1"
       body: "eyJtb2RlbCI6ICJncHQtNC1taW5pIiwgIm1lc3NhZ2VzIjogW3sicm9sZSI6ICJ1c2VyIiwgImNvbnRlbnQiOiAiaGVsbG8ifV19"
 
+  # Provider handler request bodies (zolem-cf4): shatter ≥ str-e41w plans a
+  # direct *http.Request param as a symbolic string body; these hints supply
+  # schema-valid payloads so each handler passes decode+validation and its
+  # post-parse branches are explored. Gemini's handleGenerate also takes
+  # routing args (version/model) that gate schema lookup.
+  # Validated 2026-07-04 on a scratch copy: handleMessages 7%→34%,
+  # handleChatCompletions 6%→38% (all branches), handleGenerate 7%→15%.
+  "handler.go:(*Handler).handleMessages":
+    defaults:
+      r: '{"model":"claude-3-5-sonnet-20241022","max_tokens":32,"messages":[{"role":"user","content":"hello"}]}'
+  "handler.go:(*Handler).handleChatCompletions":
+    defaults:
+      r: '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hello"}]}'
+  "handler.go:(*Handler).handleGenerate":
+    defaults:
+      r: '{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}'
+      version: "v1beta"
+      model: "gemini-2.0-flash"
+
 llm:
   enabled: true
   adapter: local
