@@ -30,7 +30,7 @@ shatter:
 	./scripts/shatter-full-scan.sh
 
 shatter-focused:
-	./scripts/shatter-focused-scan.sh $(INCLUDE)
+	set -f; ./scripts/shatter-focused-scan.sh $(INCLUDE)
 
 shatter-clean:
 	rm -rf shatter-report .shatter .shatter-cache shatter-artifacts

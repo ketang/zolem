@@ -4,47 +4,14 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd -- "${SCRIPT_DIR}/.." && pwd)
-TMP_ROOT=$(mktemp -d)
+# shellcheck source=scripts/test-shatter-scan-fixture.sh
+source "${SCRIPT_DIR}/test-shatter-scan-fixture.sh"
 
-cleanup() {
-  if [[ -f "${ENV_LOG:-}" ]]; then
-    repo_guard=$(sed -n 's/^repo_guard=//p' "${ENV_LOG}" | head -n1)
-    tmp_guard=$(sed -n 's/^tmp_guard=//p' "${ENV_LOG}" | head -n1)
-    [[ -n "${repo_guard}" ]] && rm -f -- "${repo_guard}"
-    [[ -n "${tmp_guard}" ]] && rm -f -- "${tmp_guard}"
-  fi
-  rm -rf "${TMP_ROOT}"
-}
-trap cleanup EXIT
-
-FAKE_SHATTER="${TMP_ROOT}/shatter"
-ENV_LOG="${TMP_ROOT}/shatter-env.log"
-
-cat >"${FAKE_SHATTER}" <<'FAKE'
-#!/usr/bin/env bash
-
-set -euo pipefail
-
-{
-  printf 'backend=%s\n' "${SHATTER_SANDBOX_BACKEND:-}"
-  printf 'image=%s\n' "${SHATTER_SANDBOX_DOCKER_IMAGE:-}"
-  printf 'repo_guard=%s\n' "${ZOLEM_SHATTER_REPO_WRITE_GUARD:-}"
-  printf 'tmp_guard=%s\n' "${ZOLEM_SHATTER_TMP_WRITE_GUARD:-}"
-  printf 'args=%s\n' "$*"
-} >"${ZOLEM_SHATTER_ENV_LOG}"
-
-if [[ "${FAKE_SHATTER_WRITE_GUARDS:-0}" == "1" ]]; then
-  printf 'repo write escaped sandbox\n' >"${ZOLEM_SHATTER_REPO_WRITE_GUARD}"
-  printf 'tmp write escaped sandbox\n' >"${ZOLEM_SHATTER_TMP_WRITE_GUARD}"
-fi
-FAKE
-chmod +x "${FAKE_SHATTER}"
-
-# A focused run must require at least one include pattern.
+# A focused run must require at least one include glob.
 if SHATTER_BIN="${FAKE_SHATTER}" \
   ZOLEM_SHATTER_ENV_LOG="${ENV_LOG}" \
   "${REPO_ROOT}/scripts/shatter-focused-scan.sh" 2>"${TMP_ROOT}/noargs-stderr.log"; then
-  printf 'expected focused scan to fail without include patterns\n' >&2
+  printf 'expected focused scan to fail without include globs\n' >&2
   exit 1
 fi
 grep -qi 'include' "${TMP_ROOT}/noargs-stderr.log"
