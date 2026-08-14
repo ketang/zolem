@@ -269,7 +269,7 @@ func runListeners(ctx context.Context, client admincli.Client, opts admincli.Opt
 		payload := localListenerPayload{Addr: "127.0.0.1:0"}
 		name, flagArgs := splitOptionalLeadingName(args[1:])
 		fs.StringVar(&payload.Addr, "addr", payload.Addr, "listener loopback address")
-		fs.StringVar(&payload.Provider, "provider", "", "provider: anthropic, openai, or gemini")
+		fs.StringVar(&payload.Provider, "provider", "", "provider: anthropic, gemini, ollama, or openai")
 		fs.StringVar(&payload.Profile, "profile", "", "profile name")
 		fs.BoolVar(&payload.TLS, "tls", false, "request a TLS listener")
 		if err := fs.Parse(flagArgs); err != nil {
@@ -699,7 +699,7 @@ Admin control-plane commands (use -admin-url):
     [-wasm-module-file PATH] [-wasm-timeout-ms N]
   profiles delete <name>
   listeners list
-  listeners create <name> -provider openai|anthropic|gemini -profile <name> [-addr 127.0.0.1:0] [-tls]
+  listeners create <name> -provider anthropic|gemini|ollama|openai -profile <name> [-addr 127.0.0.1:0] [-tls]
   listeners delete <name>
   listeners calls list <name> [-since <id>]
   listeners calls clear <name>

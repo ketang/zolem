@@ -17,6 +17,7 @@ import (
 	"github.com/ketang/zolem/internal/ollama"
 	"github.com/ketang/zolem/internal/provider/anthropic"
 	"github.com/ketang/zolem/internal/provider/gemini"
+	ollamaprovider "github.com/ketang/zolem/internal/provider/ollama"
 	"github.com/ketang/zolem/internal/provider/openai"
 	"github.com/ketang/zolem/internal/response"
 	runtimecfg "github.com/ketang/zolem/internal/runtime"
@@ -363,6 +364,7 @@ func buildLocalHandler(runtimePtr *atomic.Pointer[runtimecfg.ListenerRuntime], c
 	anthropicH := anthropic.NewHandler(validator, matcher, generator, &ollamaHTTPAdapter{}, wasmGenerator)
 	openaiH := openai.NewHandler(validator, matcher, generator, &ollamaHTTPAdapter{}, wasmGenerator)
 	geminiH := gemini.NewHandler(validator, matcher, generator, &ollamaHTTPAdapter{}, wasmGenerator)
+	ollamaH := ollamaprovider.NewHandler(validator, matcher, generator, &ollamaHTTPAdapter{}, wasmGenerator)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		listenerRuntime := *runtimePtr.Load()
@@ -388,6 +390,8 @@ func buildLocalHandler(runtimePtr *atomic.Pointer[runtimecfg.ListenerRuntime], c
 			openaiH.ServeHTTP(w, req)
 		case "gemini":
 			geminiH.ServeHTTP(w, req)
+		case "ollama":
+			ollamaH.ServeHTTP(w, req)
 		default:
 			zolemerr.Write(w, "unknown provider: "+listenerRuntime.Spec.Provider)
 		}
@@ -444,6 +448,8 @@ func providerSpecKeys(provider string) []string {
 		return []string{"openai:v1"}
 	case "gemini":
 		return []string{"gemini:v1", "gemini:v1beta"}
+	case "ollama":
+		return []string{"ollama:v1"}
 	default:
 		return nil
 	}
@@ -453,8 +459,8 @@ func (o localOptions) runtime() (runtimecfg.ListenerRuntime, error) {
 	if err := o.TLS.validate(); err != nil {
 		return runtimecfg.ListenerRuntime{}, err
 	}
-	if o.Provider != "anthropic" && o.Provider != "openai" && o.Provider != "gemini" {
-		return runtimecfg.ListenerRuntime{}, fmt.Errorf("invalid local provider %q: must be anthropic, openai, or gemini", o.Provider)
+	if !runtimecfg.ValidProvider(o.Provider) {
+		return runtimecfg.ListenerRuntime{}, fmt.Errorf("invalid local provider %q: must be %s", o.Provider, runtimecfg.ProviderList)
 	}
 
 	addr := o.Addr
