@@ -2,9 +2,10 @@
 
 A local mock server for LLM provider APIs. Zolem validates incoming requests
 against bundled request schemas — normalized from each provider's source format
-(OpenAPI for OpenAI, API Discovery for Gemini, a vendored Messages schema for
-Anthropic) — and returns synthetic responses, so you can develop and test
-integrations against Anthropic, OpenAI, and Gemini without burning tokens. The
+(OpenAPI for OpenAI, API Discovery for Gemini, vendored schemas for Anthropic
+and Ollama) — and returns synthetic responses, so you can develop and test
+integrations against Anthropic, OpenAI, Gemini, and Ollama without burning
+tokens (or, for Ollama, without pulling a model). The
 schemas ship in the binary and are applied with no network egress; a request
 that violates its provider's schema is rejected with that provider's native 4xx
 error. The schemas are representative subsets focused on request structure
@@ -20,9 +21,20 @@ Zolem currently has two supported local execution paths:
 - Anthropic
 - OpenAI
 - Gemini
+- Ollama (native API: `/api/chat`, `/api/tags`, `/api/show`, `/api/ps`, `/api/version`)
 
 OpenRouter shares OpenAI's chat-completions request shape; local runtime
-listeners currently serve (and validate) Anthropic, OpenAI, and Gemini.
+listeners currently serve (and validate) Anthropic, OpenAI, Gemini, and Ollama.
+
+Note that Ollama appears on both axes and the two are unrelated. As a
+**provider** it is an API surface zolem impersonates, so you can develop an
+Ollama client with no model pulled. As a **backend** (see below) it is a source
+of real generated text that zolem forwards to.
+
+Ollama's native API differs from the others in ways its clients will notice:
+streaming is newline-delimited JSON rather than SSE, `stream` defaults to
+**true** when omitted, there is no authentication, and errors are a flat
+`{"error": "..."}` object.
 
 ## Backends
 
