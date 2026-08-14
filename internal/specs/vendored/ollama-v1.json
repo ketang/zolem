@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ollama Native Chat API Request",
+  "description": "Normalized request schema for POST /api/chat derived from Ollama's public API docs (github.com/ollama/ollama/blob/main/docs/api.md, rev 2026-08-11, release v0.32.11). Ollama publishes no OpenAPI or Discovery document, so this snapshot is hand-authored — the same situation as the Anthropic snapshot. Ollama's native API is unversioned; the 'v1' in the registry key is synthetic and exists only to fit zolem's provider:version key shape. The schema is deliberately permissive: it checks request structure, not the exhaustive field set, so fields added upstream after this snapshot never cause a spurious 400.",
+  "type": "object",
+  "required": [
+    "model",
+    "messages"
+  ],
+  "properties": {
+    "model": {
+      "type": "string",
+      "description": "Model name as model[:tag]; the tag defaults to 'latest'."
+    },
+    "messages": {
+      "type": "array",
+      "description": "Full chat history; the server is stateless. Item shape is deliberately unconstrained so message-level fields (content, images, tool_calls, tool_name, thinking, tool_call_id) are all accepted without enumeration."
+    },
+    "tools": {
+      "type": "array",
+      "description": "OpenAI-shaped function declarations."
+    },
+    "stream": {
+      "type": "boolean",
+      "description": "Defaults to TRUE when absent, which is the opposite of the OpenAI chat-completions API."
+    },
+    "format": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object"
+        }
+      ],
+      "description": "Either the string \"json\" for loose JSON mode, or a JSON Schema object for grammar-constrained structured output."
+    },
+    "options": {
+      "type": "object",
+      "description": "Sampler and runner settings (num_ctx, num_predict, seed, temperature, top_k, top_p, stop, and so on). Unknown keys are silently ignored by Ollama itself."
+    },
+    "keep_alive": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "description": "Model residency duration: a Go duration string such as \"10m\", or a bare number interpreted as seconds."
+    },
+    "think": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "description": "Reasoning control. Tri-state: absent is distinct from false. String levels are low, medium, high, and max."
+    },
+    "truncate": {
+      "type": "boolean",
+      "description": "Truncate history when the rendered prompt exceeds the context window."
+    },
+    "shift": {
+      "type": "boolean",
+      "description": "Shift history at the context limit instead of erroring."
+    }
+  },
+  "additionalProperties": true
+}
