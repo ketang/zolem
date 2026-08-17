@@ -114,7 +114,7 @@ zolem runs in exactly one of two modes, selected by which flag you pass:
 
 Fixed-listener mode (-local-provider) serves a single provider on one loopback
 listener with a fixed profile and backend:
-  -local-provider PROVIDER    anthropic, openai, or gemini (selects this mode)
+  -local-provider PROVIDER    anthropic, gemini, ollama, or openai (selects this mode)
   -local-addr ADDR            loopback listen address (default 127.0.0.1:8080)
   -local-profile NAME         profile name (default "default")
   -local-backend BACKEND      lorem, faker, fixture, ollama, wasm, or error (default "lorem")

@@ -250,8 +250,8 @@ func ValidateListenerSpec(spec ListenerSpec) error {
 	if spec.Profile == "" {
 		return errors.New("listener profile is required")
 	}
-	if spec.Provider != "anthropic" && spec.Provider != "openai" && spec.Provider != "gemini" {
-		return errors.New("listener provider must be anthropic, openai, or gemini")
+	if !ValidProvider(spec.Provider) {
+		return errors.New("listener provider must be " + ProviderList)
 	}
 	if err := validateLoopbackAddr(spec.Addr); err != nil {
 		return err

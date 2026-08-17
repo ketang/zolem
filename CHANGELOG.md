@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- Ollama is now a supported provider surface, not only a backend. A listener
+  with `provider: ollama` serves Ollama's native API — `POST /api/chat` plus
+  `/api/tags`, `/api/version`, `/api/show`, and `/api/ps` — so Ollama clients
+  can be developed and tested with no model pulled and no GPU. Streaming is
+  NDJSON rather than SSE, `stream` defaults to true when omitted, requests need
+  no authentication, and errors use Ollama's flat `{"error": "..."}` envelope.
+  Model-management endpoints are not served.
+
 ### Documentation
 
 - Marked the April 2026 design document as historical, fixed Anthropic snapshot

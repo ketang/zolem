@@ -363,7 +363,7 @@ func recordingMiddleware(recorder Recorder, caps RecordCaps) func(http.Handler) 
 			}
 			call.Request.setBody(reqBody, reqTruncated)
 
-			if rw.isSSE {
+			if rw.isStreaming {
 				call.Response.Stream = &StreamRecord{
 					EventCount:      rw.stream.totalEvents,
 					Events:          rw.stream.events,
@@ -482,8 +482,9 @@ type recordingResponseWriter struct {
 	bodyCapBytes  int
 	bodyTruncated int
 
-	isSSE  bool
-	stream *sseAccumulator
+	// isStreaming covers both streamed framings: SSE and NDJSON.
+	isStreaming bool
+	stream      *streamAccumulator
 }
 
 func newRecordingResponseWriter(w http.ResponseWriter, caps RecordCaps) *recordingResponseWriter {
@@ -502,10 +503,16 @@ func (rw *recordingResponseWriter) WriteHeader(status int) {
 	}
 	rw.headerWritten = true
 	rw.status = status
-	ct := rw.ResponseWriter.Header().Get("Content-Type")
-	if strings.HasPrefix(strings.ToLower(ct), "text/event-stream") {
-		rw.isSSE = true
+	ct := strings.ToLower(rw.ResponseWriter.Header().Get("Content-Type"))
+	switch {
+	case strings.HasPrefix(ct, "text/event-stream"):
+		rw.isStreaming = true
 		rw.stream = newSSEAccumulator(rw.caps.StreamEventCap)
+	case strings.HasPrefix(ct, "application/x-ndjson"):
+		// The ollama provider streams NDJSON. Without this branch the whole
+		// stream is recorded as one truncated plain body with no event count.
+		rw.isStreaming = true
+		rw.stream = newNDJSONAccumulator(rw.caps.StreamEventCap)
 	}
 	rw.ResponseWriter.WriteHeader(status)
 }
@@ -514,7 +521,7 @@ func (rw *recordingResponseWriter) Write(p []byte) (int, error) {
 	if !rw.headerWritten {
 		rw.WriteHeader(http.StatusOK)
 	}
-	if rw.isSSE {
+	if rw.isStreaming {
 		rw.stream.feed(p, time.Now().UTC())
 	} else {
 		rw.captureBody(p)
@@ -558,19 +565,32 @@ func (rw *recordingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error)
 // Frames are delimited by "\n\n"; within a frame, "event:" and "data:" lines
 // (and only those) are extracted. Partial frames at chunk boundaries are
 // buffered across feed() calls.
-type sseAccumulator struct {
+// streamAccumulator reassembles a streamed response body into discrete events
+// for the call recorder. It handles both framings zolem serves: SSE (frames
+// separated by a blank line) and NDJSON (one JSON object per line), which the
+// ollama provider uses.
+type streamAccumulator struct {
 	cap         int
+	ndjson      bool
 	buf         bytes.Buffer
 	events      []StreamEvent
 	totalEvents int
 }
 
-func newSSEAccumulator(cap int) *sseAccumulator {
-	return &sseAccumulator{cap: cap}
+func newSSEAccumulator(cap int) *streamAccumulator {
+	return &streamAccumulator{cap: cap}
 }
 
-func (a *sseAccumulator) feed(p []byte, ts time.Time) {
+func newNDJSONAccumulator(cap int) *streamAccumulator {
+	return &streamAccumulator{cap: cap, ndjson: true}
+}
+
+func (a *streamAccumulator) feed(p []byte, ts time.Time) {
 	a.buf.Write(p)
+	if a.ndjson {
+		a.feedLines(ts)
+		return
+	}
 	for {
 		data := a.buf.Bytes()
 		idx := bytes.Index(data, []byte("\n\n"))
@@ -584,7 +604,25 @@ func (a *sseAccumulator) feed(p []byte, ts time.Time) {
 	}
 }
 
-func (a *sseAccumulator) parseFrame(frame []byte, ts time.Time) {
+// feedLines records each complete newline-terminated object as one event. A
+// trailing partial line stays buffered until the rest of it arrives.
+func (a *streamAccumulator) feedLines(ts time.Time) {
+	for {
+		data := a.buf.Bytes()
+		idx := bytes.IndexByte(data, '\n')
+		if idx < 0 {
+			return
+		}
+		line := strings.TrimSpace(string(data[:idx]))
+		_ = a.buf.Next(idx + 1)
+		if line == "" {
+			continue
+		}
+		a.appendEvent(ts, "", line)
+	}
+}
+
+func (a *streamAccumulator) parseFrame(frame []byte, ts time.Time) {
 	var event string
 	var dataLines []string
 	for _, lineBytes := range bytes.Split(frame, []byte("\n")) {
@@ -600,6 +638,10 @@ func (a *sseAccumulator) parseFrame(frame []byte, ts time.Time) {
 	if event == "" && data == "" {
 		return
 	}
+	a.appendEvent(ts, event, data)
+}
+
+func (a *streamAccumulator) appendEvent(ts time.Time, event, data string) {
 	a.totalEvents++
 	if a.cap > 0 && len(a.events) >= a.cap {
 		return

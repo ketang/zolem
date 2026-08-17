@@ -43,6 +43,18 @@ func DefaultRegistry() Registry {
 			Enabled:      true,
 		},
 		{
+			Provider: "ollama",
+			// Ollama's native API is unversioned; "v1" is synthetic and exists
+			// only to fit the provider:version key shape. Ollama publishes no
+			// OpenAPI or Discovery document, so there is no RemoteURL and the
+			// hand-authored snapshot is the sole source.
+			Version:      "v1",
+			Kind:         SourceKindVendoredDocsSnapshot,
+			FallbackPath: "fallbacks/ollama-v1.json",
+			ContentType:  "application/schema+json",
+			Enabled:      true,
+		},
+		{
 			Provider:     "openai",
 			Version:      "v1",
 			Kind:         SourceKindOpenAPI,

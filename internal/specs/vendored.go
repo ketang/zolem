@@ -9,12 +9,18 @@ import _ "embed"
 //
 //   - anthropic:v1 is a pre-normalized JSON Schema snapshot (no machine-readable
 //     upstream source exists; it is loaded as-is).
+//   - ollama:v1 is likewise a pre-normalized JSON Schema snapshot; Ollama
+//     publishes no OpenAPI or Discovery document. Its "v1" is synthetic — the
+//     native API is unversioned.
 //   - openai:v1 is an OpenAPI document, normalized by the OpenAPI normalizer.
 //   - gemini:v1 / gemini:v1beta are Google API Discovery documents, normalized
 //     by the discovery normalizer.
 var (
 	//go:embed vendored/anthropic-v1.json
 	anthropicV1Snapshot []byte
+
+	//go:embed vendored/ollama-v1.json
+	ollamaV1Snapshot []byte
 
 	//go:embed vendored/openai-v1.openapi.yaml
 	openaiV1Source []byte
@@ -35,6 +41,7 @@ var (
 func VendoredFallbacks() map[string][]byte {
 	return map[string][]byte{
 		"anthropic:v1":  append([]byte(nil), anthropicV1Snapshot...),
+		"ollama:v1":     append([]byte(nil), ollamaV1Snapshot...),
 		"openai:v1":     append([]byte(nil), openaiV1Source...),
 		"gemini:v1":     append([]byte(nil), geminiV1Source...),
 		"gemini:v1beta": append([]byte(nil), geminiV1betaSource...),

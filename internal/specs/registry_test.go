@@ -16,6 +16,9 @@ func TestDefaultRegistryLookup(t *testing.T) {
 		remote   bool
 	}{
 		{provider: "anthropic", version: "v1", kind: specs.SourceKindVendoredDocsSnapshot, remote: false},
+		// Ollama publishes no OpenAPI or Discovery document, so like Anthropic it
+		// ships as a hand-authored vendored snapshot with no remote source.
+		{provider: "ollama", version: "v1", kind: specs.SourceKindVendoredDocsSnapshot, remote: false},
 		{provider: "openai", version: "v1", kind: specs.SourceKindOpenAPI, remote: true},
 		{provider: "openrouter", version: "v1", kind: specs.SourceKindOpenAPI, remote: true},
 		{provider: "gemini", version: "v1", kind: specs.SourceKindDiscovery, remote: true},
@@ -43,8 +46,8 @@ func TestDefaultRegistryListIsSortedAndEnabled(t *testing.T) {
 	registry := specs.DefaultRegistry()
 	sources := registry.List()
 
-	if len(sources) != 5 {
-		t.Fatalf("got %d sources, want 5", len(sources))
+	if len(sources) != 6 {
+		t.Fatalf("got %d sources, want 6", len(sources))
 	}
 
 	got := make([]string, 0, len(sources))
@@ -59,6 +62,7 @@ func TestDefaultRegistryListIsSortedAndEnabled(t *testing.T) {
 		"anthropic:v1",
 		"gemini:v1",
 		"gemini:v1beta",
+		"ollama:v1",
 		"openai:v1",
 		"openrouter:v1",
 	}

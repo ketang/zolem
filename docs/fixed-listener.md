@@ -20,7 +20,7 @@ Key flags:
 | Flag | Purpose |
 | --- | --- |
 | `-local-addr <addr>` | Loopback address and port for the listener |
-| `-local-provider <provider>` | Provider: `openai`, `anthropic`, or `gemini` |
+| `-local-provider <provider>` | Provider: `anthropic`, `gemini`, `ollama`, or `openai` |
 | `-local-profile <name>` | Profile name (used in introspection output) |
 | `-local-backend <backend>` | Backend: `lorem`, `faker`, `fixture`, `ollama`, `wasm`, or `error` |
 

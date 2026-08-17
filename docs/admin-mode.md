@@ -252,7 +252,7 @@ curl -X DELETE http://127.0.0.1:18090/_zolem/listeners/openai-demo
 Listener rules:
 
 - the address must be loopback-only
-- the provider must currently be `openai`, `anthropic`, or `gemini`
+- the provider must currently be `anthropic`, `gemini`, `ollama`, or `openai`
 - the referenced profile must already exist
 - `tls: true` requires the admin server to have been started with `-local-tls-cert` and `-local-tls-key`
 - `fixture` listeners require the admin server to have been started with `-local-fixtures-dir`
@@ -468,6 +468,63 @@ Constraints:
 Zolem does not require source headers or generated bindings for WASM modules.
 Build instructions and examples for Rust, C, and fixture selection modules are
 in [wasm-modules.md](wasm-modules.md).
+
+## Ollama Provider
+
+Ollama appears on both of zolem's axes, and the two are unrelated:
+
+- the **`ollama` provider** (this section) is an API surface zolem
+  impersonates, so you can develop an Ollama client with no model pulled
+- the **`ollama` backend** (next section) is a source of real generated text
+  that zolem forwards to
+
+Create a listener that speaks Ollama's native API:
+
+```bash
+curl -sS -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"backend":"lorem"}' \
+  http://127.0.0.1:18090/_zolem/profiles/ollama-surface
+
+curl -sS -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"addr":"127.0.0.1:0","provider":"ollama","profile":"ollama-surface"}' \
+  http://127.0.0.1:18090/_zolem/listeners/ollama-demo
+```
+
+Endpoints served: `POST /api/chat`, `GET /api/tags`, `GET /api/version`,
+`POST /api/show`, and `GET /api/ps`. Model-management endpoints
+(`/api/pull`, `/api/push`, `/api/create`, `/api/delete`) are not served and
+return a native 404 — zolem has no model store to mutate.
+
+Four differences from the other providers will be visible to clients:
+
+- **Streaming is NDJSON**, not SSE: bare JSON objects separated by newlines,
+  with no `data:` prefix and no `[DONE]` sentinel. The stream ends with an
+  object carrying `"done": true`, and only that object carries the
+  `prompt_eval_count` / `eval_count` / duration metrics.
+- **`stream` defaults to `true`** when the field is omitted — the opposite of
+  the OpenAI chat-completions API.
+- **There is no authentication.** Requests need no `Authorization` header.
+- **Errors are flat** `{"error": "..."}` strings, not a nested envelope.
+
+`POST /api/chat` accepts any model name, because zolem has no model store;
+`response_model_policy` controls the model reported back. `POST /api/show`
+does 404 on an unknown model, since reporting what exists is its purpose.
+
+Tool-call responses come from fixtures rather than being synthesized: Ollama's
+native API has no `tool_choice`, so there is no in-band way for a client to
+request one, and synthesizing a call whenever `tools` is present would break
+ordinary chat requests. In a fixture, `arguments` is a real JSON object — not a
+JSON-encoded string as in OpenAI's format.
+
+Call history records NDJSON streams the same way it records SSE: one event per
+streamed object, with an `event_count`, rather than as a single truncated body.
+
+One caveat when driving this provider with `zolemc request`: the `-json` flag
+wraps the response body as a single JSON value, which is not valid for a
+multi-object NDJSON stream. Omit `-json` for streaming requests. This limitation
+is pre-existing and applies equally to SSE streams from the other providers.
 
 ## Ollama Backend
 

@@ -1,0 +1,4 @@
+{
+  "schema_version": 1,
+  "command": ["./scripts/project-verifier-json.sh"]
+}
