@@ -21,6 +21,9 @@ import (
 type stubChatGenerator struct {
 	text string
 	err  error
+	// emitBeforeErr is the number of deltas to emit before failing, used to
+	// distinguish a pre-first-token failure from a genuine mid-stream one.
+	emitBeforeErr int
 }
 
 func (g *stubChatGenerator) NonStreaming(_ context.Context, _ string, _ []ollamaclient.ChatMessage, _ string) (string, error) {
@@ -28,15 +31,18 @@ func (g *stubChatGenerator) NonStreaming(_ context.Context, _ string, _ []ollama
 }
 
 func (g *stubChatGenerator) Streaming(_ context.Context, _ string, _ []ollamaclient.ChatMessage, _ string, fn func(string) error) error {
-	if g.err != nil {
+	if g.err != nil && g.emitBeforeErr == 0 {
 		return g.err
 	}
-	for _, word := range strings.Fields(g.text) {
+	for i, word := range strings.Fields(g.text) {
+		if g.err != nil && i >= g.emitBeforeErr {
+			return g.err
+		}
 		if err := fn(word + " "); err != nil {
 			return err
 		}
 	}
-	return nil
+	return g.err
 }
 
 // chatWithProfile drives /api/chat with an explicit listener runtime attached,
@@ -120,18 +126,41 @@ func TestChat_OllamaBackend_ErrorIsFlatEnvelope(t *testing.T) {
 	assertFlatError(t, rr.Body.Bytes())
 }
 
-// A mid-stream failure cannot change the status line, so Ollama reports it as
-// an {"error": ...} object inside an already-200 NDJSON body.
-func TestChat_OllamaBackend_StreamErrorIsInBand(t *testing.T) {
+// A failure before the first token can still be a real HTTP error, and Ollama
+// reports it as one. Only once the stream has started is the status line gone.
+func TestChat_OllamaBackend_StreamErrorBeforeFirstTokenIsHTTPError(t *testing.T) {
 	rr := chatWithProfile(t,
 		&stubChatGenerator{err: errors.New("connection refused")},
+		runtimecfg.RuntimeProfile{Name: "test", Backend: runtimecfg.BackendOllama},
+		`{"model":"llama3.2","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status: got %d, want 500. body: %s", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("content-type: got %q, want application/json", ct)
+	}
+	assertFlatError(t, rr.Body.Bytes())
+}
+
+// A mid-stream failure cannot change the status line, so it rides in-band as an
+// {"error": ...} object inside the already-200 NDJSON body.
+func TestChat_OllamaBackend_StreamErrorMidStreamIsInBand(t *testing.T) {
+	rr := chatWithProfile(t,
+		&stubChatGenerator{text: "one two three", err: errors.New("connection reset"), emitBeforeErr: 2},
 		runtimecfg.RuntimeProfile{Name: "test", Backend: runtimecfg.BackendOllama},
 		`{"model":"llama3.2","messages":[{"role":"user","content":"hi"}],"stream":true}`)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200 (headers already sent)", rr.Code)
 	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/x-ndjson" {
+		t.Errorf("content-type: got %q, want application/x-ndjson", ct)
+	}
 	lines := strings.Split(strings.TrimSuffix(rr.Body.String(), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("expected 2 deltas plus an error object, got %d:\n%s", len(lines), rr.Body.String())
+	}
 	assertFlatError(t, []byte(lines[len(lines)-1]))
 }
 

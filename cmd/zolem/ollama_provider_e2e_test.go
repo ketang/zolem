@@ -220,6 +220,69 @@ func TestLocalRuntimeOllamaProvider_E2E(t *testing.T) {
 		}
 	})
 
+	// Fixture bodies must go through template rendering, exactly as they do for
+	// the other three providers. Without it a .tmpl fixture is served with its
+	// {{ }} actions intact.
+	t.Run("templated-fixture-is-rendered", func(t *testing.T) {
+		fixturesDir := t.TempDir()
+		copyTestdataFixtures(t, repoRoot, fixturesDir)
+		fixtureAdmin := startLocalAdminServiceWithFixtures(t, repoRoot, fixturesDir)
+		t.Cleanup(fixtureAdmin.Close)
+
+		fixtureURL := createRuntimeListener(t, fixtureAdmin, "ollama", map[string]any{
+			"backend": "fixture",
+		})
+
+		// createRuntimeListener names the profile "<provider>-<backend>-demo".
+		want := "Templated fixture for profile ollama-fixture-demo."
+
+		t.Run("non-streaming", func(t *testing.T) {
+			resp, body := doRequest(t, fixtureURL, http.MethodPost, "/api/chat",
+				`{"model":"llama3.2","stream":false,"messages":[{"role":"user","content":"hello"}]}`,
+				"Content-Type: application/json")
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status: got %d, want 200: %s", resp.StatusCode, body)
+			}
+			var obj ndjsonObject
+			if err := json.Unmarshal(body, &obj); err != nil {
+				t.Fatalf("decode: %v (%s)", err, body)
+			}
+			if obj.Message.Content != want {
+				t.Fatalf("rendered fixture content: got %q, want %q", obj.Message.Content, want)
+			}
+		})
+
+		t.Run("streaming", func(t *testing.T) {
+			resp, body := doRequest(t, fixtureURL, http.MethodPost, "/api/chat",
+				`{"model":"llama3.2","stream":true,"messages":[{"role":"user","content":"hello"}]}`,
+				"Content-Type: application/json")
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status: got %d, want 200: %s", resp.StatusCode, body)
+			}
+
+			lines := strings.Split(strings.TrimSuffix(string(body), "\n"), "\n")
+			var joined strings.Builder
+			for _, line := range lines[:len(lines)-1] {
+				var obj ndjsonObject
+				if err := json.Unmarshal([]byte(line), &obj); err != nil {
+					t.Fatalf("decode %q: %v", line, err)
+				}
+				joined.WriteString(obj.Message.Content)
+			}
+			if got := joined.String(); got != want {
+				t.Fatalf("rendered streamed content: got %q, want %q", got, want)
+			}
+			// The rendered string is 5 words, so 5 deltas plus the terminal object.
+			if len(lines) != 6 {
+				t.Fatalf("object count: got %d, want 6\n%s", len(lines), body)
+			}
+		})
+	})
+
 	// Fields a real Ollama accepts must not be rejected by the schema.
 	t.Run("schema-accepts-native-optional-fields", func(t *testing.T) {
 		resp, body := doRequest(t, listenerBaseURL, http.MethodPost, "/api/chat",

@@ -252,7 +252,7 @@ curl -X DELETE http://127.0.0.1:18090/_zolem/listeners/openai-demo
 Listener rules:
 
 - the address must be loopback-only
-- the provider must currently be `openai`, `anthropic`, or `gemini`
+- the provider must currently be `anthropic`, `gemini`, `ollama`, or `openai`
 - the referenced profile must already exist
 - `tls: true` requires the admin server to have been started with `-local-tls-cert` and `-local-tls-key`
 - `fixture` listeners require the admin server to have been started with `-local-fixtures-dir`
@@ -517,6 +517,9 @@ native API has no `tool_choice`, so there is no in-band way for a client to
 request one, and synthesizing a call whenever `tools` is present would break
 ordinary chat requests. In a fixture, `arguments` is a real JSON object — not a
 JSON-encoded string as in OpenAI's format.
+
+Call history records NDJSON streams the same way it records SSE: one event per
+streamed object, with an `event_count`, rather than as a single truncated body.
 
 One caveat when driving this provider with `zolemc request`: the `-json` flag
 wraps the response body as a single JSON value, which is not valid for a

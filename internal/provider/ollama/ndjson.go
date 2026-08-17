@@ -18,14 +18,31 @@ import (
 // block.
 func streamChat(ctx context.Context, w http.ResponseWriter, cb backend.ContentBackend, req backend.GenerateRequest, model string, promptTokens int) {
 	nd := response.NewNDJSONWriter(w)
-	nd.SetHeaders()
 
 	created := nowRFC3339Nano()
 	start := time.Now()
 
+	// Headers are deferred until the first delta so a backend that fails before
+	// producing anything can still be reported as a real HTTP error. Ollama
+	// returns a 5xx flat envelope when it fails pre-first-token, and only
+	// reports failures in-band once the stream has started.
+	headersSent := false
+	sendHeaders := func() {
+		if !headersSent {
+			nd.SetHeaders()
+			headersSent = true
+		}
+	}
+
 	evalTokens := 0
 	err := cb.Stream(ctx, req, func(delta string) error {
-		evalTokens++
+		sendHeaders()
+		if delta != "" {
+			// Match the non-streaming path, which counts via
+			// response.CountNonEmpty, so the same request reports the same
+			// eval_count whether or not it streamed.
+			evalTokens++
+		}
 		return nd.WriteObject(ChatResponse{
 			Model:     model,
 			CreatedAt: created,
@@ -35,11 +52,17 @@ func streamChat(ctx context.Context, w http.ResponseWriter, cb backend.ContentBa
 	})
 
 	if err != nil {
-		// Ollama reports mid-stream failures as an {"error": ...} object inside
-		// an already-200 body; the status line is long gone by now.
+		if !headersSent {
+			writeBackendError(w, err)
+			return
+		}
+		// Mid-stream: the status line is long gone, so the failure has to ride
+		// in-band as an {"error": ...} object inside the already-200 body.
 		_ = nd.WriteObject(errorEnvelope{Error: err.Error()})
 		return
 	}
+
+	sendHeaders()
 
 	final := ChatResponse{
 		Model:      model,

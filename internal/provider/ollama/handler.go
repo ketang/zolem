@@ -11,6 +11,7 @@ package ollama
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	runtimecfg "github.com/ketang/zolem/internal/runtime"
 	"github.com/ketang/zolem/internal/specs"
 	"github.com/ketang/zolem/internal/wasmgen"
+	"github.com/ketang/zolem/internal/zolemerr"
 )
 
 type Handler struct {
@@ -55,6 +57,11 @@ func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator 
 	h.mux.Get("/api/ps", h.handlePS)
 	h.mux.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		writeNotFound(w, "404 page not found")
+	})
+	// Without this, chi's default 405 is an empty text/plain body, breaking the
+	// invariant that every error from this provider is a flat JSON envelope.
+	h.mux.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	})
 	return h
 }
@@ -202,14 +209,21 @@ func ollamaToChatMessages(req ChatRequest) []ollamaclient.ChatMessage {
 }
 
 func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture, req ChatRequest) {
+	body, err := renderFixtureBodyBytes(ctx, f)
+	if err != nil {
+		zolemerr.Write(w, err.Error())
+		return
+	}
+
 	responseModel := runtimecfg.ResponseModelForRequest(ctx, req.Model)
 
-	var resp ChatResponse
-	if err := json.Unmarshal(f.ResponseBody, &resp); err != nil {
-		// Not a chat envelope: serve the fixture bytes verbatim.
+	resp, ok := decodeChatEnvelope(body)
+	if !ok {
+		// Not a chat envelope: serve the rendered bytes verbatim rather than
+		// silently emitting an empty response.
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(f.Status)
-		_, _ = w.Write(f.ResponseBody)
+		_, _ = w.Write(body)
 		return
 	}
 	resp.Model = responseModel
@@ -221,4 +235,43 @@ func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture
 		return
 	}
 	streamFixture(ctx, w, resp)
+}
+
+// decodeChatEnvelope reports whether body is usable as a native chat response.
+//
+// A successful json.Unmarshal is not sufficient: any JSON object decodes into
+// ChatResponse with every field zero, so a fixture written for a different
+// provider would otherwise be served as an empty envelope with done=false —
+// silently discarding its content and hanging a client that waits for the
+// terminal object.
+func decodeChatEnvelope(body []byte) (ChatResponse, bool) {
+	var resp ChatResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return ChatResponse{}, false
+	}
+	if resp.Message.Role == "" && resp.Message.Content == "" && len(resp.Message.ToolCalls) == 0 {
+		return ChatResponse{}, false
+	}
+	return resp, true
+}
+
+// renderFixtureBodyBytes expands a templated fixture body. Mirrors the
+// equivalent helpers in the anthropic, gemini, and openai providers.
+func renderFixtureBodyBytes(ctx context.Context, f *fixture.Fixture) ([]byte, error) {
+	if !f.Templated {
+		return f.ResponseBody, nil
+	}
+	rt, ok := runtimecfg.ListenerRuntimeFromContext(ctx)
+	if !ok {
+		return nil, fmt.Errorf("fixture %q template requires local runtime metadata", f.ID)
+	}
+	renderSeq := runtimecfg.IncrementTemplateRenderForRequest(ctx)
+	return fixture.RenderBody(*f, fixture.RenderInput{
+		Runtime: fixture.RuntimeContext(rt),
+		Sequence: fixture.TemplateSequenceContext{
+			ProfileRequest: runtimecfg.ProfileRequestSequenceFromContext(ctx),
+			TemplateRender: renderSeq,
+		},
+		Now: time.Now().UTC(),
+	})
 }

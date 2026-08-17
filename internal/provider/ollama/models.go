@@ -97,10 +97,19 @@ func modelsForProfile(ctx context.Context) []modelEntry {
 			return defaultModels
 		}
 	}
-	head := defaultModels[0]
-	head.Name = pinned
-	head.Model = pinned
-	return append([]modelEntry{head}, defaultModels[1:]...)
+	// Prepend rather than replace: the pinned model is an addition to the
+	// catalogue, not a substitution. Replacing defaultModels[0] would make
+	// llama3.2:latest vanish from /api/tags and 404 on /api/show even though
+	// /api/chat still accepts it.
+	pinnedEntry := modelEntry{
+		Name: pinned, Model: pinned,
+		ModifiedAt:   defaultModels[0].ModifiedAt,
+		Size:         defaultModels[0].Size,
+		Digest:       defaultModels[0].Digest,
+		Details:      defaultModels[0].Details,
+		Capabilities: defaultModels[0].Capabilities,
+	}
+	return append([]modelEntry{pinnedEntry}, defaultModels...)
 }
 
 func (h *Handler) handleTags(w http.ResponseWriter, r *http.Request) {
