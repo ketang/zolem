@@ -1,5 +1,6 @@
 .claude/
 .agents/bin/
+.env
 /zolem
 /zolemc
 bin/
