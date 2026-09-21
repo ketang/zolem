@@ -1,7 +1,8 @@
 # Intent Story Index
 
-10 stories — generated 2026-05-26T00:18:42Z
+11 stories — generated 2026-09-21T22:44:56Z
 
+- [typesafe-systemone-request-response](typesafe-systemone-request-response.md) — Mock TypeSafe Jev System One requests *(draft, observed, low)*
 - [zolem-start-fixed-listener-mode](zolem-start-fixed-listener-mode.md) — Start zolem in fixed-listener mode *(draft, observed, low)*
 - [zolem-start-local-admin-server](zolem-start-local-admin-server.md) — Start zolem local admin server *(draft, observed, low)*
 - [zolemc-call-history-clear](zolemc-call-history-clear.md) — Clear call history for a listener *(draft, observed, low)*

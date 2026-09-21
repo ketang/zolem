@@ -97,6 +97,64 @@ Each step directory uses `meta.yaml` with `version: v1-responses`; its
 
 Zolem sends each array element as one WebSocket text frame.
 
+## TypeSafe
+
+Use `provider: typesafe` and `version: v1` in `fixtures.yaml`. A fixture's
+`response.json` (or `response.json.tmpl`) is the full `answers` object,
+exactly as it would appear in a real `POST /v1/systemone` response body — see
+[docs/typesafe.md](typesafe.md) for the wire shape. It is validated against
+the *request's* questions the same way every other typesafe backend is: a
+`choice` naming an option absent from the request, or a `score` whose
+probabilities don't match its request's level count, fails with a 500 naming
+the question key, not a silently wrong answer.
+
+Example `fixtures.yaml`:
+
+```yaml
+provider: typesafe
+version: v1
+fixtures:
+  - expression: 'body["questions"]["category"].size() > 0'
+    fixture: category-demo
+```
+
+Example `meta.yaml`:
+
+```yaml
+id: category-demo
+provider: typesafe
+version: v1
+status: 200
+```
+
+Example `response.json`, answering a request with a `category` choice
+question (options `electronics` and `furniture`) and an `is_fragile` noul
+question:
+
+```json
+{
+  "model": "jev-latest",
+  "answers": {
+    "category": {
+      "type": "choice",
+      "choice": "electronics",
+      "probabilities": {"electronics": 0.87, "furniture": 0.13},
+      "confidence": 0.87
+    },
+    "is_fragile": {
+      "type": "noul",
+      "noul": 0.72
+    }
+  },
+  "usage": {"input_tokens": 24, "output_tokens": 12}
+}
+```
+
+`response_model_policy` overrides the fixture's `model` field the same way it
+does for the other providers. Sequences (a script of low-confidence-then-high
+answers, for example) work unchanged — see
+[Selection With fixtures.yaml](#selection-with-fixturesyaml-recommended).
+
 ## Templated Fixtures
 
 Replace `response.json` with `response.json.tmpl` to use Go `text/template`

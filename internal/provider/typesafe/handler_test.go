@@ -193,6 +193,25 @@ func TestSystemOne_ErrorBackend_StatusMapping(t *testing.T) {
 	}
 }
 
+// backend=ollama and backend=wasm are accepted by profile validation
+// generically (internal/runtime), but this provider has no typesafe-specific
+// behavior for either yet (ollama-logprob is zolem-w0i; a typesafe wasm
+// backend is out of scope). Both must surface a clear 500 rather than
+// silently falling back to a different backend's answers.
+func TestSystemOne_UnsupportedBackends_Return500NotSilentFallback(t *testing.T) {
+	for _, backend := range []string{runtimecfg.BackendOllama, runtimecfg.BackendWASM} {
+		t.Run(backend, func(t *testing.T) {
+			rr := postSystemOne(t, newHandler(t), runtimecfg.RuntimeProfile{Name: "b", Backend: backend}, threeQuestionBody)
+			if rr.Code != http.StatusInternalServerError {
+				t.Fatalf("status: got %d, want 500. body: %s", rr.Code, rr.Body.String())
+			}
+			if !bytes.Contains(rr.Body.Bytes(), []byte("not supported for the typesafe provider yet")) {
+				t.Errorf("expected an explicit not-supported message, got %s", rr.Body.String())
+			}
+		})
+	}
+}
+
 func TestSystemOne_InvalidJSON(t *testing.T) {
 	rr := postSystemOne(t, newHandler(t), runtimecfg.RuntimeProfile{Name: "l", Backend: runtimecfg.BackendLorem}, `not json`)
 	if rr.Code != http.StatusBadRequest {
