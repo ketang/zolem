@@ -12,6 +12,7 @@ var Providers = []string{
 	ProviderGemini,
 	ProviderOllama,
 	ProviderOpenAI,
+	ProviderTypesafe,
 }
 
 const (
@@ -19,10 +20,11 @@ const (
 	ProviderGemini    = "gemini"
 	ProviderOllama    = "ollama"
 	ProviderOpenAI    = "openai"
+	ProviderTypesafe  = "typesafe"
 )
 
 // ProviderList is the human-readable form used in error messages and CLI help.
-const ProviderList = "anthropic, gemini, ollama, or openai"
+const ProviderList = "anthropic, gemini, ollama, openai, or typesafe"
 
 // ValidProvider reports whether name is a provider surface zolem serves.
 func ValidProvider(name string) bool {
