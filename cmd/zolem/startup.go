@@ -19,6 +19,7 @@ import (
 	"github.com/ketang/zolem/internal/provider/gemini"
 	ollamaprovider "github.com/ketang/zolem/internal/provider/ollama"
 	"github.com/ketang/zolem/internal/provider/openai"
+	"github.com/ketang/zolem/internal/provider/typesafe"
 	"github.com/ketang/zolem/internal/response"
 	runtimecfg "github.com/ketang/zolem/internal/runtime"
 	"github.com/ketang/zolem/internal/specs"
@@ -365,6 +366,7 @@ func buildLocalHandler(runtimePtr *atomic.Pointer[runtimecfg.ListenerRuntime], c
 	openaiH := openai.NewHandler(validator, matcher, generator, &ollamaHTTPAdapter{}, wasmGenerator)
 	geminiH := gemini.NewHandler(validator, matcher, generator, &ollamaHTTPAdapter{}, wasmGenerator)
 	ollamaH := ollamaprovider.NewHandler(validator, matcher, generator, &ollamaHTTPAdapter{}, wasmGenerator)
+	typesafeH := typesafe.NewHandler(validator, matcher, generator)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		listenerRuntime := *runtimePtr.Load()
@@ -392,6 +394,8 @@ func buildLocalHandler(runtimePtr *atomic.Pointer[runtimecfg.ListenerRuntime], c
 			geminiH.ServeHTTP(w, req)
 		case "ollama":
 			ollamaH.ServeHTTP(w, req)
+		case "typesafe":
+			typesafeH.ServeHTTP(w, req)
 		default:
 			zolemerr.Write(w, "unknown provider: "+listenerRuntime.Spec.Provider)
 		}
@@ -450,6 +454,8 @@ func providerSpecKeys(provider string) []string {
 		return []string{"gemini:v1", "gemini:v1beta"}
 	case "ollama":
 		return []string{"ollama:v1"}
+	case "typesafe":
+		return []string{"typesafe:v1"}
 	default:
 		return nil
 	}
