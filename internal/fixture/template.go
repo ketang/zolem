@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"text/template"
 	"time"
 
@@ -41,6 +42,7 @@ type TemplateMetaContext struct {
 
 type TemplateContext struct {
 	Runtime  TemplateRuntimeContext
+	Request  map[string]any
 	Fixture  TemplateFixtureContext
 	Template TemplateMetaContext
 	Sequence TemplateSequenceContext
@@ -50,12 +52,14 @@ type TemplateContext struct {
 
 type RenderInput struct {
 	Runtime  TemplateRuntimeContext
+	Request  map[string]any
 	Sequence TemplateSequenceContext
 	Now      time.Time
 }
 
 type ValidationInput struct {
-	Runtime TemplateRuntimeContext
+	Runtime        TemplateRuntimeContext
+	DynamicRequest bool
 }
 
 const validationSeed uint64 = 1
@@ -123,6 +127,12 @@ func ValidateTemplate(f Fixture, input ValidationInput) error {
 	if f.templateBody == nil {
 		return fmt.Errorf("fixture %q has no parsed response template", f.ID)
 	}
+	// A TypeSafe fixture can read state and questions from the live request.
+	// Those values are unavailable at listener startup, so defer execution
+	// and JSON validation of request-dependent templates to RenderBody.
+	if input.DynamicRequest && strings.Contains(f.templateBody.Tree.Root.String(), ".Request") {
+		return nil
+	}
 
 	now := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 	var buf bytes.Buffer
@@ -146,6 +156,7 @@ func ValidateTemplate(f Fixture, input ValidationInput) error {
 func templateContext(f Fixture, input RenderInput, seed uint64) TemplateContext {
 	return TemplateContext{
 		Runtime: input.Runtime,
+		Request: input.Request,
 		Fixture: TemplateFixtureContext{
 			ID:       f.ID,
 			Provider: f.Provider,

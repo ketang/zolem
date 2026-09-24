@@ -3,6 +3,8 @@ package main_test
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -108,6 +110,16 @@ func TestLocalRuntimeTypesafeProvider_E2E(t *testing.T) {
 		if !strings.Contains(string(body), "jev-latest") {
 			t.Errorf("expected jev-latest in models list: %s", body)
 		}
+		var models struct {
+			Models []struct {
+				Name        string `json:"name"`
+				Description string `json:"description"`
+				ReleaseDate string `json:"release_date"`
+			} `json:"models"`
+		}
+		if err := json.Unmarshal(body, &models); err != nil || len(models.Models) == 0 || models.Models[0].Name != "jev-latest" || models.Models[0].Description == "" || models.Models[0].ReleaseDate == "" {
+			t.Fatalf("models do not match TypeSafe model-card shape: %s (decode error: %v)", body, err)
+		}
 	})
 
 	t.Run("schema-rejects-unknown-question-type", func(t *testing.T) {
@@ -184,7 +196,7 @@ func TestLocalRuntimeTypesafeProvider_E2E(t *testing.T) {
 		fixtureURL := createRuntimeListener(t, fixtureAdmin, "typesafe", map[string]any{
 			"backend": "fixture",
 		})
-		want := "Templated fixture for profile typesafe-fixture-demo."
+		want := "Templated fixture for profile typesafe-fixture-demo and state x."
 
 		resp, body := doRequest(t, fixtureURL, http.MethodPost, "/v1/systemone",
 			`{"model":"jev-latest","state":"x","questions":{"urgency":{"type":"score","instructions":"?","criteria":["low","high"]}}}`,
@@ -200,6 +212,39 @@ func TestLocalRuntimeTypesafeProvider_E2E(t *testing.T) {
 		}
 		if env.Answers["urgency"].Legend["1"] != want {
 			t.Fatalf("rendered legend: got %q, want %q (body: %s)", env.Answers["urgency"].Legend["1"], want, body)
+		}
+	})
+
+	t.Run("invalid-fixture-choice-is-500", func(t *testing.T) {
+		fixturesDir := t.TempDir()
+		mustMkdir(t, filepath.Join(fixturesDir, "invalid-choice"))
+		for name, body := range map[string]string{
+			"fixtures.yaml": `provider: typesafe
+version: v1
+fixtures:
+  - expression: 'true'
+    fixture: invalid-choice
+`,
+			"invalid-choice/meta.yaml": `id: invalid-choice
+provider: typesafe
+version: v1
+status: 200
+`,
+			"invalid-choice/response.json": `{"model":"jev-latest","answers":{"category":{"type":"choice","choice":"absent","probabilities":{"electronics":0.6,"furniture":0.4},"confidence":0.6}},"usage":{"input_tokens":1,"output_tokens":1}}`,
+		} {
+			if err := os.WriteFile(filepath.Join(fixturesDir, name), []byte(body), 0o644); err != nil {
+				t.Fatalf("write fixture %s: %v", name, err)
+			}
+		}
+		fixtureAdmin := startLocalAdminServiceWithFixtures(t, repoRoot, fixturesDir)
+		t.Cleanup(fixtureAdmin.Close)
+		fixtureURL := createRuntimeListener(t, fixtureAdmin, "typesafe", map[string]any{"backend": "fixture"})
+		requestBody := `{"model":"jev-latest","state":"x","questions":{"category":{"type":"choice","instructions":"pick","criteria":{"electronics":"E","furniture":"F"}}}}`
+		resp, body := doRequest(t, fixtureURL, http.MethodPost, "/v1/systemone", requestBody,
+			"Content-Type: application/json", "Authorization: Bearer sk-unchecked-key")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusInternalServerError || !strings.Contains(string(body), "category") || !strings.Contains(string(body), "absent") {
+			t.Fatalf("invalid choice response: status=%d body=%s", resp.StatusCode, body)
 		}
 	})
 }

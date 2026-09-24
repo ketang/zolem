@@ -230,6 +230,10 @@ When `template_seed` is absent, Zolem chooses a fresh seed for each template
 render. Setup-time validation uses a fixed validation seed and does not advance
 live profile counters.
 
+TypeSafe templates that read `.Request` are checked when rendered against a
+real request, since the request is unavailable during listener setup. Other
+templates are also executed and checked for valid JSON at setup.
+
 ## Fixture Listener Setup
 
 In local runtime mode, create a `fixture` profile scoped to a namespace:

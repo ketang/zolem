@@ -326,7 +326,7 @@ func loadFixtures(fixturesDir string, listenerRuntime runtimecfg.ListenerRuntime
 	legacy, isLegacy := selector.(*fixture.LegacySelector)
 	var warnings []string
 	for i := range fixtures {
-		if err := fixture.ValidateTemplate(fixtures[i], fixture.ValidationInput{Runtime: fixture.RuntimeContext(listenerRuntime)}); err != nil {
+		if err := fixture.ValidateTemplate(fixtures[i], fixture.ValidationInput{Runtime: fixture.RuntimeContext(listenerRuntime), DynamicRequest: fixtures[i].Provider == "typesafe"}); err != nil {
 			return nil, nil, warnings, fmt.Errorf("validate response for fixture %q: %w", fixtures[i].ID, err)
 		}
 		if isLegacy && !legacy.HasMatcher(fixtures[i]) {

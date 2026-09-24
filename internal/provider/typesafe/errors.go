@@ -10,14 +10,10 @@ import (
 
 // errorEnvelope is zolem's TypeSafe error shape.
 //
-// INVENTED: the confirmed contract (docs.typesafe.ai, fetched 2026-09-21)
-// documents the status codes for 401/422/429/529 but gives no JSON example
-// for the error body. The official SDK source (npm @typesafe-ai/sdk, PyPI
-// typesafe-sdk) and the Pydantic AI / Vercel AI SDK / LiteLLM TypeSafe
-// integrations were not reachable from this environment. This nested
-// {"error": {"type", "message"}} shape is invented, chosen for consistency
-// with the other JSON-body-error providers zolem mocks (Anthropic, OpenAI)
-// rather than sourced from TypeSafe directly. See docs/typesafe.md.
+// TypeSafe's API reference documents error status codes but no single JSON
+// body schema. This nested {"error": {"type", "message"}} envelope is
+// synthetic, but the official JavaScript SDK accepts an error object with a
+// message. See docs/typesafe.md for provenance and the 400/422 distinction.
 type errorEnvelope struct {
 	Error apiError `json:"error"`
 }

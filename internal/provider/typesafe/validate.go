@@ -97,7 +97,7 @@ func validateChoiceAnswer(question Question, answer Answer) error {
 	if argmax != answer.Choice {
 		return fmt.Errorf("choice %q is not the argmax of probabilities (argmax is %q)", answer.Choice, argmax)
 	}
-	return nil
+	return validateConfidence(answer.Confidence)
 }
 
 func validateScoreAnswer(question Question, answer Answer) error {
@@ -129,6 +129,24 @@ func validateScoreAnswer(question Question, answer Answer) error {
 	if math.Abs(weighted-*answer.Score) > probabilitySumEpsilon {
 		return fmt.Errorf("score %v does not equal the probability-weighted position %v", *answer.Score, weighted)
 	}
+	if len(answer.Legend) != len(indices) {
+		return fmt.Errorf("legend has %d keys, want %d", len(answer.Legend), len(indices))
+	}
+	for _, idx := range indices {
+		if _, ok := answer.Legend[idx]; !ok {
+			return fmt.Errorf("legend is missing level index %q", idx)
+		}
+	}
+	return validateConfidence(answer.Confidence)
+}
+
+func validateConfidence(confidence *float64) error {
+	if confidence == nil {
+		return fmt.Errorf("confidence is required")
+	}
+	if math.IsNaN(*confidence) || math.IsInf(*confidence, 0) || *confidence < 0 || *confidence > 1 {
+		return fmt.Errorf("confidence %v is outside [0, 1]", *confidence)
+	}
 	return nil
 }
 
@@ -146,7 +164,10 @@ func validateProbabilityKeys(probabilities map[string]float64, want []string) er
 
 func validateProbabilitySum(probabilities map[string]float64) error {
 	var sum float64
-	for _, p := range probabilities {
+	for key, p := range probabilities {
+		if math.IsNaN(p) || math.IsInf(p, 0) || p < 0 || p > 1 {
+			return fmt.Errorf("probability for %q (%v) is outside [0, 1]", key, p)
+		}
 		sum += p
 	}
 	if math.Abs(sum-1) > probabilitySumEpsilon {

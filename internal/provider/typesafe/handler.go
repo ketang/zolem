@@ -111,7 +111,7 @@ func (h *Handler) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 			Body:   json.RawMessage(body),
 		}
 		if matched, _ := h.matcher.Match(r.Context(), matchReq); matched != nil {
-			h.serveFixture(w, r.Context(), matched, req)
+			h.serveFixture(w, r.Context(), matched, req, body)
 			return
 		}
 	}
@@ -197,8 +197,8 @@ func estimateUsage(req Request, answers map[string]Answer) Usage {
 	return Usage{InputTokens: input, OutputTokens: output}
 }
 
-func (h *Handler) serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture, req Request) {
-	body, err := renderFixtureBodyBytes(ctx, f)
+func (h *Handler) serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture, req Request, rawRequest []byte) {
+	body, err := renderFixtureBodyBytes(ctx, f, rawRequest)
 	if err != nil {
 		writeBackendError(w, err)
 		return
@@ -206,12 +206,7 @@ func (h *Handler) serveFixture(w http.ResponseWriter, ctx context.Context, f *fi
 
 	var resp Response
 	if err := json.Unmarshal(body, &resp); err != nil {
-		// Not a systemone envelope: serve the rendered bytes verbatim rather
-		// than silently emitting an empty response, matching the other
-		// providers' fixture-passthrough behavior.
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(f.Status)
-		_, _ = w.Write(body)
+		writeBackendError(w, fmt.Errorf("fixture %q response is not a valid System One response: %w", f.ID, err))
 		return
 	}
 	resp.Model = runtimecfg.ResponseModelForRequest(ctx, req.Model)
@@ -233,7 +228,7 @@ func (h *Handler) serveFixture(w http.ResponseWriter, ctx context.Context, f *fi
 
 // renderFixtureBodyBytes expands a templated fixture body. Mirrors the
 // equivalent helpers in the anthropic, gemini, ollama, and openai providers.
-func renderFixtureBodyBytes(ctx context.Context, f *fixture.Fixture) ([]byte, error) {
+func renderFixtureBodyBytes(ctx context.Context, f *fixture.Fixture, rawRequest []byte) ([]byte, error) {
 	if !f.Templated {
 		return f.ResponseBody, nil
 	}
@@ -242,8 +237,13 @@ func renderFixtureBodyBytes(ctx context.Context, f *fixture.Fixture) ([]byte, er
 		return nil, fmt.Errorf("fixture %q template requires local runtime metadata", f.ID)
 	}
 	renderSeq := runtimecfg.IncrementTemplateRenderForRequest(ctx)
+	var parsedRequest map[string]any
+	if err := json.Unmarshal(rawRequest, &parsedRequest); err != nil {
+		return nil, fmt.Errorf("parse request for fixture %q template: %w", f.ID, err)
+	}
 	return fixture.RenderBody(*f, fixture.RenderInput{
 		Runtime: fixture.RuntimeContext(rt),
+		Request: parsedRequest,
 		Sequence: fixture.TemplateSequenceContext{
 			ProfileRequest: runtimecfg.ProfileRequestSequenceFromContext(ctx),
 			TemplateRender: renderSeq,

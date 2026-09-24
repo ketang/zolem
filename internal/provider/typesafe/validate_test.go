@@ -63,7 +63,7 @@ func TestValidateAnswers_ExtraAnswer(t *testing.T) {
 func TestValidateAnswers_ChoiceValid(t *testing.T) {
 	req := reqWithChoice(`{"a":"A","b":"B"}`)
 	err := ValidateAnswers(req, map[string]Answer{
-		"q": {Type: QuestionChoice, Choice: "a", Probabilities: map[string]float64{"a": 0.6, "b": 0.4}},
+		"q": {Type: QuestionChoice, Choice: "a", Probabilities: map[string]float64{"a": 0.6, "b": 0.4}, Confidence: floatPtr(0.6)},
 	})
 	if err != nil {
 		t.Fatalf("expected valid, got %v", err)
@@ -108,6 +108,16 @@ func TestValidateAnswers_RejectsOutOfRangeProbabilities(t *testing.T) {
 	}
 }
 
+func TestValidateAnswers_ChoiceRequiresConfidence(t *testing.T) {
+	err := ValidateAnswers(reqWithChoice(`{"a":"A","b":"B"}`), map[string]Answer{
+		"q": {Type: QuestionChoice, Choice: "a", Probabilities: map[string]float64{"a": 0.6, "b": 0.4}},
+	})
+	assertValidationErrorNames(t, err, "q")
+	if !strings.Contains(err.Error(), "confidence") {
+		t.Fatalf("wrong validation rule: %v", err)
+	}
+}
+
 func TestValidateAnswers_ChoiceNotArgmax(t *testing.T) {
 	req := reqWithChoice(`{"a":"A","b":"B"}`)
 	err := ValidateAnswers(req, map[string]Answer{
@@ -136,10 +146,27 @@ func TestValidateAnswers_ScoreValid(t *testing.T) {
 			Score:         floatPtr(1.25),
 			Probabilities: map[string]float64{"0": 0.25, "1": 0.25, "2": 0.5},
 			Legend:        map[string]string{"0": "low", "1": "mid", "2": "high"},
+			Confidence:    floatPtr(0.5),
 		},
 	})
 	if err != nil {
 		t.Fatalf("expected valid, got %v", err)
+	}
+}
+
+func TestValidateAnswers_ScoreRequiresLegendAndConfidence(t *testing.T) {
+	req := reqWithScore(`["low","high"]`)
+	base := Answer{Type: QuestionScore, Score: floatPtr(0.4), Probabilities: map[string]float64{"0": 0.6, "1": 0.4}}
+	err := ValidateAnswers(req, map[string]Answer{"q": base})
+	assertValidationErrorNames(t, err, "q")
+	if !strings.Contains(err.Error(), "legend") {
+		t.Fatalf("wrong validation rule: %v", err)
+	}
+	base.Legend = map[string]string{"0": "low", "1": "high"}
+	err = ValidateAnswers(req, map[string]Answer{"q": base})
+	assertValidationErrorNames(t, err, "q")
+	if !strings.Contains(err.Error(), "confidence") {
+		t.Fatalf("wrong validation rule: %v", err)
 	}
 }
 

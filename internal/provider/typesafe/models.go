@@ -4,25 +4,19 @@ import (
 	"net/http"
 )
 
-// modelEntry and the /v1/models envelope below are INVENTED.
-//
-// The confirmed contract (docs.typesafe.ai, fetched 2026-09-21) does not
-// mention a GET /v1/models endpoint at all — its existence and shape were not
-// found on any fetched page. The official SDK source (npm @typesafe-ai/sdk,
-// PyPI typesafe-sdk) and the Pydantic AI / Vercel AI SDK / LiteLLM TypeSafe
-// integrations were not reachable from this environment to confirm one
-// either. This handler and shape are invented, modeled on the common
-// {"models": [{"id": ...}]} convention shared by OpenAI and Ollama's own
-// /v1/models-compatible surfaces, purely so zolem has *something* reasonable
-// to serve. See docs/typesafe.md for this provenance note.
+// modelEntry follows the model-card shape in TypeSafe's official JS SDK and
+// models reference: name, description, and release_date. The catalogue data
+// below is synthetic; the alias is stable while the real model behind it may
+// change. See docs/typesafe.md for provenance.
 type modelEntry struct {
-	ID     string `json:"id"`
-	Object string `json:"object"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	ReleaseDate string `json:"release_date"`
 }
 
 // defaultModels is the synthetic catalogue served by GET /v1/models.
 var defaultModels = []modelEntry{
-	{ID: "jev-latest", Object: "model"},
+	{Name: "jev-latest", Description: "Synthetic Jev latest model alias", ReleaseDate: "1970-01-01"},
 }
 
 func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {

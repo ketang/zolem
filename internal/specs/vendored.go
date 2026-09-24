@@ -14,8 +14,7 @@ import _ "embed"
 //     native API is unversioned.
 //   - typesafe:v1 is likewise a pre-normalized JSON Schema snapshot,
 //     hand-authored from the confirmed contract in docs.typesafe.ai (see the
-//     schema's own description field and docs/typesafe.md for the source and
-//     what parts of the surface are invented rather than confirmed).
+//     schema's own description field and docs/typesafe.md for provenance).
 //   - openai:v1 is an OpenAPI document, normalized by the OpenAPI normalizer.
 //   - gemini:v1 / gemini:v1beta are Google API Discovery documents, normalized
 //     by the discovery normalizer.

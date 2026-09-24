@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "TypeSafe Jev System One API Request",
-  "description": "Normalized request schema for POST /v1/systemone. The wire shape (model, state, questions with type noul|choice|score, the probabilities field name from the v1 rename of distribution) is CONFIRMED 2026-09-21 against the live docs at docs.typesafe.ai (api.md, primitives/choice.md, primitives/noul.md, primitives/score.md, migrating-to-v1.md), fetched directly. The choice minimum of 2 options and the requirement that noul.criteria, when present, is an object are reasonable inferences from that contract, not literal quotes from the docs. See docs/typesafe.md for the full provenance note, including what is invented (GET /v1/models and error-body shapes) versus confirmed.",
+  "description": "Normalized request schema for POST /v1/systemone. The wire shape is confirmed against docs.typesafe.ai (api.md, primitives/choice.md, primitives/noul.md, primitives/score.md, migrating-to-v1.md). The choice minimum of 2 options and the requirement that noul.criteria, when present, is an object are inferences. GET /v1/models is confirmed by the official models docs and JS SDK; error-body shape remains synthetic. See docs/typesafe.md for provenance.",
   "type": "object",
   "required": ["model", "state", "questions"],
   "properties": {
@@ -10,6 +10,7 @@
       "description": "Model name, e.g. jev-latest."
     },
     "state": {
+      "type": ["string", "object", "array"],
       "description": "Application state passed to the model. May be a string, object, or array."
     },
     "questions": {
@@ -24,6 +25,7 @@
             "enum": ["noul", "choice", "score"]
           },
           "instructions": {
+            "type": ["string", "object", "array"],
             "description": "Natural-language (or structured) instructions for the question. May be a string, object, or array."
           },
           "criteria": {
