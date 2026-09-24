@@ -2,8 +2,18 @@
 
 ## Unreleased
 
+## v0.2.0 — 2026-09-23
+
 ### Added
 
+- TypeSafe's Jev "System One" API (`POST /v1/systemone`) is now a supported
+  provider surface (`provider: typesafe`). It serves the `noul`, `choice`,
+  and `score` judgment primitives against a vendored v1 request schema, with
+  fixture, error, and synthetic (lorem/faker) backends and full
+  type-consistency validation of every answer against the request's
+  questions (a `choice` answer must name a real option, probabilities must
+  sum to 1, `noul` must be in `[0, 1]`, etc.). No authentication is required
+  in the mock. See `docs/typesafe.md` (zolem-jwr).
 - Ollama is now a supported provider surface, not only a backend. A listener
   with `provider: ollama` serves Ollama's native API — `POST /api/chat` plus
   `/api/tags`, `/api/version`, `/api/show`, and `/api/ps` — so Ollama clients
