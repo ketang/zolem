@@ -66,6 +66,25 @@ func TestFixture_ValidAnswerIsServed(t *testing.T) {
 	}
 }
 
+func TestFixture_MalformedResponseIs500(t *testing.T) {
+	f := fixture.Fixture{ID: "malformed", Provider: "typesafe", Version: "v1", ResponseBody: []byte(`not json`), Status: http.StatusOK}
+	rr := systemOneWithFixture(t, f, oneNoulQuestionBody)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status: got %d, want 500. body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestFixture_TemplateCanReadParsedRequest(t *testing.T) {
+	f := fixture.Fixture{ID: "request-aware", Provider: "typesafe", Version: "v1", Status: http.StatusOK}
+	if err := f.SetResponseTemplate([]byte(`{"model":"jev-latest","answers":{"q":{"type":"noul","noul":{{ if eq .Request.state "fragile" }}0.9{{ else }}0.1{{ end }}}},"usage":{"input_tokens":1,"output_tokens":1}}`)); err != nil {
+		t.Fatal(err)
+	}
+	rr := systemOneWithFixture(t, f, `{"model":"jev-latest","state":"fragile","questions":{"q":{"type":"noul","instructions":"?"}}}`)
+	if rr.Code != http.StatusOK || !bytes.Contains(rr.Body.Bytes(), []byte(`"noul":0.9`)) {
+		t.Fatalf("template did not use request state: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 // A fixture whose answer violates the response contract (here: a choice
 // naming an option absent from the request) is a 500 naming the question key,
 // not a silently wrong answer.

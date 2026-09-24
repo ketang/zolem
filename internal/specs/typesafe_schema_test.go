@@ -51,6 +51,10 @@ func TestVendoredFallbacks_TypesafeSnapshot(t *testing.T) {
 	}{
 		{"missing model", `{"state":"x","questions":{"q":{"type":"noul","instructions":"?"}}}`},
 		{"missing state", `{"model":"jev-latest","questions":{"q":{"type":"noul","instructions":"?"}}}`},
+		{"numeric state", `{"model":"jev-latest","state":42,"questions":{"q":{"type":"noul","instructions":"?"}}}`},
+		{"null state", `{"model":"jev-latest","state":null,"questions":{"q":{"type":"noul","instructions":"?"}}}`},
+		{"numeric instructions", `{"model":"jev-latest","state":"x","questions":{"q":{"type":"noul","instructions":42}}}`},
+		{"null instructions", `{"model":"jev-latest","state":"x","questions":{"q":{"type":"noul","instructions":null}}}`},
 		{"empty questions", `{"model":"jev-latest","state":"x","questions":{}}`},
 		{"unknown question type", `{"model":"jev-latest","state":"x","questions":{"q":{"type":"maybe","instructions":"?"}}}`},
 		{"choice missing criteria", `{"model":"jev-latest","state":"x","questions":{"q":{"type":"choice","instructions":"?"}}}`},

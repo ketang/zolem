@@ -236,8 +236,18 @@ func TestModels_ListsJevLatest(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200. body: %s", rr.Code, rr.Body.String())
 	}
-	if !bytes.Contains(rr.Body.Bytes(), []byte("jev-latest")) {
-		t.Errorf("expected jev-latest in models list: %s", rr.Body.String())
+	var payload struct {
+		Models []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			ReleaseDate string `json:"release_date"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode models: %v", err)
+	}
+	if len(payload.Models) == 0 || payload.Models[0].Name != "jev-latest" || payload.Models[0].Description == "" || payload.Models[0].ReleaseDate == "" {
+		t.Fatalf("models response does not match the TypeSafe SDK model card: %s", rr.Body.String())
 	}
 }
 

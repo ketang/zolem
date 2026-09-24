@@ -89,6 +89,25 @@ func TestValidateAnswers_ChoiceProbabilitiesDontSumToOne(t *testing.T) {
 	assertValidationErrorNames(t, err, "q")
 }
 
+func TestValidateAnswers_RejectsOutOfRangeProbabilities(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		req  Request
+		ans  Answer
+	}{
+		{"choice", reqWithChoice(`{"a":"A","b":"B"}`), Answer{Type: QuestionChoice, Choice: "a", Probabilities: map[string]float64{"a": 1.5, "b": -0.5}}},
+		{"score", reqWithScore(`["low","high"]`), Answer{Type: QuestionScore, Score: floatPtr(-0.5), Probabilities: map[string]float64{"0": 1.5, "1": -0.5}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateAnswers(tc.req, map[string]Answer{"q": tc.ans})
+			assertValidationErrorNames(t, err, "q")
+			if !strings.Contains(err.Error(), "outside [0, 1]") {
+				t.Fatalf("wrong validation rule: %v", err)
+			}
+		})
+	}
+}
+
 func TestValidateAnswers_ChoiceNotArgmax(t *testing.T) {
 	req := reqWithChoice(`{"a":"A","b":"B"}`)
 	err := ValidateAnswers(req, map[string]Answer{
