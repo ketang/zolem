@@ -144,7 +144,7 @@ func runProfiles(ctx context.Context, client admincli.Client, opts admincli.Opti
 		var streamDelayMS, streamDelayMinMS, streamDelayMaxMS int
 		var streamDelaySeed int64
 		name, flagArgs := splitOptionalLeadingName(args[1:])
-		fs.StringVar(&payload.Backend, "backend", "lorem", "backend: lorem, faker, fixture, ollama, wasm, or error")
+		fs.StringVar(&payload.Backend, "backend", "lorem", "backend: lorem, faker, fixture, ollama, wasm, or error (typesafe supports lorem, faker, fixture, error)")
 		fs.StringVar(&payload.BackendModel, "backend-model", "", "backend model override")
 		fs.StringVar(&payload.ErrorType, "error-type", "", "error backend type")
 		fs.StringVar(&payload.ResponseModelPolicy, "response-model-policy", "", "response model policy")
@@ -697,6 +697,7 @@ Admin control-plane commands (use -admin-url):
   profiles list
   profiles create <name> [-backend lorem|faker|fixture|ollama|wasm|error] [...]
     [-wasm-module-file PATH] [-wasm-timeout-ms N]
+    typesafe supports lorem, faker, fixture, and error backends
   profiles delete <name>
   listeners list
   listeners create <name> -provider anthropic|gemini|ollama|openai|typesafe -profile <name> [-addr 127.0.0.1:0] [-tls]

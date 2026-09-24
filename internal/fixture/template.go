@@ -6,8 +6,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"text/template"
+	"text/template/parse"
 	"time"
 
 	"github.com/brianvoe/gofakeit/v7"
@@ -130,7 +130,7 @@ func ValidateTemplate(f Fixture, input ValidationInput) error {
 	// A TypeSafe fixture can read state and questions from the live request.
 	// Those values are unavailable at listener startup, so defer execution
 	// and JSON validation of request-dependent templates to RenderBody.
-	if input.DynamicRequest && strings.Contains(f.templateBody.Tree.Root.String(), ".Request") {
+	if input.DynamicRequest && templateReadsRequest(f.templateBody) {
 		return nil
 	}
 
@@ -151,6 +151,56 @@ func ValidateTemplate(f Fixture, input ValidationInput) error {
 		return fmt.Errorf("rendered template is not valid JSON for fixture %q", f.ID)
 	}
 	return nil
+}
+
+func templateReadsRequest(tmpl *template.Template) bool {
+	for _, sub := range tmpl.Templates() {
+		if sub.Tree != nil && nodeReadsRequest(sub.Tree.Root) {
+			return true
+		}
+	}
+	return false
+}
+
+func nodeReadsRequest(node parse.Node) bool {
+	if node == nil {
+		return false
+	}
+	switch n := node.(type) {
+	case *parse.ListNode:
+		for _, child := range n.Nodes {
+			if nodeReadsRequest(child) {
+				return true
+			}
+		}
+	case *parse.ActionNode:
+		return nodeReadsRequest(n.Pipe)
+	case *parse.IfNode:
+		return nodeReadsRequest(n.Pipe) || nodeReadsRequest(n.List) || nodeReadsRequest(n.ElseList)
+	case *parse.RangeNode:
+		return nodeReadsRequest(n.Pipe) || nodeReadsRequest(n.List) || nodeReadsRequest(n.ElseList)
+	case *parse.WithNode:
+		return nodeReadsRequest(n.Pipe) || nodeReadsRequest(n.List) || nodeReadsRequest(n.ElseList)
+	case *parse.TemplateNode:
+		return nodeReadsRequest(n.Pipe)
+	case *parse.PipeNode:
+		for _, command := range n.Cmds {
+			if nodeReadsRequest(command) {
+				return true
+			}
+		}
+	case *parse.CommandNode:
+		for _, arg := range n.Args {
+			if nodeReadsRequest(arg) {
+				return true
+			}
+		}
+	case *parse.FieldNode:
+		return len(n.Ident) > 0 && n.Ident[0] == "Request"
+	case *parse.ChainNode:
+		return nodeReadsRequest(n.Node)
+	}
+	return false
 }
 
 func templateContext(f Fixture, input RenderInput, seed uint64) TemplateContext {

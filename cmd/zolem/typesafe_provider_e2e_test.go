@@ -247,4 +247,45 @@ status: 200
 			t.Fatalf("invalid choice response: status=%d body=%s", resp.StatusCode, body)
 		}
 	})
+
+	t.Run("error-fixture-and-unmatched-fallback", func(t *testing.T) {
+		fixturesDir := t.TempDir()
+		mustMkdir(t, filepath.Join(fixturesDir, "rate-limited"))
+		for name, body := range map[string]string{
+			"fixtures.yaml": `provider: typesafe
+version: v1
+fixtures:
+  - expression: 'body["state"] == "match"'
+    fixture: rate-limited
+`,
+			"rate-limited/meta.yaml": `id: rate-limited
+provider: typesafe
+version: v1
+status: 429
+`,
+			"rate-limited/response.json": `{"error":{"message":"try later"}}`,
+		} {
+			if err := os.WriteFile(filepath.Join(fixturesDir, name), []byte(body), 0o644); err != nil {
+				t.Fatalf("write fixture %s: %v", name, err)
+			}
+		}
+		fixtureAdmin := startLocalAdminServiceWithFixtures(t, repoRoot, fixturesDir)
+		t.Cleanup(fixtureAdmin.Close)
+		fixtureURL := createRuntimeListener(t, fixtureAdmin, "typesafe", map[string]any{"backend": "fixture"})
+		request := func(state string) string {
+			return `{"model":"jev-latest","state":"` + state + `","questions":{"q":{"type":"noul","instructions":"?"}}}`
+		}
+		unmatched, unmatchedBody := doRequest(t, fixtureURL, http.MethodPost, "/v1/systemone", request("other"),
+			"Content-Type: application/json", "Authorization: Bearer sk-unchecked-key")
+		unmatched.Body.Close()
+		if unmatched.StatusCode != http.StatusOK || !strings.Contains(string(unmatchedBody), `"noul":0.5`) {
+			t.Fatalf("unmatched fixture fallback: status=%d body=%s", unmatched.StatusCode, unmatchedBody)
+		}
+		matched, matchedBody := doRequest(t, fixtureURL, http.MethodPost, "/v1/systemone", request("match"),
+			"Content-Type: application/json", "Authorization: Bearer sk-unchecked-key")
+		matched.Body.Close()
+		if matched.StatusCode != http.StatusTooManyRequests || !strings.Contains(string(matchedBody), "try later") {
+			t.Fatalf("error fixture: status=%d body=%s", matched.StatusCode, matchedBody)
+		}
+	})
 }

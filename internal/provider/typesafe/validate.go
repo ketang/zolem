@@ -28,18 +28,29 @@ func (e *AnswerValidationError) Error() string {
 // written: this validator, not the backend, is what makes the mock
 // "cannot hallucinate" the way the real TypeSafe API cannot.
 func ValidateAnswers(req Request, answers map[string]Answer) error {
+	questionKeys := make([]string, 0, len(req.Questions))
 	for key := range req.Questions {
+		questionKeys = append(questionKeys, key)
+	}
+	sort.Strings(questionKeys)
+	for _, key := range questionKeys {
 		if _, ok := answers[key]; !ok {
 			return &AnswerValidationError{Key: key, Rule: "missing answer for question"}
 		}
 	}
+	answerKeys := make([]string, 0, len(answers))
 	for key := range answers {
+		answerKeys = append(answerKeys, key)
+	}
+	sort.Strings(answerKeys)
+	for _, key := range answerKeys {
 		if _, ok := req.Questions[key]; !ok {
 			return &AnswerValidationError{Key: key, Rule: "answer has no corresponding question in the request"}
 		}
 	}
 
-	for key, question := range req.Questions {
+	for _, key := range questionKeys {
+		question := req.Questions[key]
 		answer := answers[key]
 		if answer.Type != question.Type {
 			return &AnswerValidationError{Key: key, Rule: fmt.Sprintf("answer type %q does not match question type %q", answer.Type, question.Type)}
@@ -66,7 +77,7 @@ func validateNoulAnswer(answer Answer) error {
 	if answer.Noul == nil {
 		return fmt.Errorf("noul answer is missing the noul field")
 	}
-	if *answer.Noul < 0 || *answer.Noul > 1 {
+	if math.IsNaN(*answer.Noul) || math.IsInf(*answer.Noul, 0) || *answer.Noul < 0 || *answer.Noul > 1 {
 		return fmt.Errorf("noul value %v is outside [0, 1]", *answer.Noul)
 	}
 	return nil
@@ -90,12 +101,11 @@ func validateChoiceAnswer(question Question, answer Answer) error {
 	if err := validateProbabilitySum(answer.Probabilities); err != nil {
 		return err
 	}
-	argmax, err := argmaxKey(answer.Probabilities)
-	if err != nil {
-		return err
-	}
-	if argmax != answer.Choice {
-		return fmt.Errorf("choice %q is not the argmax of probabilities (argmax is %q)", answer.Choice, argmax)
+	for _, option := range options {
+		probability := answer.Probabilities[option]
+		if probability > answer.Probabilities[answer.Choice] {
+			return fmt.Errorf("choice %q is not the argmax of probabilities (%q has higher probability)", answer.Choice, option)
+		}
 	}
 	return validateConfidence(answer.Confidence)
 }

@@ -121,6 +121,9 @@ immediately instead of shipping a client that trusts an invalid shape.
   `.Request.questions` (see
   [docs/fixture-authoring.md](fixture-authoring.md#typesafe)); a full example
   fixture is there too. Sequences work unchanged.
+  An unmatched fixture falls back to deterministic `lorem` answers, as with
+  the other providers. A fixture with a non-2xx status serves its error body
+  and status directly; answer validation applies to successful responses.
 - **`error`**: always returns the profile's pinned forced error.
 
 ### Not yet supported for this provider

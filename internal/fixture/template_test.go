@@ -104,3 +104,13 @@ func TestValidateTemplate_CatchesInvalidRenderedJSONAtSetup(t *testing.T) {
 		t.Fatalf("error %q does not mention invalid JSON", err)
 	}
 }
+
+func TestValidateTemplate_DynamicRequestDoesNotSkipLiteralMention(t *testing.T) {
+	f := fixture.Fixture{ID: "literal-request", Provider: "typesafe", Version: "v1", Status: 200}
+	if err := f.SetResponseTemplate([]byte(`{"text":".Request", "bad": }`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.ValidateTemplate(f, fixture.ValidationInput{DynamicRequest: true}); err == nil || !strings.Contains(err.Error(), "not valid JSON") {
+		t.Fatalf("expected setup JSON validation, got %v", err)
+	}
+}

@@ -74,6 +74,14 @@ func TestFixture_MalformedResponseIs500(t *testing.T) {
 	}
 }
 
+func TestFixture_ErrorStatusPassesThrough(t *testing.T) {
+	f := fixture.Fixture{ID: "rate-limited", Provider: "typesafe", Version: "v1", ResponseBody: []byte(`{"error":{"message":"try later"}}`), Status: http.StatusTooManyRequests}
+	rr := systemOneWithFixture(t, f, oneNoulQuestionBody)
+	if rr.Code != http.StatusTooManyRequests || !bytes.Contains(rr.Body.Bytes(), []byte("try later")) {
+		t.Fatalf("error fixture was not served: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestFixture_TemplateCanReadParsedRequest(t *testing.T) {
 	f := fixture.Fixture{ID: "request-aware", Provider: "typesafe", Version: "v1", Status: http.StatusOK}
 	if err := f.SetResponseTemplate([]byte(`{"model":"jev-latest","answers":{"q":{"type":"noul","noul":{{ if eq .Request.state "fragile" }}0.9{{ else }}0.1{{ end }}}},"usage":{"input_tokens":1,"output_tokens":1}}`)); err != nil {

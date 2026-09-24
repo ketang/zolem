@@ -141,8 +141,8 @@ func (h *Handler) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 }
 
 // answersForBackend synthesizes an answer for every question in req using
-// the profile's configured backend. lorem and the "" (default) and "hybrid"
-// legacy backends are deterministic; faker is seeded from the raw request
+// the profile's configured backend. lorem, an unmatched fixture, and the ""
+// (default) and "hybrid" legacy backends are deterministic; faker is seeded from the raw request
 // body so identical requests always answer identically and a changed request
 // (e.g. a different state) answers differently. The ollama and wasm backend
 // names are accepted by profile validation generically (internal/runtime),
@@ -154,7 +154,7 @@ func (h *Handler) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 func answersForBackend(ctx context.Context, req Request, rawBody []byte) (map[string]Answer, error) {
 	backend := runtimecfg.BackendForRequest(ctx)
 	switch backend {
-	case "", runtimecfg.BackendHybrid, runtimecfg.BackendLorem:
+	case "", runtimecfg.BackendHybrid, runtimecfg.BackendLorem, runtimecfg.BackendFixture:
 		return answersWith(req, func(q Question, _ string) (Answer, error) {
 			return answerLorem(q)
 		})
@@ -201,6 +201,12 @@ func (h *Handler) serveFixture(w http.ResponseWriter, ctx context.Context, f *fi
 	body, err := renderFixtureBodyBytes(ctx, f, rawRequest)
 	if err != nil {
 		writeBackendError(w, err)
+		return
+	}
+	if f.Status < 200 || f.Status >= 300 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(f.Status)
+		_, _ = w.Write(body)
 		return
 	}
 

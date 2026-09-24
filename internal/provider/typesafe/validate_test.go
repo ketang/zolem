@@ -129,6 +129,15 @@ func TestValidateAnswers_ChoiceNotArgmax(t *testing.T) {
 	}
 }
 
+func TestValidateAnswers_ChoiceTieMayPickEitherMaximum(t *testing.T) {
+	err := ValidateAnswers(reqWithChoice(`{"a":"A","b":"B"}`), map[string]Answer{
+		"q": {Type: QuestionChoice, Choice: "b", Probabilities: map[string]float64{"a": 0.5, "b": 0.5}, Confidence: floatPtr(0.5)},
+	})
+	if err != nil {
+		t.Fatalf("tied maximum should be valid: %v", err)
+	}
+}
+
 func TestValidateAnswers_ChoiceMissingProbabilityKey(t *testing.T) {
 	req := reqWithChoice(`{"a":"A","b":"B"}`)
 	err := ValidateAnswers(req, map[string]Answer{

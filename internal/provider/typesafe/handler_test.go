@@ -122,6 +122,20 @@ func TestSystemOne_LoremBackend_ProducesValidAnswers(t *testing.T) {
 	}
 }
 
+func TestSystemOne_UnmatchedFixtureFallsBackToLorem(t *testing.T) {
+	rr := postSystemOne(t, newHandler(t), runtimecfg.RuntimeProfile{Name: "fx", Backend: runtimecfg.BackendFixture}, threeQuestionBody)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200. body: %s", rr.Code, rr.Body.String())
+	}
+	var resp systemOneResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Answers["is_fragile"].Noul == nil || *resp.Answers["is_fragile"].Noul != 0.5 {
+		t.Fatalf("unmatched fixture did not fall back to lorem: %s", rr.Body.String())
+	}
+}
+
 func TestSystemOne_FakerBackend_DeterministicPerRequest(t *testing.T) {
 	h := newHandler(t)
 	profile := runtimecfg.RuntimeProfile{Name: "f", Backend: runtimecfg.BackendFaker}
