@@ -114,3 +114,17 @@ func TestValidateTemplate_DynamicRequestDoesNotSkipLiteralMention(t *testing.T) 
 		t.Fatalf("expected setup JSON validation, got %v", err)
 	}
 }
+
+func TestValidateTemplate_DefersRootVariableRequestReference(t *testing.T) {
+	f := fixture.Fixture{ID: "root-request", Provider: "typesafe", Version: "v1", Status: 200}
+	if err := f.SetResponseTemplate([]byte(`{"value": {{ $.Request.state }}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.ValidateTemplate(f, fixture.ValidationInput{DynamicRequest: true}); err != nil {
+		t.Fatalf("request-dependent template should validate at render time: %v", err)
+	}
+	body, err := fixture.RenderBody(f, fixture.RenderInput{Request: map[string]any{"state": true}})
+	if err != nil || string(body) != `{"value": true}` {
+		t.Fatalf("render request: body=%s error=%v", body, err)
+	}
+}

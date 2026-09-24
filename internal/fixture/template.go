@@ -197,6 +197,8 @@ func nodeReadsRequest(node parse.Node) bool {
 		}
 	case *parse.FieldNode:
 		return len(n.Ident) > 0 && n.Ident[0] == "Request"
+	case *parse.VariableNode:
+		return len(n.Ident) > 1 && n.Ident[0] == "$" && n.Ident[1] == "Request"
 	case *parse.ChainNode:
 		return nodeReadsRequest(n.Node)
 	}

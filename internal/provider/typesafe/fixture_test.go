@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -20,11 +21,29 @@ import (
 // what these tests are exercising.
 type firstMatchSelector struct{}
 
+type failingSelector struct{}
+
+func (failingSelector) Select(context.Context, fixture.MatchRequest, []fixture.Fixture) (*fixture.Fixture, error) {
+	return nil, fmt.Errorf("selection failed")
+}
+
 func (firstMatchSelector) Select(_ context.Context, _ fixture.MatchRequest, candidates []fixture.Fixture) (*fixture.Fixture, error) {
 	if len(candidates) == 0 {
 		return nil, nil
 	}
 	return &candidates[0], nil
+}
+
+func TestFixture_MatchErrorIs500(t *testing.T) {
+	runner := fixture.NewRunner()
+	t.Cleanup(runner.Close)
+	f := fixture.Fixture{ID: "broken-selector", Provider: "typesafe", Version: "v1", Status: http.StatusOK}
+	matcher := fixture.NewMatcher(runner, []fixture.Fixture{f}, failingSelector{})
+	h := typesafe.NewHandler(specs.NewValidator(), matcher, response.NewLoremGenerator())
+	rr := postSystemOne(t, h, runtimecfg.RuntimeProfile{Name: "fx", Backend: runtimecfg.BackendFixture}, oneNoulQuestionBody)
+	if rr.Code != http.StatusInternalServerError || !bytes.Contains(rr.Body.Bytes(), []byte("selection failed")) {
+		t.Fatalf("fixture selection failure was hidden: status=%d body=%s", rr.Code, rr.Body.String())
+	}
 }
 
 func systemOneWithFixture(t *testing.T, f fixture.Fixture, body string) *httptest.ResponseRecorder {

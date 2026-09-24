@@ -110,7 +110,12 @@ func (h *Handler) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 			Labels: map[string]string{},
 			Body:   json.RawMessage(body),
 		}
-		if matched, _ := h.matcher.Match(r.Context(), matchReq); matched != nil {
+		matched, err := h.matcher.Match(r.Context(), matchReq)
+		if err != nil {
+			writeBackendError(w, fmt.Errorf("fixture match failed: %w", err))
+			return
+		}
+		if matched != nil {
 			h.serveFixture(w, r.Context(), matched, req, body)
 			return
 		}
