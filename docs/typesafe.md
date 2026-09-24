@@ -10,30 +10,30 @@ model cannot produce anything outside the shape the question declares.
 ## Provenance: confirmed vs. invented
 
 The request/response wire shape below is **confirmed** against the live docs
-at docs.typesafe.ai (`api.md`, `primitives/choice.md`, `primitives/noul.md`,
-`primitives/score.md`, `migrating-to-v1.md`), fetched 2026-09-21. In
+at docs.typesafe.ai (`api.md`, `models.md`, `primitives/choice.md`,
+`primitives/noul.md`, `primitives/score.md`, `migrating-to-v1.md`) and the
+[official JavaScript SDK](https://github.com/typesafe-ai/typesafe-sdk-js),
+checked 2026-09-23. In
 particular, the response field is `probabilities` (the v1 rename of the
 predecessor API's `distribution`), not `distribution` — an earlier
 third-party-sourced draft of this feature used the wrong name and was
 corrected before implementation.
 
-Two things are **invented**, because the confirmed docs do not specify them
-and the official SDK (npm `@typesafe-ai/sdk`, PyPI `typesafe-sdk`) and
-secondary integration sources (Pydantic AI, Vercel AI SDK, LiteLLM) were not
-reachable from the implementing environment:
+`GET /v1/models` and its response are documented in the
+[TypeSafe models reference](https://docs.typesafe.ai/models.md) and the
+[official SDK's models resource](https://github.com/typesafe-ai/typesafe-sdk-js/blob/main/src/resources/models.ts).
+Zolem serves `{"models": [{"name": "jev-latest", "description": "...",
+"release_date": "..."}]}`. The list is synthetic; TypeSafe says its live
+endpoint lists models available to the authenticated account and currently
+lists aliases. See `internal/provider/typesafe/models.go`.
 
-- **`GET /v1/models` existence and response shape.** Its existence was not
-  found on any fetched doc page. Zolem serves `{"models": [{"id": "jev-latest",
-  "object": "model"}]}`, modeled on the common OpenAI-style
-  `{"models": [{"id": ...}]}` convention. See `internal/provider/typesafe/models.go`.
-- **Error body shape.** The docs specify status codes for 401/422/429/529 but
-  no JSON example. Zolem serves a nested `{"error": {"type": ..., "message":
-  ...}}` envelope, for consistency with the other JSON-body-error providers
-  zolem mocks (Anthropic, OpenAI). See `internal/provider/typesafe/errors.go`.
-
-If you have access to a real TypeSafe account or the SDK source and either
-shape differs, please update `internal/provider/typesafe/models.go` and
-`errors.go` (and their doc comments) accordingly.
+The **error body shape is invented**. The
+[API reference](https://docs.typesafe.ai/api.md) gives status codes but no
+specific JSON schema. Zolem uses `{"error": {"type": ..., "message": ...}}`,
+which the [official SDK's error parser](https://github.com/typesafe-ai/typesafe-sdk-js/blob/main/src/errors.ts)
+accepts. This issue requires HTTP 400 for invalid request bodies; the current
+TypeSafe docs describe HTTP 422 for request validation. See
+`internal/provider/typesafe/errors.go` for zolem's behavior.
 
 ## Request shape
 
@@ -115,9 +115,10 @@ immediately instead of shipping a client that trusts an invalid shape.
   particular) produces a different one. Useful for exercising a consumer's
   threshold logic against varied, still-valid answers.
 - **`fixture`**: `response.json` (or `response.json.tmpl`) holds the full
-  `answers` object; it is validated the same way as every other backend
-  before being served. Templated fixtures get access to the usual runtime and
-  sequence template context (see
+  response envelope: `model`, `answers`, and `usage`. Its answers are validated
+  against the request before being served. Templated TypeSafe fixtures also
+  receive the parsed request as `.Request`, including `.Request.state` and
+  `.Request.questions` (see
   [docs/fixture-authoring.md](fixture-authoring.md#typesafe)); a full example
   fixture is there too. Sequences work unchanged.
 - **`error`**: always returns the profile's pinned forced error.

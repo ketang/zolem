@@ -100,8 +100,9 @@ Zolem sends each array element as one WebSocket text frame.
 ## TypeSafe
 
 Use `provider: typesafe` and `version: v1` in `fixtures.yaml`. A fixture's
-`response.json` (or `response.json.tmpl`) is the full `answers` object,
-exactly as it would appear in a real `POST /v1/systemone` response body — see
+`response.json` (or `response.json.tmpl`) is the full response envelope,
+including `model`, `answers`, and `usage`, exactly as it would appear in a
+real `POST /v1/systemone` response body — see
 [docs/typesafe.md](typesafe.md) for the wire shape. It is validated against
 the *request's* questions the same way every other typesafe backend is: a
 `choice` naming an option absent from the request, or a `score` whose
@@ -155,6 +156,10 @@ does for the other providers. Sequences (a script of low-confidence-then-high
 answers, for example) work unchanged — see
 [Selection With fixtures.yaml](#selection-with-fixturesyaml-recommended).
 
+For TypeSafe templates only, `.Request` contains the parsed System One request.
+Use `.Request.state` and `.Request.questions` to build answers for the caller's
+state and option names. The usual runtime and sequence fields remain available.
+
 ## Templated Fixtures
 
 Replace `response.json` with `response.json.tmpl` to use Go `text/template`
@@ -189,7 +194,9 @@ Templated fixture rules:
 - templates use Go `text/template`
 - use the `json` helper for dynamic values so the rendered response stays valid JSON
 - templates can call the full `gofakeit/v7` faker surface through `.Faker`
-- templates cannot read request body, query parameters, path parameters, or headers
+- templates cannot read request data for other providers; TypeSafe templates
+  receive the parsed body as `.Request`, but no query parameters, path
+  parameters, or headers
 - Zolem provides the current UTC time as `.Now`
 - `.Sequence.ProfileRequest` increments once per request handled by the profile
 - `.Sequence.TemplateRender` increments once per templated fixture render for the profile
