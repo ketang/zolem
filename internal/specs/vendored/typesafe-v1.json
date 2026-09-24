@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TypeSafe Jev System One API Request",
+  "description": "Normalized request schema for POST /v1/systemone. The wire shape is confirmed against docs.typesafe.ai (api.md, primitives/choice.md, primitives/noul.md, primitives/score.md, migrating-to-v1.md). The choice minimum of 2 options and the requirement that noul.criteria, when present, is an object are inferences. GET /v1/models is confirmed by the official models docs and JS SDK; error-body shape remains synthetic. See docs/typesafe.md for provenance.",
+  "type": "object",
+  "required": ["model", "state", "questions"],
+  "properties": {
+    "model": {
+      "type": "string",
+      "description": "Model name, e.g. jev-latest."
+    },
+    "state": {
+      "type": ["string", "object", "array"],
+      "description": "Application state passed to the model. May be a string, object, or array."
+    },
+    "questions": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Map of question id to question definition. Must contain at least one question.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["type", "instructions"],
+        "properties": {
+          "type": {
+            "enum": ["noul", "choice", "score"]
+          },
+          "instructions": {
+            "type": ["string", "object", "array"],
+            "description": "Natural-language (or structured) instructions for the question. May be a string, object, or array."
+          },
+          "criteria": {
+            "description": "Type-specific criteria; see the allOf branches below for the shape required per question type."
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": { "type": { "const": "choice" } }
+            },
+            "then": {
+              "required": ["criteria"],
+              "properties": {
+                "criteria": {
+                  "type": "object",
+                  "minProperties": 2,
+                  "maxProperties": 255,
+                  "additionalProperties": { "type": "string" }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": { "type": { "const": "score" } }
+            },
+            "then": {
+              "required": ["criteria"],
+              "properties": {
+                "criteria": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 10,
+                  "items": {
+                    "anyOf": [
+                      { "type": "string" },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "what": { "type": "string" },
+                          "examples": {}
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": { "type": { "const": "noul" } }
+            },
+            "then": {
+              "properties": {
+                "criteria": { "type": "object" }
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "additionalProperties": true
+}

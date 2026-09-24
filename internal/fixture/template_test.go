@@ -104,3 +104,44 @@ func TestValidateTemplate_CatchesInvalidRenderedJSONAtSetup(t *testing.T) {
 		t.Fatalf("error %q does not mention invalid JSON", err)
 	}
 }
+
+func TestValidateTemplate_DynamicRequestChecksJSONWhenRendered(t *testing.T) {
+	f := fixture.Fixture{ID: "literal-request", Provider: "typesafe", Version: "v1", Status: 200}
+	if err := f.SetResponseTemplate([]byte(`{"text":".Request", "bad": }`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.ValidateTemplate(f, fixture.ValidationInput{DynamicRequest: true}); err != nil {
+		t.Fatalf("request-capable template should wait for a real request: %v", err)
+	}
+	if _, err := fixture.RenderBody(f, fixture.RenderInput{Request: map[string]any{"state": true}}); err == nil || !strings.Contains(err.Error(), "not valid JSON") {
+		t.Fatalf("expected render-time JSON validation, got %v", err)
+	}
+}
+
+func TestValidateTemplate_DefersRootVariableRequestReference(t *testing.T) {
+	f := fixture.Fixture{ID: "root-request", Provider: "typesafe", Version: "v1", Status: 200}
+	if err := f.SetResponseTemplate([]byte(`{"value": {{ $.Request.state }}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.ValidateTemplate(f, fixture.ValidationInput{DynamicRequest: true}); err != nil {
+		t.Fatalf("request-dependent template should validate at render time: %v", err)
+	}
+	body, err := fixture.RenderBody(f, fixture.RenderInput{Request: map[string]any{"state": true}})
+	if err != nil || string(body) != `{"value": true}` {
+		t.Fatalf("render request: body=%s error=%v", body, err)
+	}
+}
+
+func TestValidateTemplate_DefersAliasedRequestReference(t *testing.T) {
+	f := fixture.Fixture{ID: "aliased-request", Provider: "typesafe", Version: "v1", Status: 200}
+	if err := f.SetResponseTemplate([]byte(`{"value": {{ $r := . }}{{ $r.Request.state }}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.ValidateTemplate(f, fixture.ValidationInput{DynamicRequest: true}); err != nil {
+		t.Fatalf("aliased request-dependent template should validate at render time: %v", err)
+	}
+	body, err := fixture.RenderBody(f, fixture.RenderInput{Request: map[string]any{"state": true}})
+	if err != nil || string(body) != `{"value": true}` {
+		t.Fatalf("render request: body=%s error=%v", body, err)
+	}
+}

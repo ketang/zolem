@@ -97,12 +97,76 @@ Each step directory uses `meta.yaml` with `version: v1-responses`; its
 
 Zolem sends each array element as one WebSocket text frame.
 
+## TypeSafe
+
+Use `provider: typesafe` and `version: v1` in `fixtures.yaml`. A fixture's
+`response.json` (or `response.json.tmpl`) is the full response envelope,
+including `model`, `answers`, and `usage`, exactly as it would appear in a
+real `POST /v1/systemone` response body — see
+[docs/typesafe.md](typesafe.md) for the wire shape. It is validated against
+the *request's* questions the same way every other typesafe backend is: a
+`choice` naming an option absent from the request, or a `score` whose
+probabilities don't match its request's level count, fails with a 500 naming
+the question key, not a silently wrong answer.
+
+Example `fixtures.yaml`:
+
+```yaml
+provider: typesafe
+version: v1
+fixtures:
+  - expression: 'body["questions"]["category"].size() > 0'
+    fixture: category-demo
+```
+
+Example `meta.yaml`:
+
+```yaml
+id: category-demo
+provider: typesafe
+version: v1
+status: 200
+```
+
+Example `response.json`, answering a request with a `category` choice
+question (options `electronics` and `furniture`) and an `is_fragile` noul
+question:
+
+```json
+{
+  "model": "jev-latest",
+  "answers": {
+    "category": {
+      "type": "choice",
+      "choice": "electronics",
+      "probabilities": {"electronics": 0.87, "furniture": 0.13},
+      "confidence": 0.87
+    },
+    "is_fragile": {
+      "type": "noul",
+      "noul": 0.72
+    }
+  },
+  "usage": {"input_tokens": 24, "output_tokens": 12}
+}
+```
+
+`response_model_policy` overrides the fixture's `model` field the same way it
+does for the other providers. Sequences (a script of low-confidence-then-high
+answers, for example) work unchanged — see
+[Selection With fixtures.yaml](#selection-with-fixturesyaml-recommended).
+
+For TypeSafe templates only, `.Request` contains the parsed System One request.
+Use `.Request.state` and `.Request.questions` to build answers for the caller's
+state and option names. The usual runtime and sequence fields remain available.
+
 ## Templated Fixtures
 
 Replace `response.json` with `response.json.tmpl` to use Go `text/template`
 for dynamic responses. Zolem parses, executes, and validates the rendered JSON
 when the fixture-backed listener is created. Bad template syntax or invalid
-rendered JSON fails startup before the fixture can serve traffic.
+rendered JSON fails startup before the fixture can serve traffic, except for
+TypeSafe templates, whose dynamic request context is validated at render time.
 
 Template example:
 
@@ -131,7 +195,9 @@ Templated fixture rules:
 - templates use Go `text/template`
 - use the `json` helper for dynamic values so the rendered response stays valid JSON
 - templates can call the full `gofakeit/v7` faker surface through `.Faker`
-- templates cannot read request body, query parameters, path parameters, or headers
+- templates cannot read request data for other providers; TypeSafe templates
+  receive the parsed body as `.Request`, but no query parameters, path
+  parameters, or headers
 - Zolem provides the current UTC time as `.Now`
 - `.Sequence.ProfileRequest` increments once per request handled by the profile
 - `.Sequence.TemplateRender` increments once per templated fixture render for the profile
@@ -164,6 +230,10 @@ template_seed: 42
 When `template_seed` is absent, Zolem chooses a fresh seed for each template
 render. Setup-time validation uses a fixed validation seed and does not advance
 live profile counters.
+
+TypeSafe templates that read `.Request` are checked when rendered against a
+real request, since the request is unavailable during listener setup. Other
+templates are also executed and checked for valid JSON at setup.
 
 ## Fixture Listener Setup
 

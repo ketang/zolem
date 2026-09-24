@@ -1,0 +1,6 @@
+id: typesafe-templated
+provider: typesafe
+version: v1
+stream: false
+status: 200
+template_seed: 1

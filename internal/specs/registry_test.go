@@ -23,6 +23,7 @@ func TestDefaultRegistryLookup(t *testing.T) {
 		{provider: "openrouter", version: "v1", kind: specs.SourceKindOpenAPI, remote: true},
 		{provider: "gemini", version: "v1", kind: specs.SourceKindDiscovery, remote: true},
 		{provider: "gemini", version: "v1beta", kind: specs.SourceKindDiscovery, remote: true},
+		{provider: "typesafe", version: "v1", kind: specs.SourceKindVendoredDocsSnapshot, remote: false},
 	}
 
 	for _, tt := range tests {
@@ -46,8 +47,8 @@ func TestDefaultRegistryListIsSortedAndEnabled(t *testing.T) {
 	registry := specs.DefaultRegistry()
 	sources := registry.List()
 
-	if len(sources) != 6 {
-		t.Fatalf("got %d sources, want 6", len(sources))
+	if len(sources) != 7 {
+		t.Fatalf("got %d sources, want 7", len(sources))
 	}
 
 	got := make([]string, 0, len(sources))
@@ -65,11 +66,31 @@ func TestDefaultRegistryListIsSortedAndEnabled(t *testing.T) {
 		"ollama:v1",
 		"openai:v1",
 		"openrouter:v1",
+		"typesafe:v1",
 	}
 
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("sorted key %d: got %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+func TestDefaultRegistryTypesafeFallbackLoads(t *testing.T) {
+	source, ok := specs.DefaultRegistry().Lookup("typesafe", "v1")
+	if !ok {
+		t.Fatal("missing typesafe:v1 source")
+	}
+	data, err := specs.NewContractLoader("").LoadFallback(source)
+	if err != nil {
+		t.Fatalf("load typesafe fallback: %v", err)
+	}
+	validator := specs.NewValidator()
+	if err := validator.LoadNormalized(source.Provider, source.Version, data); err != nil {
+		t.Fatalf("compile typesafe fallback: %v", err)
+	}
+	request := []byte(`{"model":"jev-latest","state":"x","questions":{"q":{"type":"noul","instructions":"Is this true?"}}}`)
+	if err := validator.Validate(source.Provider, source.Version, request); err != nil {
+		t.Fatalf("valid typesafe request: %v", err)
 	}
 }

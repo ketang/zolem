@@ -2,10 +2,10 @@
 
 A local mock server for LLM provider APIs. Zolem validates incoming requests
 against bundled request schemas — normalized from each provider's source format
-(OpenAPI for OpenAI, API Discovery for Gemini, vendored schemas for Anthropic
-and Ollama) — and returns synthetic responses, so you can develop and test
-integrations against Anthropic, OpenAI, Gemini, and Ollama without burning
-tokens (or, for Ollama, without pulling a model). The
+(OpenAPI for OpenAI, API Discovery for Gemini, vendored schemas for Anthropic,
+Ollama, and TypeSafe) — and returns synthetic responses, so you can develop and
+test integrations against Anthropic, OpenAI, Gemini, Ollama, and TypeSafe
+without burning tokens (or, for Ollama, without pulling a model). The
 schemas ship in the binary and are applied with no network egress; a request
 that violates its provider's schema is rejected with that provider's native 4xx
 error. The schemas are representative subsets focused on request structure
@@ -22,9 +22,11 @@ Zolem currently has two supported local execution paths:
 - OpenAI
 - Gemini
 - Ollama (native API: `/api/chat`, `/api/tags`, `/api/show`, `/api/ps`, `/api/version`)
+- TypeSafe (Jev System One API: `POST /v1/systemone`, `GET /v1/models`) — see [docs/typesafe.md](docs/typesafe.md)
 
 OpenRouter shares OpenAI's chat-completions request shape; local runtime
-listeners currently serve (and validate) Anthropic, OpenAI, Gemini, and Ollama.
+listeners currently serve (and validate) Anthropic, OpenAI, Gemini, Ollama,
+and TypeSafe.
 
 Note that Ollama appears on both axes and the two are unrelated. As a
 **provider** it is an API surface zolem impersonates, so you can develop an
@@ -46,6 +48,11 @@ streaming is newline-delimited JSON rather than SSE, `stream` defaults to
 | `ollama` | Forwards generation to a local Ollama instance via its HTTP API |
 | `wasm` | Runs a profile-supplied WebAssembly content generator |
 | `error` | Local runtime only; always returns a provider-native error |
+
+The TypeSafe provider supports `lorem`, `faker`, `fixture`, and `error`; it
+does not yet support the `ollama` backend (a real-model `ollama-logprob`
+backend is tracked separately) or `wasm` (the generic wasm backend is
+untested against this provider). See [docs/typesafe.md](docs/typesafe.md).
 
 ## Installation
 
@@ -133,7 +140,7 @@ Current local runtime limitations:
 - currently supported local runtime backends: `lorem`, `faker`, `fixture`, `ollama`, `wasm`, `error`
 - `fixture` listeners require `-local-fixtures-dir` on the admin server or fixed listener
 - `fixture_namespace` can scope a profile to a relative subdirectory under that fixtures root
-- fixtures can use either `response.json` or `response.json.tmpl`; templates are validated at setup time and cannot read request body, query, path, or headers
+- fixtures can use either `response.json` or `response.json.tmpl`; TypeSafe templates can read the parsed request body and are validated when rendered; other providers' templates are validated at setup and cannot read request data
 - OpenAI Responses WebSocket fixtures use `version: v1-responses` and a `response.json` array of event objects, one event per outbound WebSocket frame
 - `response_model_policy` controls the provider-visible `model` field for local runtime listeners
 

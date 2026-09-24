@@ -90,6 +90,14 @@ func DefaultRegistry() Registry {
 			ContentType:  "application/json",
 			Enabled:      true,
 		},
+		{
+			Provider:     "typesafe",
+			Version:      "v1",
+			Kind:         SourceKindVendoredDocsSnapshot,
+			FallbackPath: "vendored/typesafe-v1.json",
+			ContentType:  "application/schema+json",
+			Enabled:      true,
+		},
 	}
 
 	registry := Registry{sources: make(map[string]ContractSource, len(sources))}

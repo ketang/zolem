@@ -19,6 +19,7 @@ import (
 	"github.com/ketang/zolem/internal/provider/gemini"
 	ollamaprovider "github.com/ketang/zolem/internal/provider/ollama"
 	"github.com/ketang/zolem/internal/provider/openai"
+	"github.com/ketang/zolem/internal/provider/typesafe"
 	"github.com/ketang/zolem/internal/response"
 	runtimecfg "github.com/ketang/zolem/internal/runtime"
 	"github.com/ketang/zolem/internal/specs"
@@ -222,6 +223,12 @@ func buildLocalStartupAppWithRecorder(opts localOptions, recorder Recorder, caps
 }
 
 func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, fixturesDir string, counters *runtimecfg.ProfileCounters, recorder Recorder, caps RecordCaps, deps startupDeps) (*startupApp, []string, error) {
+	if listenerRuntime.Spec.Provider == runtimecfg.ProviderTypesafe {
+		switch listenerRuntime.Profile.Backend {
+		case runtimecfg.BackendOllama, runtimecfg.BackendWASM:
+			return nil, nil, fmt.Errorf("backend %q is not supported for the typesafe provider", listenerRuntime.Profile.Backend)
+		}
+	}
 	deps = deps.withDefaults()
 	if counters == nil {
 		counters = runtimecfg.NewProfileCounters()
@@ -325,7 +332,7 @@ func loadFixtures(fixturesDir string, listenerRuntime runtimecfg.ListenerRuntime
 	legacy, isLegacy := selector.(*fixture.LegacySelector)
 	var warnings []string
 	for i := range fixtures {
-		if err := fixture.ValidateTemplate(fixtures[i], fixture.ValidationInput{Runtime: fixture.RuntimeContext(listenerRuntime)}); err != nil {
+		if err := fixture.ValidateTemplate(fixtures[i], fixture.ValidationInput{Runtime: fixture.RuntimeContext(listenerRuntime), DynamicRequest: fixtures[i].Provider == runtimecfg.ProviderTypesafe}); err != nil {
 			return nil, nil, warnings, fmt.Errorf("validate response for fixture %q: %w", fixtures[i].ID, err)
 		}
 		if isLegacy && !legacy.HasMatcher(fixtures[i]) {
@@ -365,6 +372,7 @@ func buildLocalHandler(runtimePtr *atomic.Pointer[runtimecfg.ListenerRuntime], c
 	openaiH := openai.NewHandler(validator, matcher, generator, &ollamaHTTPAdapter{}, wasmGenerator)
 	geminiH := gemini.NewHandler(validator, matcher, generator, &ollamaHTTPAdapter{}, wasmGenerator)
 	ollamaH := ollamaprovider.NewHandler(validator, matcher, generator, &ollamaHTTPAdapter{}, wasmGenerator)
+	typesafeH := typesafe.NewHandler(validator, matcher, generator)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		listenerRuntime := *runtimePtr.Load()
@@ -392,6 +400,8 @@ func buildLocalHandler(runtimePtr *atomic.Pointer[runtimecfg.ListenerRuntime], c
 			geminiH.ServeHTTP(w, req)
 		case "ollama":
 			ollamaH.ServeHTTP(w, req)
+		case "typesafe":
+			typesafeH.ServeHTTP(w, req)
 		default:
 			zolemerr.Write(w, "unknown provider: "+listenerRuntime.Spec.Provider)
 		}
@@ -450,6 +460,8 @@ func providerSpecKeys(provider string) []string {
 		return []string{"gemini:v1", "gemini:v1beta"}
 	case "ollama":
 		return []string{"ollama:v1"}
+	case "typesafe":
+		return []string{"typesafe:v1"}
 	default:
 		return nil
 	}

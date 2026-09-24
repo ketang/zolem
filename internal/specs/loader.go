@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 )
 
-//go:embed fallbacks/*.json
+//go:embed fallbacks/*.json vendored/typesafe-v1.json
 var fallbackFS embed.FS
 
 type NormalizedSchema struct {
