@@ -165,7 +165,8 @@ state and option names. The usual runtime and sequence fields remain available.
 Replace `response.json` with `response.json.tmpl` to use Go `text/template`
 for dynamic responses. Zolem parses, executes, and validates the rendered JSON
 when the fixture-backed listener is created. Bad template syntax or invalid
-rendered JSON fails startup before the fixture can serve traffic.
+rendered JSON fails startup before the fixture can serve traffic, except for
+TypeSafe templates, whose dynamic request context is validated at render time.
 
 Template example:
 

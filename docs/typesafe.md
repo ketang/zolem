@@ -130,11 +130,11 @@ immediately instead of shipping a client that trusts an invalid shape.
 
 - **`ollama` backend** (a real local model answering questions from logprobs):
   tracked separately as zolem-w0i, blocked on this issue. Selecting
-  `backend: ollama` for a `typesafe` listener returns a clear 500 rather than
-  silently falling back to a different backend.
+  `backend: ollama` for a `typesafe` listener is rejected when the listener is
+  created.
 - **`wasm` backend**: the generic profile-supplied WASM content-generator
   backend is untested against this provider's answer shape and is out of
-  scope for this issue. Selecting it also returns a clear 500.
+  scope for this issue. Selecting it is also rejected at listener creation.
 
 ## Example
 

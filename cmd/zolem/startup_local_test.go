@@ -42,6 +42,20 @@ func (f fakeFetcher) Get(provider, version string) ([]byte, error) {
 	return nil, nil
 }
 
+func TestBuildLocalStartupAppForRuntime_RejectsUnsupportedTypesafeBackends(t *testing.T) {
+	for _, backend := range []string{runtimecfg.BackendOllama, runtimecfg.BackendWASM} {
+		t.Run(backend, func(t *testing.T) {
+			_, _, err := buildLocalStartupAppForRuntime(runtimecfg.ListenerRuntime{
+				Spec:    runtimecfg.ListenerSpec{Name: "typesafe-demo", Addr: "127.0.0.1:0", Provider: runtimecfg.ProviderTypesafe, Profile: "demo"},
+				Profile: runtimecfg.RuntimeProfile{Name: "demo", Backend: backend},
+			}, "", nil, nil, RecordCaps{}, startupDeps{})
+			if err == nil || !strings.Contains(err.Error(), "not supported for the typesafe provider") {
+				t.Fatalf("expected create-time backend rejection, got %v", err)
+			}
+		})
+	}
+}
+
 func TestBuildLocalStartupAppForRuntime_FixtureNamespace(t *testing.T) {
 	fixturesDir := t.TempDir()
 	writeLocalFixture(t, filepath.Join(fixturesDir, "team-a"), "fixture-team-a", "anthropic", "v1", []byte(`{"id":"fixture-team-a","type":"message","role":"assistant","content":[{"type":"text","text":"fixture text"}],"model":"claude-3-5-sonnet-20241022","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2}}`), localAlwaysMatchWASM)

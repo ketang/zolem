@@ -223,6 +223,12 @@ func buildLocalStartupAppWithRecorder(opts localOptions, recorder Recorder, caps
 }
 
 func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, fixturesDir string, counters *runtimecfg.ProfileCounters, recorder Recorder, caps RecordCaps, deps startupDeps) (*startupApp, []string, error) {
+	if listenerRuntime.Spec.Provider == runtimecfg.ProviderTypesafe {
+		switch listenerRuntime.Profile.Backend {
+		case runtimecfg.BackendOllama, runtimecfg.BackendWASM:
+			return nil, nil, fmt.Errorf("backend %q is not supported for the typesafe provider", listenerRuntime.Profile.Backend)
+		}
+	}
 	deps = deps.withDefaults()
 	if counters == nil {
 		counters = runtimecfg.NewProfileCounters()

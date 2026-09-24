@@ -46,6 +46,20 @@ func TestLocalRuntimeTypesafeProvider_E2E(t *testing.T) {
 	repoRoot := repoRoot(t)
 	admin := startLocalAdminService(t, repoRoot)
 	t.Cleanup(admin.Close)
+	t.Run("unsupported-backend-is-rejected-at-listener-creation", func(t *testing.T) {
+		profileResp, profileBody := doRequest(t, admin.baseURL, http.MethodPut, "/_zolem/profiles/typesafe-unsupported",
+			`{"backend":"ollama"}`, "Content-Type: application/json")
+		profileResp.Body.Close()
+		if profileResp.StatusCode != http.StatusOK {
+			t.Fatalf("profile creation: status=%d body=%s", profileResp.StatusCode, profileBody)
+		}
+		listenerResp, listenerBody := doRequest(t, admin.baseURL, http.MethodPut, "/_zolem/listeners/typesafe-unsupported",
+			`{"addr":"127.0.0.1:0","provider":"typesafe","profile":"typesafe-unsupported"}`, "Content-Type: application/json")
+		listenerResp.Body.Close()
+		if listenerResp.StatusCode != http.StatusBadRequest || !strings.Contains(string(listenerBody), "not supported for the typesafe provider") {
+			t.Fatalf("unsupported listener: status=%d body=%s", listenerResp.StatusCode, listenerBody)
+		}
+	})
 
 	listenerBaseURL := createRuntimeListener(t, admin, "typesafe", map[string]any{
 		"backend": "lorem",

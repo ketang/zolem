@@ -140,7 +140,7 @@ Current local runtime limitations:
 - currently supported local runtime backends: `lorem`, `faker`, `fixture`, `ollama`, `wasm`, `error`
 - `fixture` listeners require `-local-fixtures-dir` on the admin server or fixed listener
 - `fixture_namespace` can scope a profile to a relative subdirectory under that fixtures root
-- fixtures can use either `response.json` or `response.json.tmpl`; templates are validated at setup time and cannot read request body, query, path, or headers
+- fixtures can use either `response.json` or `response.json.tmpl`; TypeSafe templates can read the parsed request body and are validated when rendered; other providers' templates are validated at setup and cannot read request data
 - OpenAI Responses WebSocket fixtures use `version: v1-responses` and a `response.json` array of event objects, one event per outbound WebSocket frame
 - `response_model_policy` controls the provider-visible `model` field for local runtime listeners
 

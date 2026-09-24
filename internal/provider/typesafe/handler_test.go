@@ -210,8 +210,8 @@ func TestSystemOne_ErrorBackend_StatusMapping(t *testing.T) {
 // backend=ollama and backend=wasm are accepted by profile validation
 // generically (internal/runtime), but this provider has no typesafe-specific
 // behavior for either yet (ollama-logprob is zolem-w0i; a typesafe wasm
-// backend is out of scope). Both must surface a clear 500 rather than
-// silently falling back to a different backend's answers.
+// backend is out of scope). Listener setup rejects both; a handler invoked
+// directly still surfaces a clear 500 rather than silently falling back.
 func TestSystemOne_UnsupportedBackends_Return500NotSilentFallback(t *testing.T) {
 	for _, backend := range []string{runtimecfg.BackendOllama, runtimecfg.BackendWASM} {
 		t.Run(backend, func(t *testing.T) {
