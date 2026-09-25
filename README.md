@@ -46,13 +46,15 @@ streaming is newline-delimited JSON rather than SSE, `stream` defaults to
 | `faker` | Returns randomized fake data |
 | `fixture` | Returns static or templated responses selected by namespace `fixtures.yaml` expressions or a `selector.wasm` |
 | `ollama` | Forwards generation to a local Ollama instance via its HTTP API |
+| `ollama-logprob` | TypeSafe provider only; answers typed questions from a local Ollama model's next-token log probabilities |
 | `wasm` | Runs a profile-supplied WebAssembly content generator |
 | `error` | Local runtime only; always returns a provider-native error |
 
-The TypeSafe provider supports `lorem`, `faker`, `fixture`, and `error`; it
-does not yet support the `ollama` backend (a real-model `ollama-logprob`
-backend is tracked separately) or `wasm` (the generic wasm backend is
-untested against this provider). See [docs/typesafe.md](docs/typesafe.md).
+The TypeSafe provider supports `lorem`, `faker`, `fixture`, `error`, and
+`ollama-logprob`; it does not support the chat-oriented `ollama` backend or
+`wasm` (the generic wasm backend is untested against this provider), and
+`ollama-logprob` is rejected for every other provider. See
+[docs/typesafe.md](docs/typesafe.md).
 
 ## Installation
 
@@ -137,7 +139,7 @@ Current local runtime limitations:
 - local-only, loopback addresses only
 - in-memory only; profiles and listeners disappear on restart
 - no auth or TTLs yet
-- currently supported local runtime backends: `lorem`, `faker`, `fixture`, `ollama`, `wasm`, `error`
+- currently supported local runtime backends: `lorem`, `faker`, `fixture`, `ollama`, `ollama-logprob` (typesafe only), `wasm`, `error`
 - `fixture` listeners require `-local-fixtures-dir` on the admin server or fixed listener
 - `fixture_namespace` can scope a profile to a relative subdirectory under that fixtures root
 - fixtures can use either `response.json` or `response.json.tmpl`; TypeSafe templates can read the parsed request body and are validated when rendered; other providers' templates are validated at setup and cannot read request data

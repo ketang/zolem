@@ -22,7 +22,7 @@ POST /v1/systemone requires an Authorization: Bearer header to be present (its c
 
 ## Boundaries
 
-Jev System One has no streaming and no batching beyond POST /v1/systemone; zolem does not implement either. Only the lorem, faker, fixture, and error backends are implemented for this provider; selecting backend=ollama (a real-model backend answering from logprobs, tracked separately as zolem-w0i) or backend=wasm is rejected when the TypeSafe listener is created. The GET /v1/models shape follows TypeSafe's models reference and official SDK. The 422 status for request validation is documented by TypeSafe, but the {"detail": [{"loc", "msg"}]} body shape is inferred from the official JS SDK's error parser, not documented, and loc is always ["body"]. All other error bodies remain synthetic (see docs/typesafe.md for provenance); a real TypeSafe deployment's error bodies may differ. Zolem never proxies to the real TypeSafe API.
+Jev System One has no streaming and no batching beyond POST /v1/systemone; zolem does not implement either. The lorem, faker, fixture, error, and ollama-logprob backends are implemented for this provider; ollama-logprob answers from a local Ollama model's first-token log probabilities, needs a running Ollama 0.12.11 or newer, is rejected for every other provider, and its probabilities are uncalibrated. Selecting backend=ollama (the chat-completion forwarder) or backend=wasm is rejected when the TypeSafe listener is created. The GET /v1/models shape follows TypeSafe's models reference and official SDK. The 422 status for request validation is documented by TypeSafe, but the {"detail": [{"loc", "msg"}]} body shape is inferred from the official JS SDK's error parser, not documented, and loc is always ["body"]. All other error bodies remain synthetic (see docs/typesafe.md for provenance); a real TypeSafe deployment's error bodies may differ. Zolem never proxies to the real TypeSafe API.
 
 ## Auditable Claims
 
@@ -36,15 +36,19 @@ Jev System One has no streaming and no batching beyond POST /v1/systemone; zolem
 - the faker backend returns byte-identical answers for two identical requests and different answers when state differs
 - a fixture answer that violates the response contract (e.g. a choice naming an absent option) returns 500 naming the question key
 - selecting backend=ollama or backend=wasm for a typesafe listener is rejected at listener creation with a clear error
+- the ollama-logprob backend answers a two-option choice from a stubbed upstream's first-token logprobs as the renormalized softmax (about 0.917/0.083 for logprobs -0.1/-2.5), a higher calibration_temperature flattens it, and an upstream that returns no logprobs yields 502
+- the ollama-logprob backend requires backend_model, rejects a non-positive or non-finite calibration_temperature, and is rejected at listener creation for any provider other than typesafe
 
 ## Evidence
-
 
 ### Tests
 - `internal/provider/typesafe/handler_test.go`
 - `internal/provider/typesafe/validate_test.go`
 - `internal/provider/typesafe/synth_test.go`
 - `internal/provider/typesafe/fixture_test.go`
+- `internal/provider/typesafe/logprob_test.go`
+- `internal/ollama/logprob_test.go`
+- `cmd/zolem/typesafe_logprob_e2e_test.go`
 - `internal/specs/typesafe_schema_test.go`
 - `cmd/zolem/typesafe_provider_e2e_test.go`
 

@@ -138,15 +138,118 @@ immediately instead of shipping a client that trusts an invalid shape.
   and status directly; answer validation applies to successful responses.
 - **`error`**: always returns the profile's pinned forced error.
 
-### Not yet supported for this provider
+- **`ollama-logprob`**: answers with a real local model, using its next-token
+  log probabilities as the probability distribution. Valid only for this
+  provider; see [the section below](#the-ollama-logprob-backend).
 
-- **`ollama` backend** (a real local model answering questions from logprobs):
-  tracked separately as zolem-w0i, blocked on this issue. Selecting
+### Not supported for this provider
+
+- **`ollama` backend** (the chat-completion forwarder): meaningless here, since
+  Jev answers are typed judgments rather than free text. Selecting
   `backend: ollama` for a `typesafe` listener is rejected when the listener is
-  created.
+  created. Use `ollama-logprob` instead.
 - **`wasm` backend**: the generic profile-supplied WASM content-generator
-  backend is untested against this provider's answer shape and is out of
-  scope for this issue. Selecting it is also rejected at listener creation.
+  backend is untested against this provider's answer shape. Selecting it is
+  also rejected at listener creation.
+
+## The `ollama-logprob` backend
+
+An offline, roughly compatible stand-in for the real Jev model, for developing
+a consumer against live-model behavior without a TypeSafe key. Unlike
+`lorem`/`faker`/`fixture` it needs a running Ollama (0.12.11 or newer, the
+first release that returns log probabilities) with the model pulled.
+
+### How a question is answered
+
+Each question is one call to the upstream's native `POST /api/generate` with
+`stream: false`, `logprobs: true`, `top_logprobs: 20`, and
+`options: {num_predict: 1, temperature: 0}`. The prompt contains the question's
+instructions, the serialized `state`, and the options rendered as short labels
+(with the option's description when there is one), and asks for the label only:
+
+```
+Which department should handle this ticket?
+
+State:
+{"ticket": "I was charged twice ..."}
+
+Options:
+1. billing: payments, charges, refunds
+2. sales: new purchases and pricing
+3. support: technical problems
+
+Reply with only the label of the best option.
+Label:
+```
+
+The first generated token's alternatives (`logprobs[0].top_logprobs`) are then
+matched to labels: each token is trimmed and matched to a label (case-insensitively,
+ignoring a trailing `.`, `)` or `:`), tokens that map to the same label are summed,
+each weight is `exp(logprob / calibration_temperature)`, and the weights are
+renormalized over the request's options. Options that did not appear get
+probability 0. The OpenAI-compatible `/v1` endpoint is not used because it drops
+logprobs.
+
+- **`choice`**: options are the labels. `choice` is the highest-probability
+  option, and `confidence` is that probability.
+- **`score`**: levels are the labels, ordered lowest to highest. `score` is the
+  probability-weighted 0-based position; `confidence` is the largest level
+  probability.
+- **`noul`**: `1. yes` / `2. no` (with the question's optional `true`/`false`
+  criteria as descriptions). `noul` is the renormalized `yes` probability.
+
+Every answer passes the same validator as the other backends before it is sent.
+
+### Labels
+
+Up to nine options use the digits `1`-`9`, which are a single token on every
+tokenizer. Ten or more options (or a 10-level score) use the letters `A`-`Z`,
+then `AA`, `AB`, ..., because a label like `10` commonly tokenizes as `1` then
+`0` and would be indistinguishable from option 1 at the first token. Labels
+past 26 options can split the same way, so a `choice` with more than 26 options
+attributes such mass to the single-letter label.
+
+### Profile options
+
+- `backend: "ollama-logprob"` (`-local-backend ollama-logprob` in fixed-listener
+  mode).
+- `backend_model` (required; `-local-backend-model`): the Ollama model to ask.
+  This is the same field the `ollama` backend uses, so
+  `response_model_policy: force_backend` reports it as the response `model`.
+- `ollama_upstream` (`-local-ollama-upstream`): defaults to
+  `http://localhost:11434` and is subject to the same loopback/private-host
+  policy as the `ollama` backend (`allow_external_ollama_upstream` opts out;
+  link-local addresses are never allowed).
+- `calibration_temperature` (`-calibration-temperature` in `zolemc`,
+  `-local-calibration-temperature` in fixed-listener mode): a positive, finite
+  divisor applied to each log probability before exponentiating. Default `1.0`;
+  above 1 flattens the distribution, below 1 sharpens it. Zero, negative, NaN
+  and infinite values are rejected when the profile is created.
+
+```bash
+zolem -local-provider typesafe -local-addr 127.0.0.1:19010 \
+  -local-backend ollama-logprob -local-backend-model gemma3:1b
+```
+
+### Errors and limitations
+
+- If the upstream is unreachable, returns a non-200, or returns no `logprobs`
+  field (an Ollama older than 0.12.11), the request fails with `502`; the
+  message says the upstream did not return logprobs in the last case.
+- If no returned token maps to any label (the model answered in prose), the
+  distribution is uniform and zolem logs a warning.
+- Ollama caps `top_logprobs` at 20, so a `choice` with more than 20 options
+  gets probability mass on at most the top 20 labels; the rest are 0.
+- Raw logprobs are not calibrated. Small models are often extremely
+  confident, so treat `confidence` as indicative only; `calibration_temperature`
+  is the only knob.
+- Each question is a separate upstream call, made one after another.
+- Quality depends on the model. In a manual check against `gemma3:1b`, a
+  clear billing ticket answered `billing` at 0.99, while a 12-option
+  categorization of a glass vase split its mass between two labels.
+
+To check it against a real model, start Ollama, pull a model, run the command
+above, and post a request like the one in the example below.
 
 ## Example
 
