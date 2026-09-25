@@ -153,6 +153,7 @@ func (c *localControlPlane) UpsertProfile(name string, payload localProfilePaylo
 		FixtureNamespace:            payload.FixtureNamespace,
 		OllamaUpstream:              payload.OllamaUpstream,
 		AllowExternalOllamaUpstream: payload.AllowExternalOllamaUpstream,
+		CalibrationTemperature:      payload.CalibrationTemperature,
 		WASMModuleBase64:            payload.WASMModuleBase64,
 		WASMGenerateTimeoutMS:       wasmTimeoutMS,
 		StreamDelay:                 payload.StreamDelay,

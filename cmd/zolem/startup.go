@@ -73,6 +73,9 @@ type localOptions struct {
 	Profile                    string
 	Backend                    string
 	ErrorType                  string
+	BackendModel               string
+	OllamaUpstream             string
+	CalibrationTemperature     *float64
 	FixturesDir                string
 	TLS                        localTLSConfig
 	CallsFile                  string
@@ -228,6 +231,8 @@ func buildLocalStartupAppForRuntime(listenerRuntime runtimecfg.ListenerRuntime, 
 		case runtimecfg.BackendOllama, runtimecfg.BackendWASM:
 			return nil, nil, fmt.Errorf("backend %q is not supported for the typesafe provider", listenerRuntime.Profile.Backend)
 		}
+	} else if listenerRuntime.Profile.Backend == runtimecfg.BackendOllamaLogprob {
+		return nil, nil, fmt.Errorf("backend %q is only supported for the typesafe provider, not %q", runtimecfg.BackendOllamaLogprob, listenerRuntime.Spec.Provider)
 	}
 	deps = deps.withDefaults()
 	if counters == nil {
@@ -418,6 +423,8 @@ func generatorForBackend(backend string, deps startupDeps) (response.Generator, 
 		return deps.newLorem(), nil
 	case runtimecfg.BackendOllama:
 		return deps.newLorem(), nil // generator unused for ollama backend; handler dispatches to HTTP client
+	case runtimecfg.BackendOllamaLogprob:
+		return deps.newLorem(), nil // generator unused; the typesafe handler queries the ollama upstream
 	default:
 		return nil, fmt.Errorf("unsupported local backend %q", backend)
 	}
@@ -492,9 +499,12 @@ func (o localOptions) runtime() (runtimecfg.ListenerRuntime, error) {
 	}
 
 	runtimeProfile := runtimecfg.RuntimeProfile{
-		Name:      profile,
-		Backend:   backend,
-		ErrorType: o.ErrorType,
+		Name:                   profile,
+		Backend:                backend,
+		BackendModel:           o.BackendModel,
+		ErrorType:              o.ErrorType,
+		OllamaUpstream:         o.OllamaUpstream,
+		CalibrationTemperature: o.CalibrationTemperature,
 	}
 	if err := runtimecfg.ValidateProfile(runtimeProfile); err != nil {
 		return runtimecfg.ListenerRuntime{}, fmt.Errorf("invalid local profile: %w", err)

@@ -143,8 +143,9 @@ func runProfiles(ctx context.Context, client admincli.Client, opts admincli.Opti
 		var wasmTimeoutMS int
 		var streamDelayMS, streamDelayMinMS, streamDelayMaxMS int
 		var streamDelaySeed int64
+		var calibrationTemperature float64
 		name, flagArgs := splitOptionalLeadingName(args[1:])
-		fs.StringVar(&payload.Backend, "backend", "lorem", "backend: lorem, faker, fixture, ollama, wasm, or error (typesafe supports lorem, faker, fixture, error)")
+		fs.StringVar(&payload.Backend, "backend", "lorem", "backend: lorem, faker, fixture, ollama, ollama-logprob, wasm, or error (typesafe supports lorem, faker, fixture, ollama-logprob, error; ollama-logprob is typesafe-only and needs -backend-model)")
 		fs.StringVar(&payload.BackendModel, "backend-model", "", "backend model override")
 		fs.StringVar(&payload.ErrorType, "error-type", "", "error backend type")
 		fs.StringVar(&payload.ResponseModelPolicy, "response-model-policy", "", "response model policy")
@@ -154,6 +155,7 @@ func runProfiles(ctx context.Context, client admincli.Client, opts admincli.Opti
 		fs.IntVar(&wasmTimeoutMS, "wasm-timeout-ms", 0, "WASM generation timeout in milliseconds; omitted when unset")
 		fs.StringVar(&payload.OllamaUpstream, "ollama-upstream", "", "ollama upstream URL (loopback or RFC1918 only, e.g. http://127.0.0.1:11434)")
 		fs.BoolVar(&payload.AllowExternalOllamaUpstream, "allow-external-ollama-upstream", false, "allow ollama-upstream to point outside loopback/RFC1918")
+		fs.Float64Var(&calibrationTemperature, "calibration-temperature", 0, "ollama-logprob only: positive divisor applied to each log probability (default 1.0; above 1 flattens, below 1 sharpens); omitted when unset")
 		fs.StringVar(&payload.StreamDelay.Mode, "stream-delay-mode", "", "streaming pacing mode: fixed, uniform, or token")
 		fs.IntVar(&streamDelayMS, "stream-delay-ms", 0, "fixed streaming delay in milliseconds")
 		fs.IntVar(&streamDelayMinMS, "stream-delay-min-ms", 0, "minimum streaming delay in milliseconds (uniform mode)")
@@ -180,6 +182,9 @@ func runProfiles(ctx context.Context, client admincli.Client, opts admincli.Opti
 		if flagWasSet(fs, "stream-delay-seed") {
 			seed := streamDelaySeed
 			payload.StreamDelay.Seed = &seed
+		}
+		if flagWasSet(fs, "calibration-temperature") {
+			payload.CalibrationTemperature = &calibrationTemperature
 		}
 		backendSet := flagWasSet(fs, "backend")
 		wasmTimeoutSet := flagWasSet(fs, "wasm-timeout-ms")

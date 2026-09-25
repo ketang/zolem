@@ -15,6 +15,7 @@ type ProfilePayload struct {
 	FixtureNamespace            string                 `json:"fixture_namespace,omitempty"`
 	OllamaUpstream              string                 `json:"ollama_upstream,omitempty"`
 	AllowExternalOllamaUpstream bool                   `json:"allow_external_ollama_upstream,omitempty"`
+	CalibrationTemperature      *float64               `json:"calibration_temperature,omitempty"`
 	WASMModuleBase64            string                 `json:"wasm_module_base64,omitempty"`
 	WASMGenerateTimeoutMS       *int                   `json:"wasm_generate_timeout_ms,omitempty"`
 	StreamDelay                 runtimecfg.StreamDelay `json:"stream_delay,omitempty"`
