@@ -49,6 +49,20 @@ func newHandler(t *testing.T) *typesafe.Handler {
 	return typesafe.NewHandler(specs.NewValidator(), fixture.NewMatcher(runner, nil, nil), response.NewLoremGenerator())
 }
 
+// newSchemaHandler is newHandler with the vendored typesafe:v1 request schema
+// loaded, as production startup does; a bare specs.NewValidator() skips schema
+// checks entirely.
+func newSchemaHandler(t *testing.T) *typesafe.Handler {
+	t.Helper()
+	validator := specs.NewValidator()
+	if err := specs.LoadProviderSchema(validator, "typesafe", "v1", specs.VendoredFallbacks()["typesafe:v1"]); err != nil {
+		t.Fatalf("load typesafe schema: %v", err)
+	}
+	runner := fixture.NewRunner()
+	t.Cleanup(runner.Close)
+	return typesafe.NewHandler(validator, fixture.NewMatcher(runner, nil, nil), response.NewLoremGenerator())
+}
+
 func postSystemOne(t *testing.T, h *typesafe.Handler, profile runtimecfg.RuntimeProfile, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/v1/systemone", bytes.NewBufferString(body))
@@ -226,19 +240,52 @@ func TestSystemOne_UnsupportedBackends_Return500NotSilentFallback(t *testing.T) 
 	}
 }
 
+// assertValidationDetail checks the FastAPI-style 422 body: a non-empty
+// "detail" array whose entries each carry a "loc" array and a "msg" string.
+func assertValidationDetail(t *testing.T, rr *httptest.ResponseRecorder) {
+	t.Helper()
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status: got %d, want 422. body: %s", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Detail []struct {
+			Loc []any  `json:"loc"`
+			Msg string `json:"msg"`
+		} `json:"detail"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(payload.Detail) == 0 {
+		t.Fatalf("expected a non-empty detail array, got %s", rr.Body.String())
+	}
+	for i, d := range payload.Detail {
+		if len(d.Loc) == 0 || d.Msg == "" {
+			t.Errorf("detail[%d] needs a loc array and msg string, got %+v", i, d)
+		}
+	}
+}
+
 func TestSystemOne_InvalidJSON(t *testing.T) {
 	rr := postSystemOne(t, newHandler(t), runtimecfg.RuntimeProfile{Name: "l", Backend: runtimecfg.BackendLorem}, `not json`)
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("status: got %d, want 400. body: %s", rr.Code, rr.Body.String())
-	}
+	assertValidationDetail(t, rr)
+}
+
+func TestSystemOne_EmptyBody(t *testing.T) {
+	rr := postSystemOne(t, newHandler(t), runtimecfg.RuntimeProfile{Name: "l", Backend: runtimecfg.BackendLorem}, ``)
+	assertValidationDetail(t, rr)
 }
 
 func TestSystemOne_MissingModel(t *testing.T) {
 	rr := postSystemOne(t, newHandler(t), runtimecfg.RuntimeProfile{Name: "l", Backend: runtimecfg.BackendLorem},
 		`{"state":"x","questions":{"q":{"type":"noul","instructions":"?"}}}`)
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("status: got %d, want 400. body: %s", rr.Code, rr.Body.String())
-	}
+	assertValidationDetail(t, rr)
+}
+
+func TestSystemOne_SchemaViolation(t *testing.T) {
+	rr := postSystemOne(t, newSchemaHandler(t), runtimecfg.RuntimeProfile{Name: "l", Backend: runtimecfg.BackendLorem},
+		`{"model":"jev-latest","state":"x","questions":{"q":{"type":"choice","instructions":"?","criteria":{"only":"one"}}}}`)
+	assertValidationDetail(t, rr)
 }
 
 func TestModels_ListsJevLatest(t *testing.T) {

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed
+
+- The `typesafe` provider now returns HTTP 422 (was 400) for request-validation
+  failures, matching TypeSafe's documented status, with a FastAPI-style
+  `{"detail": [{"loc": ["body"], "msg": "..."}]}` body. The body shape is
+  inferred from the official SDK's error parser. The `error` backend's forced
+  `invalid_request` stays 400. See `docs/typesafe.md` (zolem-61d3).
+
 ## v0.2.0 — 2026-09-23
 
 ### Added

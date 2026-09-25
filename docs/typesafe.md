@@ -27,13 +27,25 @@ Zolem serves `{"models": [{"name": "jev-latest", "description": "...",
 endpoint lists models available to the authenticated account and currently
 lists aliases. See `internal/provider/typesafe/models.go`.
 
-The **error body shape is invented**. The
+Error bodies are **partly invented**. The
 [API reference](https://docs.typesafe.ai/api.md) gives status codes but no
-specific JSON schema. Zolem uses `{"error": {"type": ..., "message": ...}}`,
-which the [official SDK's error parser](https://github.com/typesafe-ai/typesafe-sdk-js/blob/main/src/errors.ts)
-accepts. This issue requires HTTP 400 for invalid request bodies; the current
-TypeSafe docs describe HTTP 422 for request validation. See
-`internal/provider/typesafe/errors.go` for zolem's behavior.
+JSON schema, and it documents `422` as the request-validation failure status.
+
+- **Request validation failures** (schema violations, malformed or empty JSON,
+  a missing `model`, an unreadable body) return `422` with a FastAPI-style body,
+  `{"detail": [{"loc": ["body"], "msg": "..."}]}`. The status is documented; the
+  `detail` shape is **inferred** from the
+  [official SDK's error parser](https://github.com/typesafe-ai/typesafe-sdk-js/blob/main/src/errors.ts),
+  which reads `detail[].loc` and `detail[].msg`. `loc` is always `["body"]`
+  because the shared schema validator returns message strings only; each `msg`
+  already embeds the JSON pointer of the offending field.
+- **Every other error** (401, 404, 500, and the `error` backend's forced
+  errors) uses the invented `{"error": {"type": ..., "message": ...}}`
+  envelope, which the SDK's parser also accepts. The forced
+  `invalid_request` error stays `400`, since the SDK treats 400
+  (`BadRequestError`) and 422 (`UnprocessableEntityError`) as distinct classes.
+
+See `internal/provider/typesafe/errors.go` for zolem's behavior.
 
 ## Request shape
 

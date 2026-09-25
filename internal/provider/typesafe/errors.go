@@ -8,12 +8,13 @@ import (
 	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
-// errorEnvelope is zolem's TypeSafe error shape.
+// errorEnvelope is zolem's TypeSafe error shape for every error except
+// request validation (see writeValidationError).
 //
 // TypeSafe's API reference documents error status codes but no single JSON
 // body schema. This nested {"error": {"type", "message"}} envelope is
 // synthetic, but the official JavaScript SDK accepts an error object with a
-// message. See docs/typesafe.md for provenance and the 400/422 distinction.
+// message. See docs/typesafe.md for provenance.
 type errorEnvelope struct {
 	Error apiError `json:"error"`
 }
@@ -29,6 +30,32 @@ func writeError(w http.ResponseWriter, status int, errType, message string) {
 	_ = json.NewEncoder(w).Encode(errorEnvelope{Error: apiError{Type: errType, Message: message}})
 }
 
+// validationDetail is one entry of a request-validation failure body.
+type validationDetail struct {
+	Loc []string `json:"loc"`
+	Msg string   `json:"msg"`
+}
+
+// writeValidationError reports a request-validation failure as HTTP 422 with a
+// FastAPI-style {"detail": [{"loc", "msg"}]} body. TypeSafe documents 422 as
+// its validation-failure status; the detail shape is INFERRED from the official
+// JS SDK's error parser (src/errors.ts describeValidationErrors), not
+// documented. loc is always ["body"]: the shared schema validator returns
+// message strings only, and each message already embeds the JSON pointer.
+func writeValidationError(w http.ResponseWriter, messages ...string) {
+	details := make([]validationDetail, 0, len(messages))
+	for _, m := range messages {
+		details = append(details, validationDetail{Loc: []string{"body"}, Msg: m})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnprocessableEntity)
+	_ = json.NewEncoder(w).Encode(struct {
+		Detail []validationDetail `json:"detail"`
+	}{Detail: details})
+}
+
+// writeInvalidRequest is the 400 used only for the forced invalid_request
+// error; it is a distinct SDK class (BadRequestError) from validation's 422.
 func writeInvalidRequest(w http.ResponseWriter, message string) {
 	writeError(w, http.StatusBadRequest, "invalid_request_error", message)
 }

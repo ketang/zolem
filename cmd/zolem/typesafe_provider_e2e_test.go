@@ -142,8 +142,8 @@ func TestLocalRuntimeTypesafeProvider_E2E(t *testing.T) {
 			"Content-Type: application/json", "Authorization: Bearer sk-unchecked-key")
 		defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("status: got %d, want 400: %s", resp.StatusCode, body)
+		if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(string(body), `"detail"`) {
+			t.Fatalf("status: got %d, want 422 with a detail body: %s", resp.StatusCode, body)
 		}
 	})
 
@@ -153,8 +153,8 @@ func TestLocalRuntimeTypesafeProvider_E2E(t *testing.T) {
 			"Content-Type: application/json", "Authorization: Bearer sk-unchecked-key")
 		defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("status: got %d, want 400: %s", resp.StatusCode, body)
+		if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(string(body), `"detail"`) {
+			t.Fatalf("status: got %d, want 422 with a detail body: %s", resp.StatusCode, body)
 		}
 	})
 
@@ -164,8 +164,8 @@ func TestLocalRuntimeTypesafeProvider_E2E(t *testing.T) {
 			"Content-Type: application/json", "Authorization: Bearer sk-unchecked-key")
 		defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("status: got %d, want 400: %s", resp.StatusCode, body)
+		if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(string(body), `"detail"`) {
+			t.Fatalf("status: got %d, want 422 with a detail body: %s", resp.StatusCode, body)
 		}
 	})
 
