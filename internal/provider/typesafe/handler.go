@@ -11,6 +11,7 @@ package typesafe
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -85,22 +86,27 @@ func (h *Handler) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeInvalidRequest(w, "failed to read request body")
+		writeValidationError(w, "failed to read request body")
 		return
 	}
 
 	if err := h.validator.Validate("typesafe", "v1", body); err != nil {
-		writeInvalidRequest(w, err.Error())
+		var ve *specs.ValidationError
+		if errors.As(err, &ve) && len(ve.Errors) > 0 {
+			writeValidationError(w, ve.Errors...)
+		} else {
+			writeValidationError(w, err.Error())
+		}
 		return
 	}
 
 	var req Request
 	if err := json.Unmarshal(body, &req); err != nil {
-		writeInvalidRequest(w, "invalid JSON: "+err.Error())
+		writeValidationError(w, "invalid JSON: "+err.Error())
 		return
 	}
 	if req.Model == "" {
-		writeInvalidRequest(w, "model is required")
+		writeValidationError(w, "model is required")
 		return
 	}
 
