@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"hash/fnv"
+	"math"
 	"math/rand"
 	"net"
 	"net/url"
@@ -229,6 +230,9 @@ func ValidateProfile(profile RuntimeProfile) error {
 	if err := validateOllamaUpstream(profile); err != nil {
 		return err
 	}
+	if err := validateOllamaLogprobProfile(profile); err != nil {
+		return err
+	}
 	if err := validateWASMProfile(profile); err != nil {
 		return err
 	}
@@ -236,10 +240,10 @@ func ValidateProfile(profile RuntimeProfile) error {
 		return err
 	}
 	switch profile.Backend {
-	case "", "lorem", "faker", "fixture", "ollama", "error", BackendWASM:
+	case "", "lorem", "faker", "fixture", "ollama", BackendOllamaLogprob, "error", BackendWASM:
 		return nil
 	default:
-		return errors.New("profile backend must be lorem, faker, fixture, ollama, error, or wasm")
+		return errors.New("profile backend must be lorem, faker, fixture, ollama, ollama-logprob, error, or wasm")
 	}
 }
 
@@ -291,6 +295,18 @@ func validateResponseModelPolicy(profile RuntimeProfile) error {
 	default:
 		return errors.New("response_model_policy must be echo_request, force_literal, or force_backend")
 	}
+}
+
+func validateOllamaLogprobProfile(profile RuntimeProfile) error {
+	if t := profile.CalibrationTemperature; t != nil {
+		if math.IsNaN(*t) || math.IsInf(*t, 0) || *t <= 0 {
+			return errors.New("calibration_temperature must be a positive, finite number")
+		}
+	}
+	if profile.Backend == BackendOllamaLogprob && profile.BackendModel == "" {
+		return errors.New("backend_model is required when backend is ollama-logprob")
+	}
+	return nil
 }
 
 func validateOllamaUpstream(profile RuntimeProfile) error {

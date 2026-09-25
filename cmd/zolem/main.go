@@ -42,6 +42,9 @@ func main() {
 	localProfile := flag.String("local-profile", "default", "profile name for local fixed-listener mode")
 	localBackend := flag.String("local-backend", "lorem", "backend for local fixed-listener mode")
 	localErrorType := flag.String("local-error-type", "", "error type for the error backend in fixed-listener mode: authentication, permission, invalid_request, rate_limit, or server_error; required when -local-backend is error")
+	localBackendModel := flag.String("local-backend-model", "", "model the backend uses; required when -local-backend is ollama-logprob")
+	localOllamaUpstream := flag.String("local-ollama-upstream", "", "ollama upstream URL for the ollama and ollama-logprob backends (loopback or RFC1918 only; default http://localhost:11434)")
+	localCalibrationTemperature := flag.Float64("local-calibration-temperature", 0, "ollama-logprob only: divide each log probability by this positive number before exponentiating (default 1.0; flatter above 1, sharper below)")
 	localFixturesDir := flag.String("local-fixtures-dir", "", "fixtures directory for local runtime fixture backend; HTTP fixtures use response.json/response.json.tmpl, OpenAI Responses WebSocket fixtures use an array of event objects")
 	localTLSCert := flag.String("local-tls-cert", "", "certificate file for local admin or fixed-listener TLS")
 	localTLSKey := flag.String("local-tls-key", "", "key file for local admin or fixed-listener TLS")
@@ -72,13 +75,22 @@ func main() {
 	}
 
 	if *localProvider != "" {
+		var calibrationTemperature *float64
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "local-calibration-temperature" {
+				calibrationTemperature = localCalibrationTemperature
+			}
+		})
 		if err := runLocal(localOptions{
-			Addr:        *localAddr,
-			Provider:    *localProvider,
-			Profile:     *localProfile,
-			Backend:     *localBackend,
-			ErrorType:   *localErrorType,
-			FixturesDir: *localFixturesDir,
+			Addr:                   *localAddr,
+			Provider:               *localProvider,
+			Profile:                *localProfile,
+			Backend:                *localBackend,
+			ErrorType:              *localErrorType,
+			BackendModel:           *localBackendModel,
+			OllamaUpstream:         *localOllamaUpstream,
+			CalibrationTemperature: calibrationTemperature,
+			FixturesDir:            *localFixturesDir,
 			TLS: localTLSConfig{
 				CertFile: *localTLSCert,
 				KeyFile:  *localTLSKey,
@@ -117,8 +129,15 @@ listener with a fixed profile and backend:
   -local-provider PROVIDER    anthropic, gemini, ollama, openai, or typesafe (selects this mode)
   -local-addr ADDR            loopback listen address (default 127.0.0.1:8080)
   -local-profile NAME         profile name (default "default")
-  -local-backend BACKEND      lorem, faker, fixture, ollama, wasm, or error (default "lorem";
-                              typesafe supports lorem, faker, fixture, error)
+  -local-backend BACKEND      lorem, faker, fixture, ollama, ollama-logprob, wasm, or error
+                              (default "lorem"; typesafe supports lorem, faker, fixture,
+                              ollama-logprob, error; ollama-logprob is typesafe-only)
+  -local-backend-model MODEL  model the backend uses; required for ollama-logprob
+  -local-ollama-upstream URL  ollama upstream for ollama and ollama-logprob (loopback or
+                              RFC1918 only; default http://localhost:11434)
+  -local-calibration-temperature T
+                              ollama-logprob only: positive divisor applied to each log
+                              probability (default 1.0; above 1 flattens, below 1 sharpens)
   -local-error-type TYPE      error backend type; required when -local-backend is error
   -local-fixtures-dir DIR     fixtures directory for the fixture backend
   -local-calls-file PATH      append JSONL records of captured calls to this file

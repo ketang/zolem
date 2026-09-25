@@ -8,8 +8,12 @@ const (
 	BackendFaker   = "faker"
 	BackendFixture = "fixture"
 	BackendOllama  = "ollama"
-	BackendError   = "error"
-	BackendWASM    = "wasm"
+	// BackendOllamaLogprob answers typed TypeSafe questions from a local
+	// Ollama model's next-token log probabilities. Valid only for the typesafe
+	// provider; the listener builder rejects it elsewhere.
+	BackendOllamaLogprob = "ollama-logprob"
+	BackendError         = "error"
+	BackendWASM          = "wasm"
 )
 
 // BackendForRequest returns the explicit local-runtime backend when present,

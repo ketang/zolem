@@ -13,10 +13,14 @@ type RuntimeProfile struct {
 	// AllowExternalOllamaUpstream opts a profile out of the default
 	// loopback/RFC1918 restriction on OllamaUpstream, permitting forwarding to an
 	// arbitrary external host. Off by default to preserve the no-egress posture.
-	AllowExternalOllamaUpstream bool        `json:"allow_external_ollama_upstream,omitempty"`
-	WASMModuleBase64            string      `json:"wasm_module_base64,omitempty"`
-	WASMGenerateTimeoutMS       int         `json:"wasm_generate_timeout_ms,omitempty"`
-	StreamDelay                 StreamDelay `json:"stream_delay,omitempty"`
+	AllowExternalOllamaUpstream bool `json:"allow_external_ollama_upstream,omitempty"`
+	// CalibrationTemperature divides each log probability before the
+	// ollama-logprob backend exponentiates it. Nil means 1.0. A pointer so an
+	// explicit 0 is distinguishable from absent and can be rejected.
+	CalibrationTemperature *float64    `json:"calibration_temperature,omitempty"`
+	WASMModuleBase64       string      `json:"wasm_module_base64,omitempty"`
+	WASMGenerateTimeoutMS  int         `json:"wasm_generate_timeout_ms,omitempty"`
+	StreamDelay            StreamDelay `json:"stream_delay,omitempty"`
 }
 
 // StreamDelay describes per-profile streaming pacing.

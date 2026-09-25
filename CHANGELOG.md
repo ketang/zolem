@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added
+
+- `ollama-logprob` backend for the `typesafe` provider: answers `choice`,
+  `score`, and `noul` questions with a real local Ollama model, using the
+  first token's log probabilities as the probability distribution. Configure
+  it with `backend_model` (required), the existing `ollama_upstream`, and the
+  new `calibration_temperature` profile field; fixed-listener mode gains
+  `-local-backend-model`, `-local-ollama-upstream`, and
+  `-local-calibration-temperature`, and `zolemc profiles create` gains
+  `-calibration-temperature`. Requires Ollama 0.12.11 or newer and is rejected
+  for every other provider. See `docs/typesafe.md` (zolem-w0i).
+
 ### Changed
 
 - The `typesafe` provider now returns HTTP 422 (was 400) for request-validation

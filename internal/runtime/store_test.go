@@ -3,7 +3,9 @@ package runtimecfg_test
 import (
 	"context"
 	"errors"
+	"math"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -497,5 +499,51 @@ func TestStreamDelayForRequestFixedRandomAndCancellation(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 25*time.Millisecond {
 		t.Fatalf("zero random delay took too long: %v", elapsed)
+	}
+}
+
+func TestValidateProfile_OllamaLogprobBackend(t *testing.T) {
+	valid := runtimecfg.RuntimeProfile{Name: "test", Backend: runtimecfg.BackendOllamaLogprob, BackendModel: "llama3.2"}
+	if err := runtimecfg.ValidateProfile(valid); err != nil {
+		t.Fatalf("ollama-logprob with backend_model should be valid: %v", err)
+	}
+
+	missingModel := runtimecfg.RuntimeProfile{Name: "test", Backend: runtimecfg.BackendOllamaLogprob}
+	err := runtimecfg.ValidateProfile(missingModel)
+	if err == nil || !strings.Contains(err.Error(), "backend_model") {
+		t.Fatalf("expected an error naming backend_model, got %v", err)
+	}
+}
+
+func TestValidateProfile_OllamaLogprobUpstreamPolicyReused(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:           "test",
+		Backend:        runtimecfg.BackendOllamaLogprob,
+		BackendModel:   "llama3.2",
+		OllamaUpstream: "http://evil.example:11434",
+	})
+	if err == nil || !strings.Contains(err.Error(), "ollama_upstream") {
+		t.Fatalf("expected the existing ollama_upstream host policy to apply, got %v", err)
+	}
+}
+
+func TestValidateProfile_CalibrationTemperature(t *testing.T) {
+	ptr := func(v float64) *float64 { return &v }
+	base := runtimecfg.RuntimeProfile{Name: "test", Backend: runtimecfg.BackendOllamaLogprob, BackendModel: "llama3.2"}
+
+	for _, ok := range []*float64{nil, ptr(1), ptr(0.5), ptr(2.5)} {
+		p := base
+		p.CalibrationTemperature = ok
+		if err := runtimecfg.ValidateProfile(p); err != nil {
+			t.Errorf("temperature %v should be valid: %v", ok, err)
+		}
+	}
+	for _, bad := range []float64{0, -1, math.NaN(), math.Inf(1), math.Inf(-1)} {
+		p := base
+		p.CalibrationTemperature = ptr(bad)
+		err := runtimecfg.ValidateProfile(p)
+		if err == nil || !strings.Contains(err.Error(), "calibration_temperature") {
+			t.Errorf("temperature %v: expected an error naming calibration_temperature, got %v", bad, err)
+		}
 	}
 }
