@@ -130,6 +130,11 @@ func (h *Handler) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 	responseModel := runtimecfg.ResponseModelForRequest(r.Context(), req.Model)
 	answers, err := answersForBackend(r.Context(), req, body)
 	if err != nil {
+		var ue *upstreamError
+		if errors.As(err, &ue) {
+			writeError(w, http.StatusBadGateway, "api_error", ue.Error())
+			return
+		}
 		writeBackendError(w, err)
 		return
 	}
@@ -155,13 +160,12 @@ func (h *Handler) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 // the profile's configured backend. lorem, an unmatched fixture, and the ""
 // (default) and "hybrid" legacy backends are deterministic; faker is seeded from the raw request
 // body so identical requests always answer identically and a changed request
-// (e.g. a different state) answers differently. The ollama and wasm backend
-// names are accepted by profile validation generically (internal/runtime),
-// but neither has typesafe-specific behavior yet: ollama-logprob is
-// zolem-w0i (out of scope here), and a typesafe wasm backend is out of scope
-// per the issue. Both surface a clear error instead of silently falling back,
-// consistent with this provider's "cannot hallucinate" contract-enforcement
-// goal.
+// (e.g. a different state) answers differently. ollama-logprob asks a local
+// Ollama model (logprob.go). The generic ollama and wasm backend names are
+// accepted by profile validation (internal/runtime), but neither has
+// typesafe-specific behavior; both surface a clear error instead of silently
+// falling back, consistent with this provider's "cannot hallucinate"
+// contract-enforcement goal.
 func answersForBackend(ctx context.Context, req Request, rawBody []byte) (map[string]Answer, error) {
 	backend := runtimecfg.BackendForRequest(ctx)
 	switch backend {
@@ -174,6 +178,8 @@ func answersForBackend(ctx context.Context, req Request, rawBody []byte) (map[st
 		return answersWith(req, func(q Question, key string) (Answer, error) {
 			return answerFaker(q, key, seedBase)
 		})
+	case runtimecfg.BackendOllamaLogprob:
+		return answersFromOllamaLogprob(ctx, req)
 	default:
 		return nil, fmt.Errorf("backend %q is not supported for the typesafe provider yet", backend)
 	}
