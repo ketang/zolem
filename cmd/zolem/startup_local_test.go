@@ -646,3 +646,49 @@ func TestStartupSmallHelpers(t *testing.T) {
 	}
 
 }
+
+func TestBuildLocalStartupAppForRuntime_OllamaLogprobOnlyForTypesafe(t *testing.T) {
+	profile := runtimecfg.RuntimeProfile{Name: "demo", Backend: runtimecfg.BackendOllamaLogprob, BackendModel: "llama3.2"}
+
+	for _, provider := range []string{"anthropic", "openai", "gemini", "ollama"} {
+		t.Run("rejected/"+provider, func(t *testing.T) {
+			_, _, err := buildLocalStartupAppForRuntime(runtimecfg.ListenerRuntime{
+				Spec:    runtimecfg.ListenerSpec{Name: provider + "-demo", Addr: "127.0.0.1:0", Provider: provider, Profile: "demo"},
+				Profile: profile,
+			}, "", nil, nil, RecordCaps{}, newScanStartupDeps())
+			if err == nil || !strings.Contains(err.Error(), "ollama-logprob") || !strings.Contains(err.Error(), "typesafe") {
+				t.Fatalf("expected ollama-logprob to be rejected for %s with a message naming typesafe, got %v", provider, err)
+			}
+		})
+	}
+
+	t.Run("accepted/typesafe", func(t *testing.T) {
+		app, _, err := buildLocalStartupAppForRuntime(runtimecfg.ListenerRuntime{
+			Spec:    runtimecfg.ListenerSpec{Name: "typesafe-demo", Addr: "127.0.0.1:0", Provider: runtimecfg.ProviderTypesafe, Profile: "demo"},
+			Profile: profile,
+		}, "", nil, nil, RecordCaps{}, newScanStartupDeps())
+		if err != nil || app == nil {
+			t.Fatalf("expected typesafe to accept ollama-logprob, got %v", err)
+		}
+	})
+}
+
+func TestLocalOptionsRuntime_CarriesOllamaLogprobSettings(t *testing.T) {
+	temperature := 0.5
+	rt, err := localOptions{
+		Addr: "127.0.0.1:0", Provider: runtimecfg.ProviderTypesafe, Backend: runtimecfg.BackendOllamaLogprob,
+		BackendModel: "llama3.2", OllamaUpstream: "http://127.0.0.1:11434", CalibrationTemperature: &temperature,
+	}.runtime()
+	if err != nil {
+		t.Fatalf("runtime: %v", err)
+	}
+	p := rt.Profile
+	if p.BackendModel != "llama3.2" || p.OllamaUpstream != "http://127.0.0.1:11434" || p.CalibrationTemperature == nil || *p.CalibrationTemperature != 0.5 {
+		t.Fatalf("profile did not carry the ollama-logprob settings: %+v", p)
+	}
+
+	_, err = localOptions{Addr: "127.0.0.1:0", Provider: runtimecfg.ProviderTypesafe, Backend: runtimecfg.BackendOllamaLogprob}.runtime()
+	if err == nil || !strings.Contains(err.Error(), "backend_model") {
+		t.Fatalf("expected a missing-model error naming backend_model, got %v", err)
+	}
+}
