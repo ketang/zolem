@@ -210,7 +210,8 @@ func renderJSONText(raw json.RawMessage) string {
 }
 
 // labelDistribution turns first-token candidates into a probability per label:
-// tokens are trimmed and matched to labels, each label's weight is the sum of
+// tokens are trimmed and matched to labels case-insensitively (so "a" counts
+// for label "A"), each label's weight is the sum of
 // exp(logprob/temperature) over its tokens, and the weights are renormalized
 // over the labels. Labels that did not appear get 0. When no candidate is a
 // label, the distribution is uniform.

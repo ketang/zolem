@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 )
@@ -46,9 +47,22 @@ type generateResponse struct {
 	} `json:"logprobs"`
 }
 
+// maxLogprobResponseBytes bounds how much of an upstream reply is read; a
+// one-token answer is a few kilobytes at most.
+const maxLogprobResponseBytes = 1 << 20
+
+// maxLoggedBodyBytes bounds how much of a failing upstream's body is logged.
+const maxLoggedBodyBytes = 300
+
 // logprobClient bounds a single generation; the request context still cancels
-// sooner.
-var logprobClient = &http.Client{Timeout: 2 * time.Minute}
+// sooner. Redirects are not followed: the upstream host was checked against
+// the loopback/private-host policy, and a redirect would bypass it.
+var logprobClient = &http.Client{
+	Timeout: 2 * time.Minute,
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
 
 // FirstTokenLogprobs asks the upstream's native /api/generate for exactly one
 // greedy token and returns the log probabilities of that position's top
@@ -79,12 +93,19 @@ func FirstTokenLogprobs(ctx context.Context, upstream, model, prompt string) ([]
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxLogprobResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("ollama logprob backend: read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("ollama logprob backend error (HTTP %d): %s", resp.StatusCode, bytes.TrimSpace(body))
+		// The status is returned to the caller; the body stays in the log, since
+		// it is arbitrary upstream content that must not be echoed to clients.
+		detail := bytes.TrimSpace(body)
+		if len(detail) > maxLoggedBodyBytes {
+			detail = detail[:maxLoggedBodyBytes]
+		}
+		log.Printf("ollama logprob backend: upstream %s returned HTTP %d: %s", upstream, resp.StatusCode, detail)
+		return nil, fmt.Errorf("ollama logprob backend error: upstream returned HTTP %d", resp.StatusCode)
 	}
 
 	var result generateResponse
