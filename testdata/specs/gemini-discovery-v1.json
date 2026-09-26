@@ -69,6 +69,70 @@
           "required": [
             "inlineData"
           ]
+        },
+        {
+          "required": [
+            "functionResponse"
+          ]
+        },
+        {
+          "required": [
+            "fileData"
+          ]
+        },
+        {
+          "required": [
+            "executableCode"
+          ]
+        },
+        {
+          "required": [
+            "codeExecutionResult"
+          ]
+        },
+        {
+          "required": [
+            "thoughtSignature"
+          ],
+          "not": {
+            "oneOf": [
+              {
+                "required": [
+                  "text"
+                ]
+              },
+              {
+                "required": [
+                  "functionCall"
+                ]
+              },
+              {
+                "required": [
+                  "inlineData"
+                ]
+              },
+              {
+                "required": [
+                  "functionResponse"
+                ]
+              },
+              {
+                "required": [
+                  "fileData"
+                ]
+              },
+              {
+                "required": [
+                  "executableCode"
+                ]
+              },
+              {
+                "required": [
+                  "codeExecutionResult"
+                ]
+              }
+            ]
+          }
         }
       ],
       "properties": {
@@ -80,6 +144,27 @@
         },
         "inlineData": {
           "$ref": "Blob"
+        },
+        "functionResponse": {
+          "$ref": "FunctionResponse"
+        },
+        "fileData": {
+          "$ref": "FileData"
+        },
+        "executableCode": {
+          "$ref": "ExecutableCode"
+        },
+        "codeExecutionResult": {
+          "$ref": "CodeExecutionResult"
+        },
+        "thought": {
+          "type": "boolean"
+        },
+        "thoughtSignature": {
+          "type": "string"
+        },
+        "videoMetadata": {
+          "type": "object"
         }
       }
     },
@@ -117,6 +202,63 @@
       "properties": {
         "maxOutputTokens": {
           "type": "integer"
+        }
+      }
+    },
+    "FunctionResponse": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "response": {
+          "type": "object"
+        }
+      }
+    },
+    "FileData": {
+      "type": "object",
+      "required": [
+        "fileUri"
+      ],
+      "properties": {
+        "fileUri": {
+          "type": "string"
+        },
+        "mimeType": {
+          "type": "string"
+        }
+      }
+    },
+    "ExecutableCode": {
+      "type": "object",
+      "required": [
+        "language",
+        "code"
+      ],
+      "properties": {
+        "language": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        }
+      }
+    },
+    "CodeExecutionResult": {
+      "type": "object",
+      "required": [
+        "outcome"
+      ],
+      "properties": {
+        "outcome": {
+          "type": "string"
+        },
+        "output": {
+          "type": "string"
         }
       }
     }
