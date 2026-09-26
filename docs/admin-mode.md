@@ -133,6 +133,32 @@ Expected response:
 {"status":"ok"}
 ```
 
+## Host Header Guard
+
+The admin API and every listener it creates have no authentication, so they only accept requests whose
+`Host` header is `localhost`, a loopback IP literal (`127.0.0.1`, `[::1]`), or a
+name passed with `-allowed-host`. This blocks DNS-rebinding, where a web page
+resolves an attacker-controlled hostname to `127.0.0.1` and drives the listener
+from a browser. Any other `Host` gets `403` with
+`{"error":"host \"evil.example\" not allowed; this listener serves loopback clients only"}`,
+including on the OpenAI Responses WebSocket upgrade.
+
+If you legitimately reach zolem through an alias (an `/etc/hosts` entry, or a TLS
+certificate issued for a custom hostname that points at `127.0.0.1`), allow it
+with the repeatable `-allowed-host` flag. The list is additive to
+`localhost`/loopback, and any port on an entry is ignored:
+
+```bash
+zolem -local-admin-addr 127.0.0.1:18090 -allowed-host zolem.test
+```
+
+Host values other than `localhost`, `127.0.0.1`, `[::1]` and `-allowed-host`
+entries are rejected, including `0.0.0.0:<port>`, a trailing-dot `localhost.`,
+and IPv6 zone forms such as `[::1%25lo]`; add them with `-allowed-host` if you
+need them. Rejected requests never reach the handler, so they are not written
+to the `-local-calls-file` recording. `-allowed-host` takes a bare hostname
+(a port is ignored); empty values and URLs are a usage error (exit 2).
+
 ## Manage Profiles
 
 Create a `lorem` profile:

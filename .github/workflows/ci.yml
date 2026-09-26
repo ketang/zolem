@@ -19,8 +19,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Print Go version
+        run: go version
+
       - name: Run quality gates
         run: make check
+
+      - name: Scan for reachable vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
       - name: Build zolem
         run: go build ./cmd/zolem

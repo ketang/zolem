@@ -45,11 +45,23 @@ type serviceProcess struct {
 func startFixedService(t *testing.T, provider string) *serviceProcess {
 	t.Helper()
 
-	bin := buildZolemBinary(t)
-	workDir := t.TempDir()
-	fixturesDir := filepath.Join(workDir, "fixtures")
+	fixturesDir := filepath.Join(t.TempDir(), "fixtures")
 	mustMkdir(t, fixturesDir)
 	writeFixtures(t, fixturesDir)
+	return startProviderService(t, provider, "-local-backend", "fixture", "-local-fixtures-dir", fixturesDir)
+}
+
+// startLoremService starts a fixed-listener service on the lorem backend, for
+// behavior fixtures would shadow (e.g. synthesized tool calls).
+func startLoremService(t *testing.T, provider string) *serviceProcess {
+	t.Helper()
+	return startProviderService(t, provider, "-local-backend", "lorem")
+}
+
+func startProviderService(t *testing.T, provider string, backendArgs ...string) *serviceProcess {
+	t.Helper()
+
+	bin := buildZolemBinary(t)
 
 	port := pickPort(t)
 	var readinessPath string
@@ -75,7 +87,8 @@ func startFixedService(t *testing.T, provider string) *serviceProcess {
 
 	var logs bytes.Buffer
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, bin, "-local-addr", fmt.Sprintf("127.0.0.1:%d", port), "-local-provider", provider, "-local-profile", "demo", "-local-backend", "fixture", "-local-fixtures-dir", fixturesDir)
+	args := append([]string{"-local-addr", fmt.Sprintf("127.0.0.1:%d", port), "-local-provider", provider, "-local-profile", "demo"}, backendArgs...)
+	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Env = os.Environ()
 	cmd.Stdout = &logs
 	cmd.Stderr = &logs

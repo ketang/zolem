@@ -677,13 +677,13 @@ func TestRecordingMiddleware_RedactsCredentialHeadersAndQueryKeys(t *testing.T) 
 	})
 	h := recordingMiddleware(r, DefaultRecordCaps())(next)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/foo?key=abc&alt=sse", nil)
-	req.Header.Set("Authorization", "Bearer sk-a")
-	req.Header.Set("Proxy-Authorization", "Basic dXNlcjpwYXNz")
-	req.Header.Set("x-api-key", "k1")
-	req.Header.Set("x-goog-api-key", "k2")
-	req.Header.Set("api-key", "k3")
-	req.Header.Set("Cookie", "s=k4")
+	req := httptest.NewRequest(http.MethodPost, "/v1/foo?key=secret-abc&alt=sse", nil)
+	req.Header.Set("Authorization", "Bearer secret-sk-a")
+	req.Header.Set("Proxy-Authorization", "Basic secret-dXNlcjpwYXNz")
+	req.Header.Set("x-api-key", "secret-k1")
+	req.Header.Set("x-goog-api-key", "secret-k2")
+	req.Header.Set("api-key", "secret-k3")
+	req.Header.Set("Cookie", "s=secret-k4")
 	req.Header.Set("Content-Type", "application/json")
 	h.ServeHTTP(httptest.NewRecorder(), req)
 
@@ -713,7 +713,7 @@ func TestRecordingMiddleware_RedactsCredentialHeadersAndQueryKeys(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"sk-a", "dXNlcjpwYXNz", "k1", "k2", "k3", "k4", "abc"} {
+	for _, secret := range []string{"sk-a", "dXNlcjpwYXNz", "secret-k1", "secret-k2", "secret-k3", "k4", "abc"} {
 		if bytes.Contains(buf, []byte(secret)) {
 			t.Errorf("recorded call contains secret %q: %s", secret, buf)
 		}
@@ -723,7 +723,7 @@ func TestRecordingMiddleware_RedactsCredentialHeadersAndQueryKeys(t *testing.T) 
 func TestRedactAuthorizationValue(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"Bearer sk-1", "Bearer [REDACTED]"},
-		{"Basic dXNlcjpwYXNz", "Basic [REDACTED]"},
+		{"Basic secret-dXNlcjpwYXNz", "Basic [REDACTED]"},
 		{"sk-bare-key", "[REDACTED]"},
 		{"", ""},
 		{"Bearer  two  spaces", "Bearer [REDACTED]"},
@@ -748,6 +748,9 @@ func TestRedactQuery_PreservesOrderAndOtherParams(t *testing.T) {
 		{"", ""},
 		{"%6bey=abc", "%6bey=REDACTED"},
 		{"key", "key=REDACTED"},
+		{"Key=a&API_KEY=b&Access_Token=c", "Key=REDACTED&API_KEY=REDACTED&Access_Token=REDACTED"},
+		{"apikey=1&api-key=2&token=3&auth=4&authorization=5&signature=6&sig=7&x-goog-api-key=8&q=ok",
+			"apikey=REDACTED&api-key=REDACTED&token=REDACTED&auth=REDACTED&authorization=REDACTED&signature=REDACTED&sig=REDACTED&x-goog-api-key=REDACTED&q=ok"},
 	}
 	for _, tc := range tests {
 		if got := redactQuery(tc.in); got != tc.want {
@@ -758,6 +761,60 @@ func TestRedactQuery_PreservesOrderAndOtherParams(t *testing.T) {
 
 func TestNewJSONLRecorder_CreatesFileWith0600(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "calls.jsonl")
+	r, err := newJSONLRecorder(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("mode = %o, want 600", got)
+	}
+}
+
+func TestRedactHeaders_SuffixRulesAndResponseHeaders(t *testing.T) {
+	h := http.Header{}
+	h.Set("X-Custom-Token", "secret-t")
+	h.Set("X-Vendor-Secret", "secret-s")
+	h.Set("X-Body-Signature", "secret-g")
+	h.Set("Set-Cookie", "sid=secret-c")
+	h.Set("OpenAI-Organization", "org-1")
+	h.Set("OpenAI-Project", "proj-1")
+	h.Set("X-Empty-Token", "")
+	got := redactHeaders(h)
+	for _, k := range []string{"X-Custom-Token", "X-Vendor-Secret", "X-Body-Signature", "Set-Cookie"} {
+		if got.Get(k) != "[REDACTED]" {
+			t.Errorf("%s = %q, want [REDACTED]", k, got.Get(k))
+		}
+	}
+	if got.Get("OpenAI-Organization") != "org-1" || got.Get("OpenAI-Project") != "proj-1" {
+		t.Errorf("identifier headers should be kept: %v", got)
+	}
+	if v, ok := got["X-Empty-Token"]; !ok || v[0] != "" {
+		t.Errorf("empty value should stay empty: %v", got)
+	}
+
+	r := newInMemoryRecorder("l")
+	next := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "sid", Value: "secret-resp"})
+	})
+	recordingMiddleware(r, DefaultRecordCaps())(next).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
+	if c := r.List()[0]; strings.Contains(c.Response.Headers.Get("Set-Cookie"), "secret-resp") {
+		t.Errorf("response Set-Cookie not redacted: %v", c.Response.Headers)
+	}
+}
+
+func TestNewJSONLRecorder_TightensExistingLoosePerms(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "calls.jsonl")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	r, err := newJSONLRecorder(path)
 	if err != nil {
 		t.Fatal(err)

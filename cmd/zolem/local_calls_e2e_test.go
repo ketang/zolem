@@ -131,7 +131,7 @@ func TestLocalCallsFileJSONL_E2E(t *testing.T) {
 			"x-goog-api-key: AIza-secret")
 		resp.Body.Close()
 		// Malformed Authorization is rejected with 401 but still recorded.
-		resp, _ = doRequest(t, svc.baseURL, "POST", "/v1/chat/completions",
+		resp, _ = doRequest(t, svc.baseURL, "POST", "/v1/chat/completions?key=AIza-query-secret",
 			`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`,
 			"Content-Type: application/json", "Authorization: sk-secret-123 extra")
 		resp.Body.Close()
@@ -160,6 +160,9 @@ func TestLocalCallsFileJSONL_E2E(t *testing.T) {
 		}
 		if got := firstHeader(records[1].Request.Headers, "Authorization"); got != "[REDACTED]" {
 			t.Fatalf("record 1 Authorization = %q", got)
+		}
+		if got := records[1].Request.Query; got != "key=REDACTED" {
+			t.Fatalf("record 1 (401) query = %q", got)
 		}
 	})
 

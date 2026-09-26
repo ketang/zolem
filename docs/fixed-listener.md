@@ -106,20 +106,54 @@ request/response is still served to the caller.
 
 ### Credential Redaction
 
-Recorded request credentials are always redacted (no opt-out); the same
-redaction applies to admin-mode call history:
+Recorded credentials are always redacted (no opt-out); the same redaction
+applies to admin-mode call history:
 
-- Headers `Authorization`, `Proxy-Authorization`, `x-api-key`,
-  `x-goog-api-key`, `api-key`, and `Cookie` keep their key but their values are
-  replaced with `[REDACTED]`. For `Authorization` and `Proxy-Authorization` a
-  `Bearer` or `Basic` scheme is kept (`Bearer [REDACTED]`); any other or
+- Header values are replaced with `[REDACTED]`, keeping the header key, for
+  `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `Api-Key`,
+  `x-api-key`, and any header whose name ends in `-api-key`, `-token`,
+  `-secret`, or `-signature` (for example `x-goog-api-key`). This applies to
+  request and response headers. For `Authorization` and `Proxy-Authorization`
+  a `Bearer` or `Basic` scheme is kept (`Bearer [REDACTED]`); any other or
   malformed value becomes exactly `[REDACTED]`. Empty values stay empty.
-- Query parameters `key` and `api_key` have their values replaced with
-  `REDACTED` in place; other parameters and their order are unchanged.
+  Identifier headers such as `openai-organization` and `openai-project` are
+  not secrets and are intentionally kept.
+- Query parameter values are replaced with `REDACTED` in place (no brackets, so
+  the query string stays well formed) for `key`, `api_key`, `apikey`,
+  `api-key`, `access_token`, `token`, `auth`, `authorization`, `signature`,
+  `sig`, and `x-goog-api-key`, matched case-insensitively on the decoded name.
+  Other parameters and their order are unchanged.
 - Request and response bodies are not redacted.
 
-A newly created calls file has mode `0600`. An existing file keeps its current
-mode; Zolem does not chmod it.
+A newly created calls file has mode `0600`. If an existing file is group- or
+world-accessible, Zolem tightens it to `0600` and prints a one-line warning to
+stderr.
+
+## Host Header Guard
+
+Zolem listeners have no authentication, so they only accept requests whose
+`Host` header is `localhost`, a loopback IP literal (`127.0.0.1`, `[::1]`), or a
+name passed with `-allowed-host`. This blocks DNS-rebinding, where a web page
+resolves an attacker-controlled hostname to `127.0.0.1` and drives the listener
+from a browser. Any other `Host` gets `403` with
+`{"error":"host \"evil.example\" not allowed; this listener serves loopback clients only"}`,
+including on the OpenAI Responses WebSocket upgrade.
+
+If you legitimately reach zolem through an alias (an `/etc/hosts` entry, or a TLS
+certificate issued for a custom hostname that points at `127.0.0.1`), allow it
+with the repeatable `-allowed-host` flag. The list is additive to
+`localhost`/loopback, and any port on an entry is ignored:
+
+```bash
+zolem -local-provider openai -local-addr 127.0.0.1:18080 -allowed-host zolem.test
+```
+
+Host values other than `localhost`, `127.0.0.1`, `[::1]` and `-allowed-host`
+entries are rejected, including `0.0.0.0:<port>`, a trailing-dot `localhost.`,
+and IPv6 zone forms such as `[::1%25lo]`; add them with `-allowed-host` if you
+need them. Rejected requests never reach the handler, so they are not written
+to the `-local-calls-file` recording. `-allowed-host` takes a bare hostname
+(a port is ignored); empty values and URLs are a usage error (exit 2).
 
 ## TLS
 

@@ -42,14 +42,40 @@ func TestSpecValidation_OpenAIRejectsSchemaViolation(t *testing.T) {
 		t.Fatalf("valid openai request: got %d, want 200", validResp.StatusCode)
 	}
 
-	// A message missing its required content field is a schema violation that
+	// A message with a non-string/array content is a schema violation that
 	// the handler alone does not catch (it would otherwise serve a 200).
-	invalid := httptestRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"model":"gpt-4o","messages":[{"role":"user"}]}`))
+	invalid := httptestRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"model":"gpt-4o","messages":[{"role":"user","content":123}]}`))
 	invalid.Header.Set("Authorization", "Bearer sk-test")
 	invalidResp := doRequest(t, app.handler, invalid)
 	defer invalidResp.Body.Close()
 	if invalidResp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("invalid openai request: got %d, want 400", invalidResp.StatusCode)
+	}
+}
+
+// TestSpecValidation_OpenAIAcceptsAssistantToolCallWithoutContent covers the
+// second request of an agent loop: the assistant tool-call turn echoed back
+// with content null or omitted, followed by a tool message.
+func TestSpecValidation_OpenAIAcceptsAssistantToolCallWithoutContent(t *testing.T) {
+	app := buildProviderApp(t, "openai")
+	defer app.close()
+
+	toolCall := `"tool_calls":[{"id":"call_1","type":"function","function":{"name":"f","arguments":"{}"}}]`
+	cases := map[string]string{
+		"null":    `{"role":"assistant","content":null,` + toolCall + `}`,
+		"omitted": `{"role":"assistant",` + toolCall + `}`,
+	}
+	for name, assistant := range cases {
+		t.Run(name, func(t *testing.T) {
+			body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"},` + assistant + `,{"role":"tool","tool_call_id":"call_1","content":"42"}]}`
+			req := httptestRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(body))
+			req.Header.Set("Authorization", "Bearer sk-test")
+			resp := doRequest(t, app.handler, req)
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("got %d, want 200", resp.StatusCode)
+			}
+		})
 	}
 }
 
