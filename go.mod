@@ -1,13 +1,13 @@
 module github.com/ketang/zolem
 
-go 1.26.1
+go 1.26.8
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.19.0
 	github.com/brianvoe/gofakeit/v7 v7.14.1
 	github.com/getkin/kin-openapi v0.134.0
-	github.com/go-chi/chi/v5 v5.2.5
-	github.com/google/cel-go v0.28.1
+	github.com/go-chi/chi/v5 v5.3.0
+	github.com/google/cel-go v0.30.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/openai/openai-go/v3 v3.15.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
@@ -33,8 +33,8 @@ require (
 	github.com/woodsbury/decimal128 v1.3.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/exp v0.0.0-20240823005443-9b4947da3948 // indirect
-	golang.org/x/sys v0.42.0 // indirect
-	golang.org/x/text v0.35.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
+	golang.org/x/text v0.39.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240826202546-f6391c0de4c7 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240826202546-f6391c0de4c7 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
