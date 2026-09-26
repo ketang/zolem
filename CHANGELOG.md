@@ -21,7 +21,11 @@
   loopback IP get `403`, including the Responses WebSocket upgrade. The new
   repeatable `-allowed-host` flag (both modes) additionally allows an alias such
   as an `/etc/hosts` name or a custom-hostname TLS cert. See
-  `docs/fixed-listener.md` (zolem-bdz).
+  `docs/fixed-listener.md` (zolem-bdz). Existing fixed-mode users whose clients
+  send `Host: 0.0.0.0:<port>`, `localhost.` or an IPv6 zone form now get 403
+  and must add the name with `-allowed-host`; rejected requests are not
+  recorded in `-local-calls-file`. `-allowed-host` rejects empty and URL-like
+  values with exit 2.
 
 ### Changed
 

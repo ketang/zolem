@@ -3,6 +3,7 @@ package main_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -102,7 +103,7 @@ func assertHostGuardBody(t *testing.T, host, body string) {
 }
 
 // assertHostPolicy checks chat requests against baseURL with each Host value.
-func assertHostPolicy(t *testing.T, client *http.Client, baseURL string, port int, allowed, denied []string) {
+func assertHostPolicy(t *testing.T, client *http.Client, baseURL string, allowed, denied []string) {
 	t.Helper()
 	for _, host := range allowed {
 		status, body := doWithHost(t, client, http.MethodPost, baseURL+"/v1/chat/completions", host, hostGuardChatBody,
@@ -128,16 +129,16 @@ func TestFixedListenerHostGuard_E2E(t *testing.T) {
 		port := pickPort(t)
 		addr := fmt.Sprintf("127.0.0.1:%d", port)
 		startZolemArgs(t, addr, "-local-addr", addr, "-local-provider", "openai")
-		assertHostPolicy(t, client, "http://"+addr, port,
-			[]string{fmt.Sprintf("127.0.0.1:%d", port), fmt.Sprintf("localhost:%d", port)},
-			[]string{"evil.example", fmt.Sprintf("evil.example:%d", port)})
+		assertHostPolicy(t, client, "http://"+addr,
+			[]string{fmt.Sprintf("127.0.0.1:%d", port), fmt.Sprintf("localhost:%d", port), fmt.Sprintf("[::1]:%d", port)},
+			[]string{"evil.example", "0.0.0.0", "localhost.", fmt.Sprintf("evil.example:%d", port)})
 	})
 
 	t.Run("allowed_host_is_additive", func(t *testing.T) {
 		port := pickPort(t)
 		addr := fmt.Sprintf("127.0.0.1:%d", port)
-		startZolemArgs(t, addr, "-local-addr", addr, "-local-provider", "openai", "-allowed-host", "zolem.test")
-		assertHostPolicy(t, client, "http://"+addr, port,
+		startZolemArgs(t, addr, "-local-addr", addr, "-local-provider", "openai", "-allowed-host", "zolem.test:9999")
+		assertHostPolicy(t, client, "http://"+addr,
 			[]string{fmt.Sprintf("zolem.test:%d", port), fmt.Sprintf("localhost:%d", port)},
 			[]string{"evil.example"})
 	})
@@ -149,7 +150,7 @@ func TestFixedListenerHostGuard_E2E(t *testing.T) {
 		startZolemArgs(t, addr, "-local-addr", addr, "-local-provider", "openai",
 			"-local-tls-cert", certs.certPath, "-local-tls-key", certs.keyPath, "-allowed-host", "zolem.test")
 		tlsClient := httpsClientWithRoots(certs.caPool)
-		assertHostPolicy(t, tlsClient, "https://"+addr, port,
+		assertHostPolicy(t, tlsClient, "https://"+addr,
 			[]string{fmt.Sprintf("127.0.0.1:%d", port), fmt.Sprintf("localhost:%d", port), fmt.Sprintf("zolem.test:%d", port)},
 			[]string{"evil.example"})
 	})
@@ -231,9 +232,23 @@ func TestLocalAdminHostGuard_E2E(t *testing.T) {
 			}
 			mustJSONUnmarshal(t, []byte(view), &payload)
 			listenerPort := strings.TrimPrefix(payload.BaseURL, "http://127.0.0.1:")
-			assertHostPolicy(t, client, payload.BaseURL, 0,
+			assertHostPolicy(t, client, payload.BaseURL,
 				append([]string{"127.0.0.1:" + listenerPort, "localhost:" + listenerPort}, tc.allowed...),
 				[]string{"evil.example"})
 		})
+	}
+}
+
+func TestAllowedHostFlagRejectsInvalid_E2E(t *testing.T) {
+	bin := buildZolemBinary(t)
+	for _, bad := range []string{"", "http://zolem.test", "zolem.test/x"} {
+		out, err := exec.Command(bin, "-local-provider", "openai", "-allowed-host", bad).CombinedOutput()
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+			t.Errorf("-allowed-host %q: got err %v, want exit 2\n%s", bad, err, out)
+		}
+		if !strings.Contains(string(out), "allowed-host") {
+			t.Errorf("-allowed-host %q: output does not name the flag:\n%s", bad, out)
+		}
 	}
 }

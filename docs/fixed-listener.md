@@ -123,6 +123,13 @@ with the repeatable `-allowed-host` flag. The list is additive to
 zolem -local-provider openai -local-addr 127.0.0.1:18080 -allowed-host zolem.test
 ```
 
+Host values other than `localhost`, `127.0.0.1`, `[::1]` and `-allowed-host`
+entries are rejected, including `0.0.0.0:<port>`, a trailing-dot `localhost.`,
+and IPv6 zone forms such as `[::1%25lo]`; add them with `-allowed-host` if you
+need them. Rejected requests never reach the handler, so they are not written
+to the `-local-calls-file` recording. `-allowed-host` takes a bare hostname
+(a port is ignored); empty values and URLs are a usage error (exit 2).
+
 ## TLS
 
 Pass `-local-tls-cert` and `-local-tls-key` to enable HTTPS on the fixed listener:

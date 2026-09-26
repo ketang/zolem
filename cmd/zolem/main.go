@@ -11,8 +11,11 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"strings"
 	"syscall"
 	"time"
+
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
 // version is the zolem build version. It can be stamped at build time with
@@ -210,7 +213,26 @@ type stringList []string
 
 func (l *stringList) String() string { return fmt.Sprint([]string(*l)) }
 
+// Set validates and normalizes one -allowed-host value: whitespace is trimmed,
+// a port is dropped, empty and URL/path-looking values are rejected, and
+// duplicates (case-insensitive) are ignored.
 func (l *stringList) Set(v string) error {
-	*l = append(*l, v)
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return errors.New("value must not be empty")
+	}
+	if strings.Contains(v, "/") {
+		return fmt.Errorf("%q must be a bare hostname (optionally with a port), not a URL or path", v)
+	}
+	hosts := runtimecfg.NormalizeAllowedHosts([]string{v})
+	if len(hosts) == 0 {
+		return fmt.Errorf("%q is not a valid host", v)
+	}
+	for _, existing := range *l {
+		if strings.EqualFold(existing, hosts[0]) {
+			return nil
+		}
+	}
+	*l = append(*l, strings.ToLower(hosts[0]))
 	return nil
 }
