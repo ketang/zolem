@@ -11,6 +11,7 @@ import (
 	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
 	openai "github.com/openai/openai-go/v3"
 	openaioption "github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/shared"
 )
 
@@ -211,6 +212,39 @@ func TestSDKCompatibility_OpenAI(t *testing.T) {
 		}
 		if got := completion.Choices[0].Message.Content; got != "Fixture says hello from openai." {
 			t.Fatalf("content: got %q", got)
+		}
+	})
+
+	t.Run("tool_call_round_trip", func(t *testing.T) {
+		messages := []openai.ChatCompletionMessageParamUnion{openai.UserMessage("weather in SF?")}
+		completion, err := client.Chat.Completions.New(context.Background(), openai.ChatCompletionNewParams{
+			Model:    shared.ChatModel("gpt-4o"),
+			Messages: messages,
+			Tools: []openai.ChatCompletionToolUnionParam{
+				openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+					Name: "get_weather",
+					Parameters: shared.FunctionParameters{
+						"type":       "object",
+						"properties": map[string]any{"location": map[string]any{"type": "string"}},
+						"required":   []string{"location"},
+					},
+				}),
+			},
+			ToolChoice: openai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: param.NewOpt(string(openai.ChatCompletionToolChoiceOptionAutoRequired))},
+		})
+		if err != nil {
+			t.Fatalf("first request: %v", err)
+		}
+		msg := completion.Choices[0].Message
+		if len(msg.ToolCalls) == 0 {
+			t.Fatalf("expected tool call, got %+v", msg)
+		}
+		messages = append(messages, msg.ToParam(), openai.ToolMessage("sunny", msg.ToolCalls[0].ID))
+		if _, err := client.Chat.Completions.New(context.Background(), openai.ChatCompletionNewParams{
+			Model:    shared.ChatModel("gpt-4o"),
+			Messages: messages,
+		}); err != nil {
+			t.Fatalf("second request with echoed assistant tool-call turn: %v", err)
 		}
 	})
 

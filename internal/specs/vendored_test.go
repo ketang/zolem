@@ -97,3 +97,39 @@ func TestVendoredFallbacks_AnthropicSnapshotValidatesMessagesRequests(t *testing
 		t.Fatal("expected invalid anthropic request to fail validation")
 	}
 }
+
+func TestVendoredFallbacks_OpenAISnapshotAcceptsNullOrOmittedContent(t *testing.T) {
+	data, ok := specs.VendoredFallbacks()["openai:v1"]
+	if !ok {
+		t.Fatal("missing openai vendored snapshot")
+	}
+	validator := specs.NewValidator()
+	if err := specs.LoadProviderSchema(validator, "openai", "v1", data); err != nil {
+		t.Fatalf("load openai vendored snapshot: %v", err)
+	}
+	if !validator.Has("openai", "v1") {
+		t.Fatal("openai:v1 schema not registered")
+	}
+
+	toolCall := `"tool_calls":[{"id":"call_1","type":"function","function":{"name":"f","arguments":"{}"}}]`
+	valid := map[string]string{
+		"null content":    `{"model":"gpt-4o","messages":[{"role":"assistant","content":null,` + toolCall + `}]}`,
+		"omitted content": `{"model":"gpt-4o","messages":[{"role":"assistant",` + toolCall + `}]}`,
+		"string content":  `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
+		"array content":   `{"model":"gpt-4o","messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}`,
+	}
+	for name, body := range valid {
+		if err := validator.Validate("openai", "v1", []byte(body)); err != nil {
+			t.Errorf("%s: expected valid, got %v", name, err)
+		}
+	}
+	invalid := map[string]string{
+		"numeric content": `{"model":"gpt-4o","messages":[{"role":"user","content":123}]}`,
+		"missing role":    `{"model":"gpt-4o","messages":[{"content":"hi"}]}`,
+	}
+	for name, body := range invalid {
+		if err := validator.Validate("openai", "v1", []byte(body)); err == nil {
+			t.Errorf("%s: expected rejection", name)
+		}
+	}
+}
