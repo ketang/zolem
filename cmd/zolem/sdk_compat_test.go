@@ -216,6 +216,11 @@ func TestSDKCompatibility_OpenAI(t *testing.T) {
 	})
 
 	t.Run("tool_call_round_trip", func(t *testing.T) {
+		// The fixture backend shadows synthesized tool calls, so use lorem.
+		client := openai.NewClient(
+			openaioption.WithAPIKey("sk-test"),
+			openaioption.WithBaseURL(startLoremService(t, "openai").baseURL+"/v1"),
+		)
 		messages := []openai.ChatCompletionMessageParamUnion{openai.UserMessage("weather in SF?")}
 		completion, err := client.Chat.Completions.New(context.Background(), openai.ChatCompletionNewParams{
 			Model:    shared.ChatModel("gpt-4o"),
