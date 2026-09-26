@@ -313,8 +313,8 @@ func TestRecordingMiddleware_CapturesRequestAndResponse(t *testing.T) {
 	if c.Request.Body != "hello" {
 		t.Fatalf("Request.Body = %q", c.Request.Body)
 	}
-	if c.Request.Headers.Get("Authorization") != "Bearer sk-test" {
-		t.Fatalf("Authorization header missing: %+v", c.Request.Headers)
+	if c.Request.Headers.Get("Authorization") != "Bearer [REDACTED]" {
+		t.Fatalf("Authorization header not redacted: %+v", c.Request.Headers)
 	}
 	if c.Response.Status != 200 {
 		t.Fatalf("Status = %d", c.Response.Status)
@@ -668,4 +668,106 @@ func (b *gatedReadCloser) Read(p []byte) (int, error) {
 func (b *gatedReadCloser) Close() error {
 	b.closed = true
 	return nil
+}
+
+func TestRecordingMiddleware_RedactsCredentialHeadersAndQueryKeys(t *testing.T) {
+	r := newInMemoryRecorder("listener-1")
+	next := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	h := recordingMiddleware(r, DefaultRecordCaps())(next)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/foo?key=abc&alt=sse", nil)
+	req.Header.Set("Authorization", "Bearer sk-a")
+	req.Header.Set("Proxy-Authorization", "Basic dXNlcjpwYXNz")
+	req.Header.Set("x-api-key", "k1")
+	req.Header.Set("x-goog-api-key", "k2")
+	req.Header.Set("api-key", "k3")
+	req.Header.Set("Cookie", "s=k4")
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	calls := r.List()
+	if len(calls) != 1 {
+		t.Fatalf("List len = %d, want 1", len(calls))
+	}
+	c := calls[0]
+	want := map[string]string{
+		"Authorization":       "Bearer [REDACTED]",
+		"Proxy-Authorization": "Basic [REDACTED]",
+		"X-Api-Key":           "[REDACTED]",
+		"X-Goog-Api-Key":      "[REDACTED]",
+		"Api-Key":             "[REDACTED]",
+		"Cookie":              "[REDACTED]",
+		"Content-Type":        "application/json",
+	}
+	for k, v := range want {
+		if got := c.Request.Headers.Get(k); got != v {
+			t.Errorf("header %s = %q, want %q", k, got, v)
+		}
+	}
+	if c.Request.Query != "key=REDACTED&alt=sse" {
+		t.Errorf("Query = %q, want key=REDACTED&alt=sse", c.Request.Query)
+	}
+	buf, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"sk-a", "dXNlcjpwYXNz", "k1", "k2", "k3", "k4", "abc"} {
+		if bytes.Contains(buf, []byte(secret)) {
+			t.Errorf("recorded call contains secret %q: %s", secret, buf)
+		}
+	}
+}
+
+func TestRedactAuthorizationValue(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"Bearer sk-1", "Bearer [REDACTED]"},
+		{"Basic dXNlcjpwYXNz", "Basic [REDACTED]"},
+		{"sk-bare-key", "[REDACTED]"},
+		{"", ""},
+		{"Bearer  two  spaces", "Bearer [REDACTED]"},
+		{"bearer sk-1", "bearer [REDACTED]"},
+		{"sk-secret-123 extra", "[REDACTED]"},
+		{"Token sk-1", "[REDACTED]"},
+		{"Bearer", "[REDACTED]"},
+		{" Bearer sk-1", "[REDACTED]"},
+	}
+	for _, tc := range tests {
+		if got := redactAuthorizationValue(tc.in); got != tc.want {
+			t.Errorf("redactAuthorizationValue(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestRedactQuery_PreservesOrderAndOtherParams(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"alt=sse&key=abc&x=%2F", "alt=sse&key=REDACTED&x=%2F"},
+		{"api_key=1&api_key=2", "api_key=REDACTED&api_key=REDACTED"},
+		{"alt=sse&x=%2F", "alt=sse&x=%2F"},
+		{"", ""},
+		{"%6bey=abc", "%6bey=REDACTED"},
+		{"key", "key=REDACTED"},
+	}
+	for _, tc := range tests {
+		if got := redactQuery(tc.in); got != tc.want {
+			t.Errorf("redactQuery(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestNewJSONLRecorder_CreatesFileWith0600(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "calls.jsonl")
+	r, err := newJSONLRecorder(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("mode = %o, want 600", got)
+	}
 }
