@@ -40,8 +40,10 @@ type ToolCallFunction struct {
 }
 
 type ChatCompletionMessage struct {
-	Role    string         `json:"role"`
-	Content MessageContent `json:"content"`
+	Role       string         `json:"role"`
+	Content    MessageContent `json:"content"`
+	ToolCalls  []ToolCall     `json:"tool_calls,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
 }
 
 type MessageContent struct {
@@ -94,6 +96,30 @@ type Message struct {
 	Role      string     `json:"role"`
 	Content   string     `json:"content,omitempty"`
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+}
+
+// toolCallMessage is the assistant message of a synthesized tool-call
+// response. Unlike Message it always emits "content" (null), matching the
+// real API, which SDKs echo back on the next turn.
+type toolCallMessage struct {
+	Role      string     `json:"role"`
+	Content   *string    `json:"content"`
+	ToolCalls []ToolCall `json:"tool_calls"`
+}
+
+type toolCallChoice struct {
+	Index        int             `json:"index"`
+	Message      toolCallMessage `json:"message"`
+	FinishReason string          `json:"finish_reason"`
+}
+
+type toolCallResponse struct {
+	ID      string           `json:"id"`
+	Object  string           `json:"object"`
+	Created int64            `json:"created"`
+	Model   string           `json:"model"`
+	Choices []toolCallChoice `json:"choices"`
+	Usage   Usage            `json:"usage"`
 }
 
 type ChatCompletionResponse struct {

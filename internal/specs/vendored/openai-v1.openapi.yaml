@@ -40,16 +40,19 @@ components:
       type: object
       required:
         - role
-        - content
       properties:
         role:
           type: string
+        # content is optional and nullable: official SDKs echo assistant
+        # tool-call turns with "content": null (or omit it). The bare
+        # nullable branch is used because kin-openapi rejects type: "null".
         content:
           anyOf:
             - type: string
             - type: array
               items:
                 $ref: '#/components/schemas/ContentPart'
+            - nullable: true
     ContentPart:
       type: object
       properties:
