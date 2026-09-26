@@ -236,14 +236,14 @@ func serveToolCallResponse(ctx context.Context, w http.ResponseWriter, req ChatC
 		streamToolCallCompletions(ctx, w, tc, model, promptTokens, includeUsage(req))
 		return
 	}
-	resp := ChatCompletionResponse{
+	resp := toolCallResponse{
 		ID:      fmt.Sprintf("chatcmpl-zolem%d", time.Now().UnixNano()),
 		Object:  "chat.completion",
 		Created: time.Now().Unix(),
 		Model:   model,
-		Choices: []Choice{{
+		Choices: []toolCallChoice{{
 			Index:        0,
-			Message:      Message{Role: "assistant", ToolCalls: []ToolCall{tc}},
+			Message:      toolCallMessage{Role: "assistant", ToolCalls: []ToolCall{tc}},
 			FinishReason: "tool_calls",
 		}},
 		Usage: Usage{PromptTokens: promptTokens, CompletionTokens: 1, TotalTokens: promptTokens + 1},
