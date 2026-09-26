@@ -89,6 +89,18 @@ func doWithHost(t *testing.T, client *http.Client, method, url, host, body strin
 	return resp.StatusCode, buf.String()
 }
 
+// assertHostGuardBody checks body is the admin error envelope naming host.
+func assertHostGuardBody(t *testing.T, host, body string) {
+	t.Helper()
+	var payload struct {
+		Error string `json:"error"`
+	}
+	mustJSONUnmarshal(t, []byte(body), &payload)
+	if want := fmt.Sprintf("host %q not allowed", host); !strings.Contains(payload.Error, want) {
+		t.Errorf("Host %q error %q does not contain %q", host, payload.Error, want)
+	}
+}
+
 // assertHostPolicy checks chat requests against baseURL with each Host value.
 func assertHostPolicy(t *testing.T, client *http.Client, baseURL string, port int, allowed, denied []string) {
 	t.Helper()
@@ -105,10 +117,7 @@ func assertHostPolicy(t *testing.T, client *http.Client, baseURL string, port in
 		if status != http.StatusForbidden {
 			t.Errorf("Host %q: got %d, want 403: %s", host, status, body)
 		}
-		want := fmt.Sprintf("host %q not allowed", host)
-		if !strings.Contains(body, want) {
-			t.Errorf("Host %q body %q does not contain %q", host, body, want)
-		}
+		assertHostGuardBody(t, host, body)
 	}
 }
 
@@ -165,9 +174,7 @@ func TestFixedListenerHostGuard_E2E(t *testing.T) {
 		var buf bytes.Buffer
 		_, _ = buf.ReadFrom(resp.Body)
 		resp.Body.Close()
-		if !strings.Contains(buf.String(), `host "evil.example" not allowed`) {
-			t.Fatalf("foreign Host upgrade body %q missing Host guard message", buf.String())
-		}
+		assertHostGuardBody(t, "evil.example", buf.String())
 
 		conn, _, err := dialer.Dial(wsURL, http.Header{"Authorization": []string{"Bearer sk-test"}})
 		if err != nil {
@@ -202,8 +209,10 @@ func TestLocalAdminHostGuard_E2E(t *testing.T) {
 				}
 			}
 			status, body := doWithHost(t, client, http.MethodGet, adminURL+"/_zolem/health", "evil.example", "")
-			if status != http.StatusForbidden || !strings.Contains(body, `host "evil.example" not allowed`) {
-				t.Errorf("admin foreign Host: got %d %s, want 403 host guard", status, body)
+			if status != http.StatusForbidden {
+				t.Errorf("admin foreign Host: got %d %s, want 403", status, body)
+			} else {
+				assertHostGuardBody(t, "evil.example", body)
 			}
 
 			// Created data listener.
@@ -228,4 +237,3 @@ func TestLocalAdminHostGuard_E2E(t *testing.T) {
 		})
 	}
 }
-

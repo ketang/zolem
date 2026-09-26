@@ -52,6 +52,8 @@ func main() {
 	localRecordRequestBodyCap := flag.Int("local-record-request-body-cap-bytes", 262144, "maximum bytes of request body to record per call; excess is counted but dropped")
 	localRecordResponseBodyCap := flag.Int("local-record-response-body-cap-bytes", 262144, "maximum bytes of response body to record per call; excess is counted but dropped")
 	localRecordStreamEventCap := flag.Int("local-record-stream-event-cap", 1024, "maximum SSE events to record per streamed response; excess is counted but dropped")
+	var allowedHosts stringList
+	flag.Var(&allowedHosts, "allowed-host", "extra Host header value accepted in addition to localhost and loopback IPs (repeatable; any port is ignored); other Hosts get 403 (DNS-rebinding guard). Applies to both modes")
 	flag.Parse()
 
 	if *showVersion {
@@ -62,8 +64,9 @@ func main() {
 	deps := signalAwareStartupDeps(ctx)
 	if *localAdminAddr != "" {
 		if err := runLocalAdmin(localAdminOptions{
-			Addr:        *localAdminAddr,
-			FixturesDir: *localFixturesDir,
+			Addr:         *localAdminAddr,
+			FixturesDir:  *localFixturesDir,
+			AllowedHosts: allowedHosts,
 			TLS: localTLSConfig{
 				CertFile: *localTLSCert,
 				KeyFile:  *localTLSKey,
@@ -82,6 +85,7 @@ func main() {
 			}
 		})
 		if err := runLocal(localOptions{
+			AllowedHosts:           allowedHosts,
 			Addr:                   *localAddr,
 			Provider:               *localProvider,
 			Profile:                *localProfile,
@@ -153,6 +157,9 @@ profiles and listeners can be created and torn down at runtime with zolemc:
 Flags shared by both modes:
   -local-tls-cert FILE        certificate file for admin or fixed-listener TLS
   -local-tls-key FILE         key file for admin or fixed-listener TLS
+  -allowed-host NAME          extra Host header accepted besides localhost and loopback IPs
+                              (repeatable; port ignored). Any other Host gets 403 to block
+                              DNS-rebinding; use for an /etc/hosts alias or custom-hostname TLS
   -version                    print version and exit
 `)
 }
@@ -196,4 +203,14 @@ func serveHTTPWithContext(ctx context.Context, server *http.Server, serve func()
 		}
 		return err
 	}
+}
+
+// stringList is a repeatable string flag.
+type stringList []string
+
+func (l *stringList) String() string { return fmt.Sprint([]string(*l)) }
+
+func (l *stringList) Set(v string) error {
+	*l = append(*l, v)
+	return nil
 }

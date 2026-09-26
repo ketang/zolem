@@ -104,6 +104,25 @@ shape: `call_id`, `method`, `path`, `status`, `frames_sent`, and
 `frames_received`. Caps only bound what is recorded — the full
 request/response is still served to the caller.
 
+## Host Header Guard
+
+Zolem listeners have no authentication, so they only accept requests whose
+`Host` header is `localhost`, a loopback IP literal (`127.0.0.1`, `[::1]`), or a
+name passed with `-allowed-host`. This blocks DNS-rebinding, where a web page
+resolves an attacker-controlled hostname to `127.0.0.1` and drives the listener
+from a browser. Any other `Host` gets `403` with
+`{"error":"host \"evil.example\" not allowed; this listener serves loopback clients only"}`,
+including on the OpenAI Responses WebSocket upgrade.
+
+If you legitimately reach zolem through an alias (an `/etc/hosts` entry, or a TLS
+certificate issued for a custom hostname that points at `127.0.0.1`), allow it
+with the repeatable `-allowed-host` flag. The list is additive to
+`localhost`/loopback, and any port on an entry is ignored:
+
+```bash
+zolem -local-provider openai -local-addr 127.0.0.1:18080 -allowed-host zolem.test
+```
+
 ## TLS
 
 Pass `-local-tls-cert` and `-local-tls-key` to enable HTTPS on the fixed listener:
