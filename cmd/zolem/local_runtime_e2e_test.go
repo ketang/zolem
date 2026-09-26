@@ -1326,6 +1326,35 @@ func TestLocalRuntimeCallHistory_E2E(t *testing.T) {
 		}
 	})
 
+	t.Run("redacts_credentials", func(t *testing.T) {
+		listenerName := "openai-lorem-listener"
+		listenerBaseURL := createRuntimeListener(t, admin, "openai", map[string]any{
+			"backend": "lorem",
+		})
+		clearCalls(t, admin.baseURL, listenerName)
+
+		resp, _ := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions?key=AIza-query-secret",
+			`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`,
+			"Content-Type: application/json", "Authorization: Bearer sk-secret-123",
+			"x-goog-api-key: AIza-secret")
+		resp.Body.Close()
+
+		callsResp, raw := doRequest(t, admin.baseURL, http.MethodGet, "/_zolem/listeners/"+listenerName+"/calls", "")
+		callsResp.Body.Close()
+		for _, secret := range []string{"sk-secret-123", "AIza-secret", "AIza-query-secret"} {
+			if strings.Contains(string(raw), secret) {
+				t.Fatalf("calls API response contains secret %q: %s", secret, raw)
+			}
+		}
+		calls := getCalls(t, admin.baseURL, listenerName)
+		if len(calls) != 1 {
+			t.Fatalf("expected 1 call, got %d", len(calls))
+		}
+		if got := firstHeader(calls[0].Request.Headers, "Authorization"); got != "Bearer [REDACTED]" {
+			t.Fatalf("Authorization = %q", got)
+		}
+	})
+
 	t.Run("body_cap", func(t *testing.T) {
 		profileName := "openai-capped-profile"
 		listenerName := "openai-capped-listener"

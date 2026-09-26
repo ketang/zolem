@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -234,9 +235,16 @@ type jsonlRecorder struct {
 }
 
 func newJSONLRecorder(path string) (*jsonlRecorder, error) {
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open calls file %q: %w", path, err)
+	}
+	if info, err := f.Stat(); err == nil && info.Mode().Perm()&0o077 != 0 {
+		if err := f.Chmod(0o600); err != nil {
+			f.Close()
+			return nil, fmt.Errorf("tighten calls file %q permissions: %w", path, err)
+		}
+		fmt.Fprintf(os.Stderr, "zolem: calls file %q was group/world accessible (%04o); tightened to 0600\n", path, info.Mode().Perm())
 	}
 	return &jsonlRecorder{file: f}, nil
 }
@@ -352,13 +360,13 @@ func recordingMiddleware(recorder Recorder, caps RecordCaps) func(http.Handler) 
 				Request: RecordedRequest{
 					Method:     req.Method,
 					Path:       req.URL.Path,
-					Query:      req.URL.RawQuery,
-					Headers:    cloneHeader(req.Header),
+					Query:      redactQuery(req.URL.RawQuery),
+					Headers:    redactHeaders(req.Header),
 					RemoteAddr: req.RemoteAddr,
 				},
 				Response: RecordedResponse{
 					Status:  rw.status,
-					Headers: cloneHeader(rw.Header()),
+					Headers: redactHeaders(rw.Header()),
 				},
 			}
 			call.Request.setBody(reqBody, reqTruncated)
@@ -399,6 +407,100 @@ func cloneHeader(h http.Header) http.Header {
 		out[k] = dup
 	}
 	return out
+}
+
+const redactedValue = "[REDACTED]"
+
+// redactedHeaders are headers whose values always carry credentials.
+var redactedHeaders = map[string]bool{
+	"Authorization":       true,
+	"Proxy-Authorization": true,
+	"Cookie":              true,
+	"Set-Cookie":          true,
+	"Api-Key":             true,
+	"X-Api-Key":           true,
+}
+
+// redactedHeaderSuffixes catch vendor-specific credential headers such as
+// x-goog-api-key. Identifier headers (openai-organization, openai-project)
+// are intentionally not matched.
+var redactedHeaderSuffixes = []string{"-api-key", "-token", "-secret", "-signature"}
+
+func isCredentialHeader(canon string) bool {
+	if redactedHeaders[canon] {
+		return true
+	}
+	lower := strings.ToLower(canon)
+	for _, suf := range redactedHeaderSuffixes {
+		if strings.HasSuffix(lower, suf) {
+			return true
+		}
+	}
+	return false
+}
+
+// redactHeaders clones h, replacing credential header values while keeping
+// the header keys so callers can still assert a credential was sent.
+func redactHeaders(h http.Header) http.Header {
+	out := cloneHeader(h)
+	for k, vals := range out {
+		canon := http.CanonicalHeaderKey(k)
+		if !isCredentialHeader(canon) {
+			continue
+		}
+		for i, v := range vals {
+			if v == "" {
+				continue
+			}
+			if canon == "Authorization" || canon == "Proxy-Authorization" {
+				vals[i] = redactAuthorizationValue(v)
+			} else {
+				vals[i] = redactedValue
+			}
+		}
+	}
+	return out
+}
+
+// redactAuthorizationValue keeps the scheme only when it is Bearer or Basic
+// (case-insensitive) followed by a space; everything else is fully redacted.
+func redactAuthorizationValue(v string) string {
+	if v == "" {
+		return ""
+	}
+	scheme, rest, ok := strings.Cut(v, " ")
+	if ok && rest != "" && (strings.EqualFold(scheme, "Bearer") || strings.EqualFold(scheme, "Basic")) {
+		return scheme + " " + redactedValue
+	}
+	return redactedValue
+}
+
+// redactedQueryParams are matched against the lowercased, decoded name.
+var redactedQueryParams = map[string]bool{
+	"key": true, "api_key": true, "apikey": true, "api-key": true,
+	"access_token": true, "token": true, "auth": true, "authorization": true,
+	"signature": true, "sig": true, "x-goog-api-key": true,
+}
+
+// redactQuery replaces the values of credential query parameters in place,
+// leaving all other segments byte-for-byte unchanged. The marker is REDACTED
+// without brackets so the result stays a well-formed query string.
+func redactQuery(raw string) string {
+	if raw == "" {
+		return raw
+	}
+	segs := strings.Split(raw, "&")
+	for i, seg := range segs {
+		name, _, _ := strings.Cut(seg, "=")
+		unescaped, err := url.QueryUnescape(name)
+		if err != nil {
+			unescaped = name
+		}
+		if redactedQueryParams[strings.ToLower(unescaped)] {
+			segs[i] = name + "=REDACTED"
+		}
+	}
+	return strings.Join(segs, "&")
 }
 
 type recordingRequestBody struct {

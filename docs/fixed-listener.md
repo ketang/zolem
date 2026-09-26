@@ -104,6 +104,31 @@ shape: `call_id`, `method`, `path`, `status`, `frames_sent`, and
 `frames_received`. Caps only bound what is recorded — the full
 request/response is still served to the caller.
 
+### Credential Redaction
+
+Recorded credentials are always redacted (no opt-out); the same redaction
+applies to admin-mode call history:
+
+- Header values are replaced with `[REDACTED]`, keeping the header key, for
+  `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `Api-Key`,
+  `x-api-key`, and any header whose name ends in `-api-key`, `-token`,
+  `-secret`, or `-signature` (for example `x-goog-api-key`). This applies to
+  request and response headers. For `Authorization` and `Proxy-Authorization`
+  a `Bearer` or `Basic` scheme is kept (`Bearer [REDACTED]`); any other or
+  malformed value becomes exactly `[REDACTED]`. Empty values stay empty.
+  Identifier headers such as `openai-organization` and `openai-project` are
+  not secrets and are intentionally kept.
+- Query parameter values are replaced with `REDACTED` in place (no brackets, so
+  the query string stays well formed) for `key`, `api_key`, `apikey`,
+  `api-key`, `access_token`, `token`, `auth`, `authorization`, `signature`,
+  `sig`, and `x-goog-api-key`, matched case-insensitively on the decoded name.
+  Other parameters and their order are unchanged.
+- Request and response bodies are not redacted.
+
+A newly created calls file has mode `0600`. If an existing file is group- or
+world-accessible, Zolem tightens it to `0600` and prints a one-line warning to
+stderr.
+
 ## Host Header Guard
 
 Zolem listeners have no authentication, so they only accept requests whose
