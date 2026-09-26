@@ -82,6 +82,9 @@ type localOptions struct {
 	RecordRequestBodyCapBytes  int
 	RecordResponseBodyCapBytes int
 	RecordStreamEventCap       int
+	// AllowedHosts are extra Host-header values accepted in addition to
+	// loopback literals and "localhost".
+	AllowedHosts []string
 }
 
 // scanFetcher is a no-op specFetcher for scan/test startup deps. Every lookup
@@ -181,11 +184,12 @@ func runLocal(opts localOptions, deps startupDeps) error {
 		deps.logf("warn: %s", warning)
 	}
 
+	handler := hostGuard(app.handler, runtimecfg.NormalizeAllowedHosts(opts.AllowedHosts))
 	deps.logf("zolem local listener on %s for %s/%s", listenerRuntime.Spec.Addr, listenerRuntime.Spec.Provider, listenerRuntime.Spec.Profile)
 	if opts.TLS.enabled() {
-		return deps.listenTLS(listenerRuntime.Spec.Addr, opts.TLS.CertFile, opts.TLS.KeyFile, app.handler)
+		return deps.listenTLS(listenerRuntime.Spec.Addr, opts.TLS.CertFile, opts.TLS.KeyFile, handler)
 	}
-	return deps.listen(listenerRuntime.Spec.Addr, app.handler)
+	return deps.listen(listenerRuntime.Spec.Addr, handler)
 }
 
 func buildLocalStartupApp(opts localOptions, deps startupDeps) (*startupApp, []string, error) {

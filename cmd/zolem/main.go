@@ -11,8 +11,11 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"strings"
 	"syscall"
 	"time"
+
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
 // version is the zolem build version. It can be stamped at build time with
@@ -52,6 +55,8 @@ func main() {
 	localRecordRequestBodyCap := flag.Int("local-record-request-body-cap-bytes", 262144, "maximum bytes of request body to record per call; excess is counted but dropped")
 	localRecordResponseBodyCap := flag.Int("local-record-response-body-cap-bytes", 262144, "maximum bytes of response body to record per call; excess is counted but dropped")
 	localRecordStreamEventCap := flag.Int("local-record-stream-event-cap", 1024, "maximum SSE events to record per streamed response; excess is counted but dropped")
+	var allowedHosts stringList
+	flag.Var(&allowedHosts, "allowed-host", "extra Host header value accepted in addition to localhost and loopback IPs (repeatable; any port is ignored); other Hosts get 403 (DNS-rebinding guard). Applies to both modes")
 	flag.Parse()
 
 	if *showVersion {
@@ -62,8 +67,9 @@ func main() {
 	deps := signalAwareStartupDeps(ctx)
 	if *localAdminAddr != "" {
 		if err := runLocalAdmin(localAdminOptions{
-			Addr:        *localAdminAddr,
-			FixturesDir: *localFixturesDir,
+			Addr:         *localAdminAddr,
+			FixturesDir:  *localFixturesDir,
+			AllowedHosts: allowedHosts,
 			TLS: localTLSConfig{
 				CertFile: *localTLSCert,
 				KeyFile:  *localTLSKey,
@@ -82,6 +88,7 @@ func main() {
 			}
 		})
 		if err := runLocal(localOptions{
+			AllowedHosts:           allowedHosts,
 			Addr:                   *localAddr,
 			Provider:               *localProvider,
 			Profile:                *localProfile,
@@ -153,6 +160,9 @@ profiles and listeners can be created and torn down at runtime with zolemc:
 Flags shared by both modes:
   -local-tls-cert FILE        certificate file for admin or fixed-listener TLS
   -local-tls-key FILE         key file for admin or fixed-listener TLS
+  -allowed-host NAME          extra Host header accepted besides localhost and loopback IPs
+                              (repeatable; port ignored). Any other Host gets 403 to block
+                              DNS-rebinding; use for an /etc/hosts alias or custom-hostname TLS
   -version                    print version and exit
 `)
 }
@@ -196,4 +206,33 @@ func serveHTTPWithContext(ctx context.Context, server *http.Server, serve func()
 		}
 		return err
 	}
+}
+
+// stringList is a repeatable string flag.
+type stringList []string
+
+func (l *stringList) String() string { return fmt.Sprint([]string(*l)) }
+
+// Set validates and normalizes one -allowed-host value: whitespace is trimmed,
+// a port is dropped, empty and URL/path-looking values are rejected, and
+// duplicates (case-insensitive) are ignored.
+func (l *stringList) Set(v string) error {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return errors.New("value must not be empty")
+	}
+	if strings.Contains(v, "/") {
+		return fmt.Errorf("%q must be a bare hostname (optionally with a port), not a URL or path", v)
+	}
+	hosts := runtimecfg.NormalizeAllowedHosts([]string{v})
+	if len(hosts) == 0 {
+		return fmt.Errorf("%q is not a valid host", v)
+	}
+	for _, existing := range *l {
+		if strings.EqualFold(existing, hosts[0]) {
+			return nil
+		}
+	}
+	*l = append(*l, strings.ToLower(hosts[0]))
+	return nil
 }

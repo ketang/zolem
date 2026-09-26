@@ -29,11 +29,13 @@ Only loopback addresses are accepted; non-loopback addresses are rejected. Only 
 - zolem defaults -local-backend to lorem when unset
 - TLS requires both -local-tls-cert and -local-tls-key; supplying only one is an error
 - fixture backend without -local-fixtures-dir returns a startup error
+- requests whose Host header is not localhost, a loopback IP, or an -allowed-host entry get 403
 
 ## Evidence
 
 ### Tests
 - `cmd/zolem/local_runtime_e2e_test.go`
+- `cmd/zolem/host_guard_e2e_test.go`
 - `cmd/zolem/main_e2e_test.go`
 - `cmd/zolem/startup_local_test.go`
 

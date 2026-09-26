@@ -14,6 +14,19 @@
   `-calibration-temperature`. Requires Ollama 0.12.11 or newer and is rejected
   for every other provider. See `docs/typesafe.md` (zolem-w0i).
 
+### Security
+
+- Fixed-listener mode now enforces the Host-header (DNS-rebinding) guard that
+  admin mode already applied: requests whose `Host` is not `localhost` or a
+  loopback IP get `403`, including the Responses WebSocket upgrade. The new
+  repeatable `-allowed-host` flag (both modes) additionally allows an alias such
+  as an `/etc/hosts` name or a custom-hostname TLS cert. See
+  `docs/fixed-listener.md` (zolem-bdz). Existing fixed-mode users whose clients
+  send `Host: 0.0.0.0:<port>`, `localhost.` or an IPv6 zone form now get 403
+  and must add the name with `-allowed-host`; rejected requests are not
+  recorded in `-local-calls-file`. `-allowed-host` rejects empty and URL-like
+  values with exit 2.
+
 ### Changed
 
 - The `typesafe` provider now returns HTTP 422 (was 400) for request-validation
