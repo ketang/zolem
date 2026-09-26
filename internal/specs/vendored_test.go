@@ -26,7 +26,7 @@ func TestVendoredFallbacks_CoverAllServedProviders(t *testing.T) {
 		{
 			key:     "openai:v1",
 			valid:   `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
-			invalid: `{"model":"gpt-4o","messages":[{"role":"user"}]}`,
+			invalid: `{"model":"gpt-4o","messages":[{"role":"user","content":123}]}`,
 		},
 		{
 			key:     "gemini:v1",
