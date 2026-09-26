@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -234,7 +235,7 @@ type jsonlRecorder struct {
 }
 
 func newJSONLRecorder(path string) (*jsonlRecorder, error) {
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open calls file %q: %w", path, err)
 	}
@@ -352,8 +353,8 @@ func recordingMiddleware(recorder Recorder, caps RecordCaps) func(http.Handler) 
 				Request: RecordedRequest{
 					Method:     req.Method,
 					Path:       req.URL.Path,
-					Query:      req.URL.RawQuery,
-					Headers:    cloneHeader(req.Header),
+					Query:      redactQuery(req.URL.RawQuery),
+					Headers:    redactRequestHeaders(req.Header),
 					RemoteAddr: req.RemoteAddr,
 				},
 				Response: RecordedResponse{
@@ -399,6 +400,73 @@ func cloneHeader(h http.Header) http.Header {
 		out[k] = dup
 	}
 	return out
+}
+
+const redactedValue = "[REDACTED]"
+
+// redactedHeaders are request headers whose values carry credentials. The
+// header key is kept so callers can still assert a credential was sent.
+var redactedHeaders = map[string]bool{
+	"Authorization":       true,
+	"Proxy-Authorization": true,
+	"X-Api-Key":           true,
+	"X-Goog-Api-Key":      true,
+	"Api-Key":             true,
+	"Cookie":              true,
+}
+
+// redactRequestHeaders clones h, replacing credential header values.
+func redactRequestHeaders(h http.Header) http.Header {
+	out := cloneHeader(h)
+	for k, vals := range out {
+		canon := http.CanonicalHeaderKey(k)
+		if !redactedHeaders[canon] {
+			continue
+		}
+		for i, v := range vals {
+			switch {
+			case v == "":
+			case canon == "Authorization" || canon == "Proxy-Authorization":
+				vals[i] = redactAuthorizationValue(v)
+			default:
+				vals[i] = redactedValue
+			}
+		}
+	}
+	return out
+}
+
+// redactAuthorizationValue keeps the scheme only when it is Bearer or Basic
+// (case-insensitive) followed by a space; everything else is fully redacted.
+func redactAuthorizationValue(v string) string {
+	if v == "" {
+		return ""
+	}
+	scheme, rest, ok := strings.Cut(v, " ")
+	if ok && rest != "" && (strings.EqualFold(scheme, "Bearer") || strings.EqualFold(scheme, "Basic")) {
+		return scheme + " " + redactedValue
+	}
+	return redactedValue
+}
+
+// redactQuery replaces the values of the credential query parameters key and
+// api_key in place, leaving all other segments byte-for-byte unchanged.
+func redactQuery(raw string) string {
+	if raw == "" {
+		return raw
+	}
+	segs := strings.Split(raw, "&")
+	for i, seg := range segs {
+		name, _, _ := strings.Cut(seg, "=")
+		unescaped, err := url.QueryUnescape(name)
+		if err != nil {
+			unescaped = name
+		}
+		if unescaped == "key" || unescaped == "api_key" {
+			segs[i] = name + "=REDACTED"
+		}
+	}
+	return strings.Join(segs, "&")
 }
 
 type recordingRequestBody struct {

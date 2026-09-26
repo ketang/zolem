@@ -297,6 +297,9 @@ curl -X PUT \
 | `record_response_body_cap_bytes` | `262144` | Maximum bytes of response body stored in history. Excess bytes use the same truncation field. |
 | `record_stream_event_cap` | `1024` | Maximum SSE events stored for a streamed response. Excess events are counted in `events_truncated`. |
 
+Credential headers and `key`/`api_key` query values are redacted in recorded
+history; see [Credential Redaction](fixed-listener.md#credential-redaction).
+
 Caps only limit what is recorded. Zolem still serves the full request and
 response to the client.
 

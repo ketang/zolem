@@ -104,6 +104,23 @@ shape: `call_id`, `method`, `path`, `status`, `frames_sent`, and
 `frames_received`. Caps only bound what is recorded — the full
 request/response is still served to the caller.
 
+### Credential Redaction
+
+Recorded request credentials are always redacted (no opt-out); the same
+redaction applies to admin-mode call history:
+
+- Headers `Authorization`, `Proxy-Authorization`, `x-api-key`,
+  `x-goog-api-key`, `api-key`, and `Cookie` keep their key but their values are
+  replaced with `[REDACTED]`. For `Authorization` and `Proxy-Authorization` a
+  `Bearer` or `Basic` scheme is kept (`Bearer [REDACTED]`); any other or
+  malformed value becomes exactly `[REDACTED]`. Empty values stay empty.
+- Query parameters `key` and `api_key` have their values replaced with
+  `REDACTED` in place; other parameters and their order are unchanged.
+- Request and response bodies are not redacted.
+
+A newly created calls file has mode `0600`. An existing file keeps its current
+mode; Zolem does not chmod it.
+
 ## TLS
 
 Pass `-local-tls-cert` and `-local-tls-key` to enable HTTPS on the fixed listener:

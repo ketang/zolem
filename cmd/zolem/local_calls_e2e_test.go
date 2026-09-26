@@ -121,6 +121,48 @@ func TestLocalCallsFileJSONL_E2E(t *testing.T) {
 		}
 	})
 
+	t.Run("redacts_credentials_and_uses_0600", func(t *testing.T) {
+		callsFile := filepath.Join(t.TempDir(), "calls.jsonl")
+		svc := startZolemWithCallsFile(t, bin, callsFile, 0)
+
+		resp, _ := doRequest(t, svc.baseURL, "POST", "/v1/chat/completions?key=AIza-query-secret",
+			`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`,
+			"Content-Type: application/json", "Authorization: Bearer sk-secret-123",
+			"x-goog-api-key: AIza-secret")
+		resp.Body.Close()
+		// Malformed Authorization is rejected with 401 but still recorded.
+		resp, _ = doRequest(t, svc.baseURL, "POST", "/v1/chat/completions",
+			`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`,
+			"Content-Type: application/json", "Authorization: sk-secret-123 extra")
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("malformed auth status = %d, want 401", resp.StatusCode)
+		}
+
+		raw, err := os.ReadFile(callsFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, secret := range []string{"sk-secret-123", "AIza-secret", "AIza-query-secret"} {
+			if bytes.Contains(raw, []byte(secret)) {
+				t.Fatalf("calls file contains secret %q:\n%s", secret, raw)
+			}
+		}
+		records := readJSONLFile(t, callsFile)
+		if len(records) != 2 {
+			t.Fatalf("expected 2 records, got %d", len(records))
+		}
+		if got := firstHeader(records[0].Request.Headers, "Authorization"); got != "Bearer [REDACTED]" {
+			t.Fatalf("record 0 Authorization = %q", got)
+		}
+		if got := records[0].Request.Query; got != "key=REDACTED" {
+			t.Fatalf("record 0 query = %q", got)
+		}
+		if got := firstHeader(records[1].Request.Headers, "Authorization"); got != "[REDACTED]" {
+			t.Fatalf("record 1 Authorization = %q", got)
+		}
+	})
+
 	t.Run("no_file_without_flag", func(t *testing.T) {
 		callsFile := filepath.Join(t.TempDir(), "should-not-exist.jsonl")
 
@@ -267,4 +309,13 @@ func readJSONLFile(t *testing.T, path string) []recordedCall {
 		t.Fatalf("scan JSONL file: %v", err)
 	}
 	return records
+}
+
+// firstHeader returns the first value of a decoded header map, matching the
+// canonical key form http.Header uses when serialized.
+func firstHeader(h map[string][]string, key string) string {
+	if v := h[http.CanonicalHeaderKey(key)]; len(v) > 0 {
+		return v[0]
+	}
+	return ""
 }

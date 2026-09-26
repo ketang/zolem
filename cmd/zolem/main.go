@@ -48,7 +48,7 @@ func main() {
 	localFixturesDir := flag.String("local-fixtures-dir", "", "fixtures directory for local runtime fixture backend; HTTP fixtures use response.json/response.json.tmpl, OpenAI Responses WebSocket fixtures use an array of event objects")
 	localTLSCert := flag.String("local-tls-cert", "", "certificate file for local admin or fixed-listener TLS")
 	localTLSKey := flag.String("local-tls-key", "", "key file for local admin or fixed-listener TLS")
-	localCallsFile := flag.String("local-calls-file", "", "append JSONL records of captured HTTP calls and OpenAI Responses WebSocket connections to this file; empty disables recording")
+	localCallsFile := flag.String("local-calls-file", "", "append JSONL records of captured HTTP calls and OpenAI Responses WebSocket connections to this file; empty disables recording; credential headers and key query values are redacted, new file created with mode 0600")
 	localRecordRequestBodyCap := flag.Int("local-record-request-body-cap-bytes", 262144, "maximum bytes of request body to record per call; excess is counted but dropped")
 	localRecordResponseBodyCap := flag.Int("local-record-response-body-cap-bytes", 262144, "maximum bytes of response body to record per call; excess is counted but dropped")
 	localRecordStreamEventCap := flag.Int("local-record-stream-event-cap", 1024, "maximum SSE events to record per streamed response; excess is counted but dropped")
@@ -140,7 +140,7 @@ listener with a fixed profile and backend:
                               probability (default 1.0; above 1 flattens, below 1 sharpens)
   -local-error-type TYPE      error backend type; required when -local-backend is error
   -local-fixtures-dir DIR     fixtures directory for the fixture backend
-  -local-calls-file PATH      append JSONL records of captured calls to this file
+  -local-calls-file PATH      append JSONL records of captured calls (credentials redacted; file created 0600) to this file
   -local-record-request-body-cap-bytes N   max request-body bytes recorded per call
   -local-record-response-body-cap-bytes N  max response-body bytes recorded per call
   -local-record-stream-event-cap N          max SSE events recorded per response
