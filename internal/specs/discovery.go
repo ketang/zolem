@@ -41,6 +41,7 @@ type discoverySchema struct {
 	Items                *discoverySchema           `json:"items,omitempty"`
 	AdditionalProperties *discoverySchema           `json:"additionalProperties,omitempty"`
 	OneOf                []discoverySchema          `json:"oneOf,omitempty"`
+	Not                  *discoverySchema           `json:"not,omitempty"`
 }
 
 // LoadProviderSchema normalizes provider-specific source documents before
@@ -201,6 +202,13 @@ func (b discoveryBuilder) convert(schema discoverySchema) (map[string]any, error
 		}
 		out["oneOf"] = branches
 	}
+	if schema.Not != nil {
+		normalized, err := b.convert(*schema.Not)
+		if err != nil {
+			return nil, fmt.Errorf("not: %w", err)
+		}
+		out["not"] = normalized
+	}
 
 	switch schemaType(schema) {
 	case "object":
@@ -239,6 +247,10 @@ func (b discoveryBuilder) convert(schema discoverySchema) (map[string]any, error
 	case "string", "integer", "number", "boolean":
 		out["type"] = schemaType(schema)
 	default:
+		if schema.Type == "" && len(schema.OneOf) > 0 {
+			// Pure composition schema (e.g. the body of a "not"): oneOf only.
+			return out, nil
+		}
 		return nil, fmt.Errorf("unsupported discovery type %q", schema.Type)
 	}
 

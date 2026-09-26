@@ -89,6 +89,50 @@
           "required": [
             "codeExecutionResult"
           ]
+        },
+        {
+          "required": [
+            "thoughtSignature"
+          ],
+          "not": {
+            "oneOf": [
+              {
+                "required": [
+                  "text"
+                ]
+              },
+              {
+                "required": [
+                  "functionCall"
+                ]
+              },
+              {
+                "required": [
+                  "inlineData"
+                ]
+              },
+              {
+                "required": [
+                  "functionResponse"
+                ]
+              },
+              {
+                "required": [
+                  "fileData"
+                ]
+              },
+              {
+                "required": [
+                  "executableCode"
+                ]
+              },
+              {
+                "required": [
+                  "codeExecutionResult"
+                ]
+              }
+            ]
+          }
         }
       ],
       "properties": {

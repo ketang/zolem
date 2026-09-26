@@ -1,6 +1,7 @@
 package specs_test
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -135,4 +136,19 @@ func readDiscoveryFixture(t *testing.T, name string) []byte {
 		t.Fatalf("read fixture %s: %v", name, err)
 	}
 	return data
+}
+
+func TestGeminiDiscoveryFixturesMatchVendored(t *testing.T) {
+	for _, tc := range []struct{ vendored, fixture string }{
+		{"vendored/gemini-v1.discovery.json", "gemini-discovery-v1.json"},
+		{"vendored/gemini-v1beta.discovery.json", "gemini-discovery-v1beta.json"},
+	} {
+		vendored, err := os.ReadFile(tc.vendored)
+		if err != nil {
+			t.Fatalf("read %s: %v", tc.vendored, err)
+		}
+		if !bytes.Equal(vendored, readDiscoveryFixture(t, tc.fixture)) {
+			t.Errorf("%s differs from testdata/specs/%s; keep them in sync", tc.vendored, tc.fixture)
+		}
+	}
 }

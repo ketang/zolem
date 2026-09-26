@@ -61,8 +61,43 @@ func TestE2E_Gemini_PartTypes(t *testing.T) {
 			want: http.StatusBadRequest,
 		},
 		{
-			name: "thought_signature_only_rejected",
-			body: `{"contents":[{"role":"user","parts":[{"thoughtSignature":"x"}]}]}`,
+			name: "thought_signature_only_accepted",
+			body: `{"contents":[{"role":"model","parts":[{"thoughtSignature":"x"}]}]}`,
+			want: http.StatusOK,
+		},
+		{
+			name: "text_with_thought_signature_accepted",
+			body: `{"contents":[{"role":"model","parts":[{"text":"t","thoughtSignature":"x"}]}]}`,
+			want: http.StatusOK,
+		},
+		{
+			name: "function_call_with_thought_signature_accepted",
+			body: `{"contents":[{"role":"model","parts":[{"functionCall":{"name":"f"},"thoughtSignature":"x"}]}]}`,
+			want: http.StatusOK,
+		},
+		{
+			name: "video_metadata_only_rejected",
+			body: `{"contents":[{"role":"user","parts":[{"videoMetadata":{"startOffset":"1s"}}]}]}`,
+			want: http.StatusBadRequest,
+		},
+		{
+			name: "inline_data_with_video_metadata_accepted",
+			body: `{"contents":[{"role":"user","parts":[{"inlineData":{"mimeType":"video/mp4","data":"AA=="},"videoMetadata":{"startOffset":"1s"}}]}]}`,
+			want: http.StatusOK,
+		},
+		{
+			name: "text_and_function_call_rejected",
+			body: `{"contents":[{"role":"user","parts":[{"text":"t","functionCall":{"name":"f"}}]}]}`,
+			want: http.StatusBadRequest,
+		},
+		{
+			name: "text_and_file_data_rejected",
+			body: `{"contents":[{"role":"user","parts":[{"text":"t","fileData":{"fileUri":"u"}}]}]}`,
+			want: http.StatusBadRequest,
+		},
+		{
+			name: "two_data_fields_with_thought_signature_rejected",
+			body: `{"contents":[{"role":"user","parts":[{"text":"t","functionCall":{"name":"f"},"thoughtSignature":"x"}]}]}`,
 			want: http.StatusBadRequest,
 		},
 		{
