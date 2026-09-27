@@ -14,6 +14,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ketang/zolem/internal/adminapi"
 	"github.com/ketang/zolem/internal/admincli"
@@ -556,10 +557,7 @@ func runProviderRequest(ctx context.Context, opts admincli.Options, args []strin
 		return &admincli.APIError{Method: method, URL: target, Status: resp.Status, Body: string(respBody)}
 	}
 	if opts.JSON {
-		return writeJSONObject(stdout, map[string]any{
-			"status": resp.StatusCode,
-			"body":   json.RawMessage(respBody),
-		})
+		return writeJSONObject(stdout, providerResponseJSON(resp.StatusCode, respBody))
 	}
 	_, err = stdout.Write(respBody)
 	if len(respBody) == 0 || respBody[len(respBody)-1] != '\n' {
@@ -612,6 +610,40 @@ func writeJSONObject(w io.Writer, v any) error {
 	}
 	_, err = fmt.Fprintf(w, "%s\n", data)
 	return err
+}
+
+// providerResponseJSON builds the -json output payload for a successful
+// provider response body. The body may be JSON (e.g. a normal chat
+// completion), non-JSON text (e.g. an SSE stream, NDJSON, or an empty body),
+// or bytes that are not valid UTF-8. The checks run in this order:
+//
+//  1. Invalid UTF-8 first: json.Valid accepts invalid UTF-8 bytes inside
+//     quoted JSON strings, so checking JSON validity first would silently
+//     corrupt such bytes when re-encoded. Invalid UTF-8 bodies are base64
+//     encoded instead, with body_encoding set to "base64".
+//  2. Valid JSON: the body is embedded unchanged, matching the historical
+//     {"status":N,"body":<JSON>} shape with no body_encoding key.
+//  3. Anything else (SSE, NDJSON, plain text, empty body): the body is
+//     embedded as a JSON string, with body_encoding set to "text".
+func providerResponseJSON(status int, body []byte) map[string]any {
+	if !utf8.Valid(body) {
+		return map[string]any{
+			"status":        status,
+			"body":          base64.StdEncoding.EncodeToString(body),
+			"body_encoding": "base64",
+		}
+	}
+	if json.Valid(body) {
+		return map[string]any{
+			"status": status,
+			"body":   json.RawMessage(body),
+		}
+	}
+	return map[string]any{
+		"status":        status,
+		"body":          string(body),
+		"body_encoding": "text",
+	}
 }
 
 // filterCallsRawSince keeps only calls whose call_id exceeds since while
