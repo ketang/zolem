@@ -114,6 +114,15 @@ func (b *ollamaContentBackend) upstream(ctx context.Context) string {
 	return "http://localhost:11434"
 }
 
+// withUpstreamPolicy attaches the profile's ollama upstream dial policy to
+// ctx so the ollama package's HTTP clients can enforce it at connection
+// time, matching the loopback/private-only-unless-allowed check already
+// applied to the configured URL at profile-create time.
+func (b *ollamaContentBackend) withUpstreamPolicy(ctx context.Context) context.Context {
+	rt, _ := runtimecfg.ListenerRuntimeFromContext(ctx)
+	return ollama.WithAllowExternalUpstream(ctx, rt.Profile.AllowExternalOllamaUpstream)
+}
+
 func (b *ollamaContentBackend) model(ctx context.Context, fallback string) string {
 	rt, _ := runtimecfg.ListenerRuntimeFromContext(ctx)
 	if m := rt.Profile.BackendModel; m != "" {
@@ -123,7 +132,7 @@ func (b *ollamaContentBackend) model(ctx context.Context, fallback string) strin
 }
 
 func (b *ollamaContentBackend) Tokens(ctx context.Context, req GenerateRequest) ([]string, error) {
-	text, err := b.http.NonStreaming(ctx, b.upstream(ctx), req.Messages, b.model(ctx, req.Model))
+	text, err := b.http.NonStreaming(b.withUpstreamPolicy(ctx), b.upstream(ctx), req.Messages, b.model(ctx, req.Model))
 	if err != nil {
 		return nil, &BackendError{Msg: "ollama backend error: " + err.Error()}
 	}
@@ -131,7 +140,7 @@ func (b *ollamaContentBackend) Tokens(ctx context.Context, req GenerateRequest) 
 }
 
 func (b *ollamaContentBackend) Stream(ctx context.Context, req GenerateRequest, fn func(string) error) error {
-	err := b.http.Streaming(ctx, b.upstream(ctx), req.Messages, b.model(ctx, req.Model), fn)
+	err := b.http.Streaming(b.withUpstreamPolicy(ctx), b.upstream(ctx), req.Messages, b.model(ctx, req.Model), fn)
 	if err != nil {
 		return &BackendError{Msg: "ollama backend error: " + err.Error()}
 	}

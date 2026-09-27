@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -722,6 +723,56 @@ func TestLocalRuntimeLocalBackends_E2E(t *testing.T) {
 			// dropping) to the client.
 			assertOpenAIStreamShape(t, body, 3)
 		})
+	})
+
+	t.Run("ollama-redirect-refused", func(t *testing.T) {
+		var metadataHits atomic.Int64
+		metadataTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			metadataHits.Add(1)
+			w.Write([]byte(`{"role":"metadata"}`))
+		}))
+		t.Cleanup(metadataTarget.Close)
+
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, metadataTarget.URL+"/latest/meta-data/", http.StatusFound)
+		}))
+		t.Cleanup(upstream.Close)
+
+		admin := startLocalAdminService(t, repoRoot)
+		t.Cleanup(admin.Close)
+
+		listenerBaseURL := createRuntimeListener(t, admin, "openai", map[string]any{
+			"backend":         "ollama",
+			"backend_model":   "test-model",
+			"ollama_upstream": upstream.URL,
+		})
+
+		resp, body := doRequest(t, listenerBaseURL, http.MethodPost, "/v1/chat/completions",
+			`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`,
+			"Content-Type: application/json", "Authorization: Bearer sk-test")
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadGateway {
+			t.Fatalf("status: got %d, want %d: %s", resp.StatusCode, http.StatusBadGateway, body)
+		}
+		var errResp struct {
+			Error struct {
+				Type    string `json:"type"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(body, &errResp); err != nil {
+			t.Fatalf("unmarshal error body: %v: %s", err, body)
+		}
+		if errResp.Error.Type != "server_error" {
+			t.Fatalf("error type: got %q, want server_error: %s", errResp.Error.Type, body)
+		}
+		if !strings.Contains(errResp.Error.Message, "redirect refused") {
+			t.Fatalf("error message: got %q, want it to contain %q", errResp.Error.Message, "redirect refused")
+		}
+		if got := metadataHits.Load(); got != 0 {
+			t.Fatalf("metadata target hits: got %d, want 0", got)
+		}
 	})
 }
 

@@ -614,6 +614,13 @@ Limitations:
 
 - Only text content is translated. Tool calls, function definitions, and multimodal content are not forwarded.
 - Gemini `systemInstruction` is not translated (the field is not in Zolem's Gemini request type).
+- Requests to `ollama_upstream` never follow HTTP redirects and never use an
+  `HTTP_PROXY`/`HTTPS_PROXY` proxy, even if one is configured in the
+  environment. A redirect (or a proxy-only route) is refused outright rather
+  than followed, so an allowed upstream cannot retarget the request to a
+  disallowed host (for example a cloud metadata endpoint) after the
+  loopback/private/`allow_external_ollama_upstream` checks have already
+  passed.
 
 For the fixed-listener equivalent, see [fixed-listener.md#ollama-backend](fixed-listener.md#ollama-backend).
 
