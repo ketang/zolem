@@ -159,10 +159,21 @@ func normalizeSchemaRef(ref *openapi3.SchemaRef) (map[string]any, error) {
 	if schema.Max != nil {
 		result["maximum"] = *schema.Max
 	}
-	if schema.ExclusiveMin {
+	// ExclusiveMin/ExclusiveMax changed from bool to openapi3.ExclusiveBound in
+	// kin-openapi v0.144 to support OpenAPI 3.1's numeric exclusiveMinimum/
+	// exclusiveMaximum (JSON Schema 2020-12), while OpenAPI 3.0 still expresses
+	// them as a boolean modifier on minimum/maximum (JSON Schema draft-04
+	// style). Preserve the boolean behavior as before and additionally pass
+	// through the 3.1 numeric bound when present, matching kin-openapi's own
+	// validator's interpretation of each style.
+	if eb := schema.ExclusiveMin; eb.Value != nil {
+		result["exclusiveMinimum"] = *eb.Value
+	} else if eb.IsTrue() {
 		result["exclusiveMinimum"] = true
 	}
-	if schema.ExclusiveMax {
+	if eb := schema.ExclusiveMax; eb.Value != nil {
+		result["exclusiveMaximum"] = *eb.Value
+	} else if eb.IsTrue() {
 		result["exclusiveMaximum"] = true
 	}
 	if schema.MultipleOf != nil {
