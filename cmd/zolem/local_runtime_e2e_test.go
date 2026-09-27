@@ -1641,9 +1641,7 @@ func writeBadStatusFixture(t *testing.T, root string) {
 	t.Helper()
 
 	dir := filepath.Join(root, "bad")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir fixture dir: %v", err)
-	}
+	mustMkdir(t, dir)
 	meta := []byte("id: bad\nprovider: openai\nversion: v1\nstream: false\nstatus: 42\nmatch:\n  cel: \"true\"\n")
 	if err := os.WriteFile(filepath.Join(dir, "meta.yaml"), meta, 0o644); err != nil {
 		t.Fatalf("write meta.yaml: %v", err)
