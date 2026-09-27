@@ -343,6 +343,13 @@ func HTTPChatCompletionStream(ctx context.Context, upstream string, messages []C
 		return fmt.Errorf("ollama backend unavailable: %w", err)
 	}
 	defer resp.Body.Close()
+	// A stray AfterFunc fire can race with this Reset if it lands at nearly
+	// the same instant real progress is made (client.Do returning, or a
+	// line being scanned): time.Timer.Reset does not stop a callback that
+	// has already started running. Clearing the flag here means a stray
+	// fire only sticks if no further progress follows it — a genuine
+	// stall, not a scheduling race on a successful stream.
+	idleTimedOut.Store(false)
 	timer.Reset(streamIdleTimeout)
 
 	if resp.StatusCode != http.StatusOK {
@@ -353,6 +360,7 @@ func HTTPChatCompletionStream(ctx context.Context, upstream string, messages []C
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxScanLineBytes)
 	for scanner.Scan() {
+		idleTimedOut.Store(false)
 		timer.Reset(streamIdleTimeout)
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
