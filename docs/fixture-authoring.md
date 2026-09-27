@@ -48,6 +48,12 @@ version: v1
 status: 200
 ```
 
+`status` sets the HTTP status code the fixture responds with. It must be
+between 200 and 599 inclusive; the loader rejects `meta.yaml` files with an
+out-of-range value (including any 1xx code) at load time, naming the fixture
+and its `meta.yaml` path in the error. Omitting `status` (or setting it to
+`0`) defaults to `200`.
+
 CEL is the recommended expression language for common request predicates.
 Each expression must evaluate to a boolean; `fixtures.yaml` entries are
 evaluated in declared order and the first entry whose expression returns `true`
