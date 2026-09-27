@@ -267,6 +267,7 @@ func TestNormalizeSchemaRefCoversOpenAPIKeywords(t *testing.T) {
 	max := float64(10)
 	multipleOf := float64(0.5)
 	allowAdditional := false
+	exclusiveTrue := true
 
 	ref := &openapi3.SchemaRef{Value: &openapi3.Schema{
 		Type:         &openapi3.Types{"object"},
@@ -278,8 +279,8 @@ func TestNormalizeSchemaRefCoversOpenAPIKeywords(t *testing.T) {
 		Required:     []string{"name"},
 		Min:          &min,
 		Max:          &max,
-		ExclusiveMin: true,
-		ExclusiveMax: true,
+		ExclusiveMin: openapi3.ExclusiveBound{Bool: &exclusiveTrue},
+		ExclusiveMax: openapi3.ExclusiveBound{Bool: &exclusiveTrue},
 		MultipleOf:   &multipleOf,
 		MinLength:    2,
 		MaxLength:    &maxLength,
@@ -319,6 +320,63 @@ func TestNormalizeSchemaRefCoversOpenAPIKeywords(t *testing.T) {
 	nameType := properties["name"].(map[string]any)["type"].([]string)
 	if len(nameType) != 2 || nameType[0] != "string" || nameType[1] != "null" {
 		t.Fatalf("nullable property type = %#v", nameType)
+	}
+	if got["exclusiveMinimum"] != true {
+		t.Fatalf("exclusiveMinimum (3.0 boolean style) = %#v, want true", got["exclusiveMinimum"])
+	}
+	if got["exclusiveMaximum"] != true {
+		t.Fatalf("exclusiveMaximum (3.0 boolean style) = %#v, want true", got["exclusiveMaximum"])
+	}
+}
+
+// TestNormalizeSchemaRefExclusiveBoundNumeric covers the OpenAPI 3.1 style of
+// exclusiveMinimum/exclusiveMaximum, where kin-openapi's ExclusiveBound holds
+// a numeric Value rather than a Bool modifier on Min/Max.
+func TestNormalizeSchemaRefExclusiveBoundNumeric(t *testing.T) {
+	exclusiveMin := float64(0)
+	exclusiveMax := float64(100)
+
+	ref := &openapi3.SchemaRef{Value: &openapi3.Schema{
+		Type:         &openapi3.Types{"number"},
+		ExclusiveMin: openapi3.ExclusiveBound{Value: &exclusiveMin},
+		ExclusiveMax: openapi3.ExclusiveBound{Value: &exclusiveMax},
+	}}
+
+	got, err := normalizeSchemaRef(ref)
+	if err != nil {
+		t.Fatalf("normalizeSchemaRef: %v", err)
+	}
+	if got["exclusiveMinimum"] != exclusiveMin {
+		t.Fatalf("exclusiveMinimum (3.1 numeric style) = %#v, want %v", got["exclusiveMinimum"], exclusiveMin)
+	}
+	if got["exclusiveMaximum"] != exclusiveMax {
+		t.Fatalf("exclusiveMaximum (3.1 numeric style) = %#v, want %v", got["exclusiveMaximum"], exclusiveMax)
+	}
+	if _, ok := got["minimum"]; ok {
+		t.Fatalf("minimum should not be set when schema.Min is nil: %#v", got)
+	}
+	if _, ok := got["maximum"]; ok {
+		t.Fatalf("maximum should not be set when schema.Max is nil: %#v", got)
+	}
+}
+
+// TestNormalizeSchemaRefExclusiveBoundUnset covers the case where
+// ExclusiveMin/ExclusiveMax are left unset entirely (neither Bool nor Value),
+// which must not add the keys at all.
+func TestNormalizeSchemaRefExclusiveBoundUnset(t *testing.T) {
+	ref := &openapi3.SchemaRef{Value: &openapi3.Schema{
+		Type: &openapi3.Types{"number"},
+	}}
+
+	got, err := normalizeSchemaRef(ref)
+	if err != nil {
+		t.Fatalf("normalizeSchemaRef: %v", err)
+	}
+	if _, ok := got["exclusiveMinimum"]; ok {
+		t.Fatalf("exclusiveMinimum should be absent when unset: %#v", got)
+	}
+	if _, ok := got["exclusiveMaximum"]; ok {
+		t.Fatalf("exclusiveMaximum should be absent when unset: %#v", got)
 	}
 }
 
