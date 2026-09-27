@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1631,4 +1632,80 @@ func TestLocalRuntimeCallHistory_E2E(t *testing.T) {
 			t.Fatalf("DELETE status: got %d, want 404", delResp.StatusCode)
 		}
 	})
+}
+
+// writeBadStatusFixture writes a single fixture whose meta.yaml declares an
+// out-of-range status, exercising the zolem-zhq loader validation added to
+// internal/fixture/loader.go.
+func writeBadStatusFixture(t *testing.T, root string) {
+	t.Helper()
+
+	dir := filepath.Join(root, "bad")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir fixture dir: %v", err)
+	}
+	meta := []byte("id: bad\nprovider: openai\nversion: v1\nstream: false\nstatus: 42\nmatch:\n  cel: \"true\"\n")
+	if err := os.WriteFile(filepath.Join(dir, "meta.yaml"), meta, 0o644); err != nil {
+		t.Fatalf("write meta.yaml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "response.json"), []byte(`{"id":"x","object":"chat.completion","choices":[]}`), 0o644); err != nil {
+		t.Fatalf("write response.json: %v", err)
+	}
+}
+
+// TestLocalRuntimeFixedMode_RejectsOutOfRangeFixtureStatus_E2E covers the
+// zolem-zhq fix end to end: a fixture directory with an out-of-range
+// meta.yaml status must fail loudly instead of loading silently and later
+// panicking net/http's WriteHeader.
+func TestLocalRuntimeFixedMode_RejectsOutOfRangeFixtureStatus_E2E(t *testing.T) {
+	bin := buildZolemBinary(t)
+	fixturesDir := t.TempDir()
+	writeBadStatusFixture(t, fixturesDir)
+
+	out, err := exec.Command(bin,
+		"-local-provider", "openai",
+		"-local-addr", "127.0.0.1:0",
+		"-local-backend", "fixture",
+		"-local-fixtures-dir", fixturesDir,
+	).CombinedOutput()
+
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Fatalf("fixed mode with bad status fixture: got err %v, want exit 1\n%s", err, out)
+	}
+	if !strings.Contains(string(out), `fixture "bad"`) || !strings.Contains(string(out), "meta.yaml") || !strings.Contains(string(out), "status 42 must be between 200 and 599") {
+		t.Fatalf("startup output does not name the bad fixture and status range:\n%s", out)
+	}
+}
+
+// TestLocalRuntimeControlPlane_RejectsOutOfRangeFixtureStatus_E2E is the
+// control-plane-mode counterpart: creating a listener over a fixture profile
+// whose namespace contains an out-of-range status must return 400, not crash
+// the admin process.
+func TestLocalRuntimeControlPlane_RejectsOutOfRangeFixtureStatus_E2E(t *testing.T) {
+	fixturesDir := t.TempDir()
+	writeBadStatusFixture(t, fixturesDir)
+
+	admin := startLocalAdminServiceWithFixtures(t, repoRoot(t), fixturesDir)
+	t.Cleanup(admin.Close)
+
+	profileResp, profileBody := doRequest(t, admin.baseURL, http.MethodPut, "/_zolem/profiles/bad-status-demo", `{"backend":"fixture"}`, "Content-Type: application/json")
+	defer profileResp.Body.Close()
+	if profileResp.StatusCode != http.StatusOK {
+		t.Fatalf("profile status: got %d, want 200: %s", profileResp.StatusCode, profileBody)
+	}
+
+	listenerResp, listenerBody := doRequest(t, admin.baseURL, http.MethodPut, "/_zolem/listeners/bad-status-listener",
+		`{"addr":"127.0.0.1:0","provider":"openai","profile":"bad-status-demo"}`, "Content-Type: application/json")
+	defer listenerResp.Body.Close()
+	if listenerResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("listener status: got %d, want 400: %s", listenerResp.StatusCode, listenerBody)
+	}
+	var errPayload struct {
+		Error string `json:"error"`
+	}
+	mustJSONUnmarshal(t, listenerBody, &errPayload)
+	if !strings.Contains(errPayload.Error, `fixture "bad"`) || !strings.Contains(errPayload.Error, "meta.yaml") || !strings.Contains(errPayload.Error, "status 42 must be between 200 and 599") {
+		t.Fatalf("listener error body does not name the bad fixture and status range: %s", listenerBody)
+	}
 }

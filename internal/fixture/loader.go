@@ -252,7 +252,8 @@ func (l *Loader) loadFixturesYAML(path string, fixtures []Fixture) (Selector, er
 // whether the directory contained a match.wasm file (independent of whether
 // the bytes have been compiled into a Module yet).
 func loadOne(dir string) (Fixture, *CompiledCELMatcher, bool, error) {
-	metaData, err := os.ReadFile(filepath.Join(dir, "meta.yaml"))
+	metaPath := filepath.Join(dir, "meta.yaml")
+	metaData, err := os.ReadFile(metaPath)
 	if err != nil {
 		return Fixture{}, nil, false, fmt.Errorf("read meta.yaml: %w", err)
 	}
@@ -262,6 +263,9 @@ func loadOne(dir string) (Fixture, *CompiledCELMatcher, bool, error) {
 	}
 	if m.Status == 0 {
 		m.Status = 200
+	}
+	if m.Status < 200 || m.Status > 599 {
+		return Fixture{}, nil, false, fmt.Errorf("fixture %q (%s): status %d must be between 200 and 599", m.ID, metaPath, m.Status)
 	}
 
 	bodyPath := filepath.Join(dir, "response.json")
