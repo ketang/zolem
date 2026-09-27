@@ -129,6 +129,70 @@ func TestZolemcLocalRuntimeE2E(t *testing.T) {
 	runZolemc(t, repoRoot, "-admin-url", admin.baseURL, "profiles", "delete", "demo")
 }
 
+// TestZolemcRequestJSONStreamingBodyE2E exercises zolem-jzt: a real admin +
+// openai listener, requested through `zolemc -json request`, for a streaming
+// (SSE) response and a non-streaming JSON response. The streaming response
+// body is not JSON, so it must come back with body_encoding=text rather than
+// failing the whole command with a marshal error. The non-streaming response
+// keeps the original shape with no body_encoding key.
+func TestZolemcRequestJSONStreamingBodyE2E(t *testing.T) {
+	repoRoot := repoRoot(t)
+	admin := startLocalAdminService(t, repoRoot)
+	t.Cleanup(admin.Close)
+
+	runZolemc(t, repoRoot, "-admin-url", admin.baseURL, "profiles", "create", "demo", "-backend", "lorem")
+	listener := runZolemc(t, repoRoot, "-json", "-admin-url", admin.baseURL, "listeners", "create", "stream-demo", "-addr", "127.0.0.1:0", "-provider", "openai", "-profile", "demo")
+	var listenerPayload struct {
+		BaseURL string `json:"base_url"`
+	}
+	if err := json.Unmarshal([]byte(listener.stdout), &listenerPayload); err != nil {
+		t.Fatalf("decode listener JSON: %v\n%s", err, listener.stdout)
+	}
+
+	t.Run("streaming", func(t *testing.T) {
+		result := runZolemc(t, repoRoot, "-json", "-base-url", listenerPayload.BaseURL, "request", "-method", "POST", "-path", "/v1/chat/completions", "-H", "Authorization: Bearer sk-test", "-json-body", `{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+		var envelope struct {
+			Status       int    `json:"status"`
+			Body         string `json:"body"`
+			BodyEncoding string `json:"body_encoding"`
+		}
+		if err := json.Unmarshal([]byte(result.stdout), &envelope); err != nil {
+			t.Fatalf("decode streaming -json output: %v\n%s", err, result.stdout)
+		}
+		if envelope.Status != http.StatusOK {
+			t.Fatalf("streaming status = %d, want 200", envelope.Status)
+		}
+		if envelope.BodyEncoding != "text" {
+			t.Fatalf("streaming body_encoding = %q, want %q:\n%s", envelope.BodyEncoding, "text", result.stdout)
+		}
+		if !strings.HasPrefix(envelope.Body, "data:") {
+			t.Fatalf("streaming body does not start with %q:\n%q", "data:", envelope.Body)
+		}
+	})
+
+	t.Run("non_streaming_shape_unchanged", func(t *testing.T) {
+		result := runZolemc(t, repoRoot, "-json", "-base-url", listenerPayload.BaseURL, "request", "-method", "POST", "-path", "/v1/chat/completions", "-H", "Authorization: Bearer sk-test", "-json-body", `{"model":"gpt-4o","stream":false,"messages":[{"role":"user","content":"hi"}]}`)
+		if strings.Contains(result.stdout, "body_encoding") {
+			t.Fatalf("non-streaming output should not have body_encoding key:\n%s", result.stdout)
+		}
+		var envelope struct {
+			Status int `json:"status"`
+			Body   struct {
+				Object string `json:"object"`
+			} `json:"body"`
+		}
+		if err := json.Unmarshal([]byte(result.stdout), &envelope); err != nil {
+			t.Fatalf("decode non-streaming -json output: %v\n%s", err, result.stdout)
+		}
+		if envelope.Body.Object != "chat.completion" {
+			t.Fatalf("body.object = %q, want %q:\n%s", envelope.Body.Object, "chat.completion", result.stdout)
+		}
+	})
+
+	runZolemc(t, repoRoot, "-admin-url", admin.baseURL, "listeners", "delete", "stream-demo")
+	runZolemc(t, repoRoot, "-admin-url", admin.baseURL, "profiles", "delete", "demo")
+}
+
 func TestZolemcCallsE2E(t *testing.T) {
 	repoRoot := repoRoot(t)
 	admin := startLocalAdminService(t, repoRoot)
