@@ -25,7 +25,7 @@ Only loopback addresses are accepted for -local-admin-addr unless -allow-non-loo
 ## Auditable Claims
 - zolem exits with log.Fatal if neither -local-admin-addr nor -local-provider is set
 - zolem rejects a non-loopback -local-admin-addr with an error unless -allow-non-loopback-bind is set
-- -allow-non-loopback-bind requires an -allowed-host and -listener-port-range; listeners outside the range get 400
+- -allow-non-loopback-bind requires a non-loopback -allowed-host and -listener-port-range; listeners outside the range get 400
 - GET /_zolem/health returns {status: ok}
 - GET /_zolem/profiles returns a JSON array of profiles
 - GET /_zolem/listeners returns a JSON array of listeners

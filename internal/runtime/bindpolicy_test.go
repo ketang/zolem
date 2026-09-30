@@ -47,6 +47,17 @@ func TestBindPolicyWildcardWithoutRange(t *testing.T) {
 	}
 }
 
+func TestBindPolicyBarePortMessage(t *testing.T) {
+	err := runtimecfg.NewWildcardBindPolicy(0, 0).ValidateAddr(":18090")
+	if err == nil || !strings.Contains(err.Error(), "0.0.0.0:18090") {
+		t.Errorf("got %v, want hint naming 0.0.0.0:18090", err)
+	}
+	err = runtimecfg.BindPolicy{}.ValidateAddr(":18090")
+	if err == nil || !strings.Contains(err.Error(), "0.0.0.0:18090") {
+		t.Errorf("loopback-only bare port: got %v, want hint", err)
+	}
+}
+
 func TestParsePortRange(t *testing.T) {
 	lo, hi, err := runtimecfg.ParsePortRange("18100-18109")
 	if err != nil || lo != 18100 || hi != 18109 {

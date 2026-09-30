@@ -29,21 +29,24 @@ func (p BindPolicy) AllowsWildcard() bool { return p.allowWildcard }
 
 // ValidateAddr checks host (and port range, when configured) of addr.
 func (p BindPolicy) ValidateAddr(addr string) error {
-	if p.allowWildcard {
-		host, _, err := net.SplitHostPort(addr)
-		if err != nil {
-			return err
-		}
-		if !IsWildcardHost(host) {
-			if err := validateLoopbackAddr(addr); err != nil {
-				return errors.New("listener addr must bind to localhost, a loopback IP, 0.0.0.0, or ::")
-			}
-		}
-	} else if err := validateLoopbackAddr(addr); err != nil {
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
 		return err
 	}
+	switch {
+	case host == "":
+		if p.allowWildcard {
+			return errors.New("listener addr has no host; write 0.0.0.0:" + portStr + " explicitly")
+		}
+		return errors.New("listener addr must bind to localhost or a loopback IP (containers: -allow-non-loopback-bind with 0.0.0.0:" + portStr + ")")
+	case isLoopbackHost(host):
+	case p.allowWildcard && IsWildcardHost(host):
+	case p.allowWildcard:
+		return errors.New("listener addr must bind to localhost, a loopback IP, 0.0.0.0, or ::")
+	default:
+		return errors.New("listener addr must bind to localhost or a loopback IP")
+	}
 	if p.portHigh > 0 {
-		_, portStr, _ := net.SplitHostPort(addr)
 		port, err := strconv.Atoi(portStr)
 		if err != nil || port < p.portLow || port > p.portHigh {
 			return fmt.Errorf("listener port %s outside -listener-port-range %d-%d", portStr, p.portLow, p.portHigh)
@@ -51,6 +54,18 @@ func (p BindPolicy) ValidateAddr(addr string) error {
 	}
 	return nil
 }
+
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// IsLoopbackName reports whether an allowlist entry is localhost or a loopback
+// IP literal, which the Host check always accepts.
+func IsLoopbackName(name string) bool { return isLoopbackHost(stripHostPort(name)) }
 
 // IsWildcardHost reports whether host is the IPv4 or IPv6 unspecified address.
 func IsWildcardHost(host string) bool {

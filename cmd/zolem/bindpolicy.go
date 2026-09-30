@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"net"
+	"slices"
 	"strings"
 
 	runtimecfg "github.com/ketang/zolem/internal/runtime"
@@ -19,6 +20,11 @@ func resolveBindPolicy(allow bool, allowedHosts []string, portRange string, cont
 	}
 	if len(allowedHosts) == 0 {
 		return runtimecfg.BindPolicy{}, errors.New("-allow-non-loopback-bind requires at least one -allowed-host")
+	}
+	// localhost and loopback IPs always pass the Host check, so an allowlist
+	// made only of them adds nothing.
+	if !slices.ContainsFunc(allowedHosts, func(h string) bool { return !runtimecfg.IsLoopbackName(h) }) {
+		return runtimecfg.BindPolicy{}, errors.New("-allow-non-loopback-bind requires at least one -allowed-host that is not localhost or a loopback IP (those always pass)")
 	}
 	if !controlPlane {
 		if portRange != "" {

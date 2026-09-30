@@ -100,12 +100,12 @@ func TestStore_DeleteProfileRejectsInUseProfile(t *testing.T) {
 }
 
 func TestValidateListenerSpecRejectsNonLoopbackAddr(t *testing.T) {
-	err := runtimecfg.ValidateListenerSpec(runtimecfg.ListenerSpec{
+	err := runtimecfg.ValidateListenerSpecWithPolicy(runtimecfg.ListenerSpec{
 		Name:     "openai-demo",
 		Addr:     "0.0.0.0:12001",
 		Provider: "openai",
 		Profile:  "demo",
-	})
+	}, runtimecfg.BindPolicy{})
 	if err == nil {
 		t.Fatal("expected non-loopback listener addr to fail validation")
 	}
@@ -129,11 +129,11 @@ func TestValidateListenerSpecRejectsMissingAndUnsupportedFields(t *testing.T) {
 		{Name: "demo", Addr: "not-host-port", Provider: "openai", Profile: "demo"},
 	}
 	for _, spec := range tests {
-		if err := runtimecfg.ValidateListenerSpec(spec); err == nil {
+		if err := runtimecfg.ValidateListenerSpecWithPolicy(spec, runtimecfg.BindPolicy{}); err == nil {
 			t.Fatalf("ValidateListenerSpec(%+v) unexpectedly succeeded", spec)
 		}
 	}
-	if err := runtimecfg.ValidateListenerSpec(runtimecfg.ListenerSpec{Name: "demo", Addr: "localhost:12001", Provider: "gemini", Profile: "demo"}); err != nil {
+	if err := runtimecfg.ValidateListenerSpecWithPolicy(runtimecfg.ListenerSpec{Name: "demo", Addr: "localhost:12001", Provider: "gemini", Profile: "demo"}, runtimecfg.BindPolicy{}); err != nil {
 		t.Fatalf("localhost listener should be valid: %v", err)
 	}
 }

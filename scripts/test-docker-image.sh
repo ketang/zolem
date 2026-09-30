@@ -18,7 +18,12 @@ cid="$(docker run -d --rm \
   -p 127.0.0.1:18090:18090 -p 127.0.0.1:18100-18101:18100-18101 \
   "$image" -local-admin-addr 0.0.0.0:18090 -allow-non-loopback-bind \
   -allowed-host zolem.test -listener-port-range 18100-18101)"
-trap 'docker logs "$cid" >&2 || true; docker stop "$cid" >/dev/null 2>&1 || true' EXIT
+cleanup() {
+  status=$?
+  if [ "$status" -ne 0 ]; then docker logs "$cid" >&2 || true; fi
+  docker stop "$cid" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
 
 admin=http://127.0.0.1:18090
 for _ in $(seq 1 50); do

@@ -147,25 +147,6 @@ func (s *Store) ListListeners() []ListenerSpec {
 	return listeners
 }
 
-func validateLoopbackAddr(addr string) error {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return err
-	}
-	if host == "localhost" {
-		return nil
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return errors.New("listener addr must bind to localhost or a loopback IP")
-	}
-	return nil
-}
-
-func ValidateLoopbackAddr(addr string) error {
-	return validateLoopbackAddr(addr)
-}
-
 // stripHostPort normalizes a Host-header or allowlist value to a bare hostname
 // by removing any trailing port and IPv6 brackets.
 func stripHostPort(value string) string {
@@ -256,10 +237,6 @@ func ValidateProfile(profile RuntimeProfile) error {
 	default:
 		return errors.New("profile backend must be lorem, faker, fixture, ollama, ollama-logprob, error, or wasm")
 	}
-}
-
-func ValidateListenerSpec(spec ListenerSpec) error {
-	return ValidateListenerSpecWithPolicy(spec, BindPolicy{})
 }
 
 func validateListenerSpecFields(spec ListenerSpec) error {

@@ -39,6 +39,7 @@ func TestResolveBindPolicy(t *testing.T) {
 		{"default", false, nil, "", true, ""},
 		{"range without opt-in", false, nil, "18100-18101", true, "requires -allow-non-loopback-bind"},
 		{"no hosts", true, nil, "18100-18101", true, "requires at least one -allowed-host"},
+		{"only loopback hosts", true, []string{"localhost", "127.0.0.1"}, "18100-18101", true, "not localhost or a loopback IP"},
 		{"no range control-plane", true, hosts, "", true, "-listener-port-range"},
 		{"range in fixed mode", true, hosts, "18100-18101", false, "control-plane mode"},
 		{"bad range", true, hosts, "9-1", true, "invalid port range"},

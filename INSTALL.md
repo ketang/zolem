@@ -86,9 +86,16 @@ Zolem binds loopback only by default, and inside a container loopback is
 unreachable through `docker run -p`. Containers therefore opt in with
 `-allow-non-loopback-bind`, which additionally accepts the wildcard hosts
 `0.0.0.0` and `::` (specific non-loopback IPs stay rejected). It requires at
-least one `-allowed-host`, and in control-plane mode also
-`-listener-port-range LOW-HIGH`. The allowlist is additive: `localhost` and
-loopback IPs still pass the Host check, and any other Host gets `403`.
+least one `-allowed-host` naming something other than `localhost` or a
+loopback IP, and in control-plane mode also `-listener-port-range LOW-HIGH`.
+The allowlist is additive: `localhost` and loopback IPs always pass the Host
+check, and any other Host gets `403`.
+
+**Security:** the admin API has no authentication, and the Host check only
+blocks DNS rebinding; any client that can reach the port and sends
+`Host: localhost` is accepted. Always publish with `-p 127.0.0.1:...` as in
+the recipes below, never a bare `-p 18090:18090`, which exposes the port on
+every host interface.
 
 Basic control-plane mode server:
 
@@ -99,14 +106,16 @@ docker run --rm \
   ghcr.io/ketang/zolem:latest \
   -local-admin-addr 0.0.0.0:18090 \
   -allow-non-loopback-bind \
-  -allowed-host localhost \
+  -allowed-host zolem.test \
   -listener-port-range 18100-18109
 ```
 
 Create listeners on `0.0.0.0:<port>` with a port inside the range. The
 reported `base_url` uses `localhost`, so publish the listener ports with
 identical host and container numbers (as above) for that URL to work from the
-Docker host. Add `-allowed-host <name>` for any other name clients use.
+Docker host. With a port range set, clients must ask for an explicit in-range
+port (for example `zolemc listeners create ... -addr 0.0.0.0:18100`), not the
+default `127.0.0.1:0`. Add `-allowed-host <name>` for any other name clients use.
 
 With a fixtures directory mounted:
 
@@ -116,7 +125,7 @@ docker run --rm \
   -v "$PWD/fixtures:/fixtures" \
   ghcr.io/ketang/zolem:latest \
   -local-admin-addr 0.0.0.0:18090 \
-  -allow-non-loopback-bind -allowed-host localhost \
+  -allow-non-loopback-bind -allowed-host zolem.test \
   -listener-port-range 18100-18109 \
   -local-fixtures-dir /fixtures
 ```
@@ -129,7 +138,7 @@ docker run --rm \
   -v "$PWD/certs:/certs" \
   ghcr.io/ketang/zolem:latest \
   -local-admin-addr 0.0.0.0:18443 \
-  -allow-non-loopback-bind -allowed-host localhost \
+  -allow-non-loopback-bind -allowed-host zolem.test \
   -listener-port-range 18100-18109 \
   -local-tls-cert /certs/localhost.pem \
   -local-tls-key /certs/localhost-key.pem
@@ -142,7 +151,7 @@ you publish directly; it needs no port range:
 docker run --rm -p 127.0.0.1:8080:8080 \
   ghcr.io/ketang/zolem:latest \
   -local-provider openai -local-addr 0.0.0.0:8080 \
-  -allow-non-loopback-bind -allowed-host localhost
+  -allow-non-loopback-bind -allowed-host zolem.test
 ```
 
 `zolemc` is not included in the image. Run it from the host against the

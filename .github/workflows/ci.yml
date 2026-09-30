@@ -56,7 +56,7 @@ jobs:
         uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
-          args: release --snapshot --clean
+          args: release --snapshot --clean --skip=sign,sbom
 
       - name: Test snapshot image
         run: ./scripts/test-docker-image.sh
