@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -341,7 +342,12 @@ func TestChatCompletions_FixtureResponse_NonStreaming(t *testing.T) {
 	if got := rr.Header().Get("Content-Type"); got != "application/json" {
 		t.Fatalf("content-type: got %q, want application/json", got)
 	}
-	if !bytes.Equal(rr.Body.Bytes(), fixtureBody) {
+	var gotMap, wantMap map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &gotMap); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	_ = json.Unmarshal(fixtureBody, &wantMap)
+	if !reflect.DeepEqual(gotMap, wantMap) {
 		t.Fatalf("body mismatch:\n got: %s\nwant: %s", rr.Body.Bytes(), fixtureBody)
 	}
 

@@ -217,6 +217,11 @@ func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture
 
 	responseModel := runtimecfg.ResponseModelForRequest(ctx, req.Model)
 
+	if !streamRequested(req) {
+		fixture.WriteVerbatim(w, f.Status, body, "model", responseModel)
+		return
+	}
+
 	resp, ok := decodeChatEnvelope(body)
 	if !ok {
 		// Not a chat envelope: serve the rendered bytes verbatim rather than
@@ -227,13 +232,6 @@ func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture
 		return
 	}
 	resp.Model = responseModel
-
-	if !streamRequested(req) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(f.Status)
-		_ = json.NewEncoder(w).Encode(resp)
-		return
-	}
 	streamFixture(ctx, w, resp)
 }
 

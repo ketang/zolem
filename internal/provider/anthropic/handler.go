@@ -201,19 +201,7 @@ func renderFixtureBody(w http.ResponseWriter, ctx context.Context, f *fixture.Fi
 func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture, req MessagesRequest) {
 	responseModel := runtimecfg.ResponseModelForRequest(ctx, req.Model)
 	if !req.Stream {
-		if _, ok := runtimecfg.ListenerRuntimeFromContext(ctx); ok {
-			var msg MessagesResponse
-			if err := json.Unmarshal(f.ResponseBody, &msg); err == nil {
-				msg.Model = responseModel
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(f.Status)
-				_ = json.NewEncoder(w).Encode(msg)
-				return
-			}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(f.Status)
-		w.Write(f.ResponseBody)
+		fixture.WriteVerbatim(w, f.Status, f.ResponseBody, "model", responseModel)
 		return
 	}
 	var msg MessagesResponse
