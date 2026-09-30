@@ -57,6 +57,8 @@ func main() {
 	localRecordStreamEventCap := flag.Int("local-record-stream-event-cap", 1024, "maximum SSE events to record per streamed response; excess is counted but dropped")
 	var allowedHosts stringList
 	flag.Var(&allowedHosts, "allowed-host", "extra Host header value accepted in addition to localhost and loopback IPs (repeatable; any port is ignored); other Hosts get 403 (DNS-rebinding guard). Applies to both modes")
+	allowNonLoopbackBind := flag.Bool("allow-non-loopback-bind", false, "allow binding the wildcard hosts 0.0.0.0 and :: (for containers) in addition to loopback; requires at least one -allowed-host, and in control-plane mode also -listener-port-range. Specific non-loopback IPs stay rejected. Default is loopback-only")
+	listenerPortRange := flag.String("listener-port-range", "", "LOW-HIGH port range (e.g. 18100-18109) that listeners created through the admin API must use; required with -allow-non-loopback-bind in control-plane mode (-local-admin-addr) and invalid in fixed-listener mode. Publish this range with docker -p")
 	flag.Parse()
 
 	if *showVersion {
@@ -64,12 +66,23 @@ func main() {
 		return
 	}
 
+	var bindPolicy runtimecfg.BindPolicy
 	deps := signalAwareStartupDeps(ctx)
+	if *localAdminAddr != "" || *localProvider != "" {
+		// Only resolve when a mode is selected; admin mode wins when both are set.
+		isAdmin := *localAdminAddr != ""
+		policy, err := resolveBindPolicy(*allowNonLoopbackBind, allowedHosts, *listenerPortRange, isAdmin)
+		if err != nil {
+			log.Fatal(err)
+		}
+		bindPolicy = policy
+	}
 	if *localAdminAddr != "" {
 		if err := runLocalAdmin(localAdminOptions{
 			Addr:         *localAdminAddr,
 			FixturesDir:  *localFixturesDir,
 			AllowedHosts: allowedHosts,
+			BindPolicy:   bindPolicy,
 			TLS: localTLSConfig{
 				CertFile: *localTLSCert,
 				KeyFile:  *localTLSKey,
@@ -89,6 +102,7 @@ func main() {
 		})
 		if err := runLocal(localOptions{
 			AllowedHosts:           allowedHosts,
+			BindPolicy:             bindPolicy,
 			Addr:                   *localAddr,
 			Provider:               *localProvider,
 			Profile:                *localProfile,
@@ -156,6 +170,9 @@ Admin control-plane mode (-local-admin-addr) serves the /_zolem admin API so
 profiles and listeners can be created and torn down at runtime with zolemc:
   -local-admin-addr ADDR      loopback listen address for the admin API (selects this mode)
   -local-fixtures-dir DIR     fixtures directory shared by fixture-backend listeners
+  -listener-port-range LOW-HIGH
+                              ports admin-API listeners may use (e.g. 18100-18109); required
+                              with -allow-non-loopback-bind here, invalid in fixed-listener mode
 
 Flags shared by both modes:
   -local-tls-cert FILE        certificate file for admin or fixed-listener TLS
@@ -163,6 +180,8 @@ Flags shared by both modes:
   -allowed-host NAME          extra Host header accepted besides localhost and loopback IPs
                               (repeatable; port ignored). Any other Host gets 403 to block
                               DNS-rebinding; use for an /etc/hosts alias or custom-hostname TLS
+  -allow-non-loopback-bind    also accept the wildcard bind hosts 0.0.0.0 and :: (for containers);
+                              requires at least one -allowed-host. Default is loopback-only
   -version                    print version and exit
 `)
 }

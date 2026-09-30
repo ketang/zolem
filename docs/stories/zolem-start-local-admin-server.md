@@ -17,14 +17,15 @@ A developer can create and reconfigure mock listeners during a test session with
 A developer wants to create and reconfigure multiple mock listeners during a test session without restarting the server. They run zolem with -local-admin-addr to start the admin control plane. From there, clients can create profiles and listeners, switch backends, inspect state, and clean up—all via HTTP calls to the admin API while the server remains running.
 
 ## Expected Behavior
-When -local-admin-addr is set to a loopback address, zolem starts the admin HTTP server and logs the address. The admin API serves GET /_zolem/health (returns {status: ok}), GET /_zolem/profiles, and GET /_zolem/listeners. Profiles and listeners created via the API are held in memory. If -local-admin-addr is a non-loopback address, zolem exits with an error. If neither -local-admin-addr nor -local-provider is set, zolem exits with log.Fatal. If both flags are supplied together, zolem uses admin mode (the -local-admin-addr path) and ignores -local-provider. TLS is optional: both -local-tls-cert and -local-tls-key must be supplied together; supplying only one is a startup error.
+When -local-admin-addr is set to a loopback address, zolem starts the admin HTTP server and logs the address. The admin API serves GET /_zolem/health (returns {status: ok}), GET /_zolem/profiles, and GET /_zolem/listeners. Profiles and listeners created via the API are held in memory. If -local-admin-addr is a non-loopback address, zolem exits with an error unless -allow-non-loopback-bind is set, which additionally accepts 0.0.0.0 and :: but requires at least one -allowed-host and -listener-port-range LOW-HIGH (created listeners must use a port in that range). If neither -local-admin-addr nor -local-provider is set, zolem exits with log.Fatal. If both flags are supplied together, zolem uses admin mode (the -local-admin-addr path) and ignores -local-provider. TLS is optional: both -local-tls-cert and -local-tls-key must be supplied together; supplying only one is a startup error.
 
 ## Boundaries
-Only loopback addresses are accepted for -local-admin-addr. All profiles and listeners are in-memory and are lost on process exit. A single zolem process runs either admin mode or fixed-listener mode; when both -local-admin-addr and -local-provider are supplied, admin mode takes precedence and -local-provider is ignored. TLS requires both cert and key files. If the chosen port is already in use, the OS returns a bind error and zolem exits with a network error.
+Only loopback addresses are accepted for -local-admin-addr unless -allow-non-loopback-bind opts in to the wildcard hosts 0.0.0.0 and :: (specific non-loopback IPs are always rejected). All profiles and listeners are in-memory and are lost on process exit. A single zolem process runs either admin mode or fixed-listener mode; when both -local-admin-addr and -local-provider are supplied, admin mode takes precedence and -local-provider is ignored. TLS requires both cert and key files. If the chosen port is already in use, the OS returns a bind error and zolem exits with a network error.
 
 ## Auditable Claims
 - zolem exits with log.Fatal if neither -local-admin-addr nor -local-provider is set
-- zolem rejects a non-loopback -local-admin-addr with an error
+- zolem rejects a non-loopback -local-admin-addr with an error unless -allow-non-loopback-bind is set
+- -allow-non-loopback-bind requires an -allowed-host and -listener-port-range; listeners outside the range get 400
 - GET /_zolem/health returns {status: ok}
 - GET /_zolem/profiles returns a JSON array of profiles
 - GET /_zolem/listeners returns a JSON array of listeners
@@ -35,6 +36,7 @@ Only loopback addresses are accepted for -local-admin-addr. All profiles and lis
 
 ### Tests
 - `cmd/zolem/local_admin_test.go`
+- `cmd/zolem/non_loopback_bind_e2e_test.go`
 - `cmd/zolem/main_e2e_test.go`
 - `cmd/zolem/tls_listener_e2e_test.go`
 

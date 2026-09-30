@@ -27,6 +27,8 @@ type localAdminOptions struct {
 	// Entries are normalized to bare hostnames on load (any port is stripped),
 	// so "zolem.test:8090" and "zolem.test" are equivalent.
 	AllowedHosts []string
+	// BindPolicy is the address policy; the zero value is loopback-only.
+	BindPolicy runtimecfg.BindPolicy
 }
 
 // localProfilePayload, localListenerPayload, and localListenerView are type
@@ -88,7 +90,7 @@ func runLocalAdmin(opts localAdminOptions, deps startupDeps) error {
 	if addr == "" {
 		addr = "127.0.0.1:8090"
 	}
-	if err := runtimecfg.ValidateLoopbackAddr(addr); err != nil {
+	if err := adminBindPolicy(opts.BindPolicy).ValidateAddr(addr); err != nil {
 		return fmt.Errorf("invalid local admin addr %q: %w", addr, err)
 	}
 	if err := opts.TLS.validate(); err != nil {
@@ -97,6 +99,7 @@ func runLocalAdmin(opts localAdminOptions, deps startupDeps) error {
 
 	control := newLocalControlPlane(opts, deps)
 	defer control.Close()
+	logNonLoopbackBind(deps.logf, opts.BindPolicy, opts.AllowedHosts)
 
 	handler := hostGuard(buildLocalAdminHandler(control), control.allowedHosts)
 	deps.logf("zolem local admin on %s", addr)
@@ -109,7 +112,7 @@ func runLocalAdmin(opts localAdminOptions, deps startupDeps) error {
 func newLocalControlPlane(opts localAdminOptions, deps startupDeps) *localControlPlane {
 	return &localControlPlane{
 		deps:         deps.withDefaults(),
-		store:        runtimecfg.NewStore(),
+		store:        runtimecfg.NewStoreWithBindPolicy(opts.BindPolicy),
 		fixturesDir:  opts.FixturesDir,
 		tls:          opts.TLS,
 		startServer:  startLocalServer,
@@ -198,7 +201,7 @@ func (c *localControlPlane) UpsertListener(name string, payload localListenerPay
 		Profile:  payload.Profile,
 		TLS:      payload.TLS,
 	}
-	if err := runtimecfg.ValidateListenerSpec(spec); err != nil {
+	if err := runtimecfg.ValidateListenerSpecWithPolicy(spec, c.store.BindPolicy()); err != nil {
 		return localListenerView{}, nil, err
 	}
 
@@ -666,5 +669,5 @@ func localBaseURL(spec runtimecfg.ListenerSpec) string {
 	if spec.TLS {
 		scheme = "https"
 	}
-	return scheme + "://" + spec.Addr
+	return scheme + "://" + advertisedAddr(spec.Addr)
 }

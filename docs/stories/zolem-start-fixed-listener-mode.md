@@ -20,12 +20,12 @@ A developer wants to point an AI SDK or test harness at a local mock without wri
 When -local-provider is set to anthropic, gemini, ollama, openai, or typesafe, zolem starts one loopback listener and logs the address. Requests matching the provider's API are validated and synthetic responses returned. If -local-provider is omitted or invalid, zolem exits with a fatal error. If -local-addr is omitted it defaults to 127.0.0.1:8080. If -local-backend is omitted it defaults to lorem. Specifying -local-backend fixture also requires -local-fixtures-dir; omitting it is a startup error. Specifying only one of -local-tls-cert / -local-tls-key (without the other) is a startup error.
 
 ## Boundaries
-Only loopback addresses are accepted; non-loopback addresses are rejected. Only anthropic, gemini, ollama, openai, and typesafe are supported providers. The fixture backend requires -local-fixtures-dir; omitting it while backend=fixture is a startup error. The listener is in-memory and disappears on process exit. TLS requires both cert and key files.
+Only loopback addresses are accepted unless -allow-non-loopback-bind (which requires -allowed-host) also allows 0.0.0.0 and ::; other non-loopback addresses are rejected, and -listener-port-range is invalid in this mode. Only anthropic, gemini, ollama, openai, and typesafe are supported providers. The fixture backend requires -local-fixtures-dir; omitting it while backend=fixture is a startup error. The listener is in-memory and disappears on process exit. TLS requires both cert and key files.
 
 ## Auditable Claims
 - zolem exits with log.Fatal if -local-provider is empty or not one of anthropic/gemini/ollama/openai/typesafe
 - zolem defaults -local-addr to 127.0.0.1:8080 when unset
-- zolem rejects non-loopback -local-addr values (e.g. 0.0.0.0) at startup before listening
+- zolem rejects non-loopback -local-addr values (e.g. 0.0.0.0) at startup before listening, unless -allow-non-loopback-bind and an -allowed-host are given
 - zolem defaults -local-backend to lorem when unset
 - TLS requires both -local-tls-cert and -local-tls-key; supplying only one is an error
 - fixture backend without -local-fixtures-dir returns a startup error
@@ -38,6 +38,7 @@ Only loopback addresses are accepted; non-loopback addresses are rejected. Only 
 - `cmd/zolem/host_guard_e2e_test.go`
 - `cmd/zolem/main_e2e_test.go`
 - `cmd/zolem/startup_local_test.go`
+- `cmd/zolem/non_loopback_bind_e2e_test.go`
 
 ### Surface
 - `cli: zolem -local-provider anthropic -local-addr 127.0.0.1:18080 -local-backend lorem`
