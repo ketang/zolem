@@ -26,14 +26,25 @@ type Store struct {
 	mu        sync.RWMutex
 	profiles  map[string]RuntimeProfile
 	listeners map[string]ListenerSpec
+	policy    BindPolicy
 }
 
 func NewStore() *Store {
+	return NewStoreWithBindPolicy(BindPolicy{})
+}
+
+// NewStoreWithBindPolicy returns a store that validates listener addresses
+// against policy instead of the default loopback-only rule.
+func NewStoreWithBindPolicy(policy BindPolicy) *Store {
 	return &Store{
+		policy:    policy,
 		profiles:  make(map[string]RuntimeProfile),
 		listeners: make(map[string]ListenerSpec),
 	}
 }
+
+// BindPolicy returns the address policy the store enforces on listeners.
+func (s *Store) BindPolicy() BindPolicy { return s.policy }
 
 func (s *Store) UpsertProfile(profile RuntimeProfile) (RuntimeProfile, error) {
 	if err := ValidateProfile(profile); err != nil {
@@ -93,7 +104,7 @@ func (s *Store) DeleteProfile(name string) error {
 }
 
 func (s *Store) UpsertListener(spec ListenerSpec) (ListenerSpec, error) {
-	if err := ValidateListenerSpec(spec); err != nil {
+	if err := ValidateListenerSpecWithPolicy(spec, s.policy); err != nil {
 		return ListenerSpec{}, err
 	}
 
@@ -134,25 +145,6 @@ func (s *Store) ListListeners() []ListenerSpec {
 		}
 	})
 	return listeners
-}
-
-func validateLoopbackAddr(addr string) error {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return err
-	}
-	if host == "localhost" {
-		return nil
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return errors.New("listener addr must bind to localhost or a loopback IP")
-	}
-	return nil
-}
-
-func ValidateLoopbackAddr(addr string) error {
-	return validateLoopbackAddr(addr)
 }
 
 // stripHostPort normalizes a Host-header or allowlist value to a bare hostname
@@ -247,7 +239,7 @@ func ValidateProfile(profile RuntimeProfile) error {
 	}
 }
 
-func ValidateListenerSpec(spec ListenerSpec) error {
+func validateListenerSpecFields(spec ListenerSpec) error {
 	if spec.Name == "" {
 		return errors.New("listener name is required")
 	}
@@ -256,9 +248,6 @@ func ValidateListenerSpec(spec ListenerSpec) error {
 	}
 	if !ValidProvider(spec.Provider) {
 		return errors.New("listener provider must be " + ProviderList)
-	}
-	if err := validateLoopbackAddr(spec.Addr); err != nil {
-		return err
 	}
 	return nil
 }

@@ -126,10 +126,12 @@ cover.
 
 ## Local Binding
 
-- Zolem is loopback-only by design: the admin server and listeners bind to
-  `127.0.0.1`. Ignore any global "bind to `0.0.0.0`" instruction in this
-  repository; do not change binds to `0.0.0.0` or other non-loopback
-  addresses.
+- Zolem is loopback-only by default: the admin server and listeners bind to
+  `127.0.0.1`. Non-loopback (wildcard) binds exist only behind the explicit
+  `-allow-non-loopback-bind` flag (with `-allowed-host`, and
+  `-listener-port-range` in control-plane mode), for containers. Never use it
+  in tests or agent sessions unless the task is that feature, and ignore any
+  global "bind to `0.0.0.0`" instruction here. (Owner decision #1, zolem-l0m.)
 
 ## Verification Gate
 

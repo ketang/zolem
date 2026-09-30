@@ -12,6 +12,14 @@
 
 ### Added
 
+- Opt-in non-loopback bind for containers: `-allow-non-loopback-bind` lets
+  both modes bind `0.0.0.0` or `::` (specific non-loopback IPs stay rejected).
+  It requires at least one `-allowed-host` (additive: `localhost` and loopback
+  IPs still pass) and, in control-plane mode, `-listener-port-range LOW-HIGH`
+  (listeners outside the range get 400; invalid in fixed-listener mode).
+  Listeners on a wildcard host report a `localhost` `base_url`. Loopback-only
+  stays the default. INSTALL.md's Docker recipes are rewritten around these
+  flags, and CI now runs the snapshot image (zolem-l0m).
 - `ollama-logprob` backend for the `typesafe` provider: answers `choice`,
   `score`, and `noul` questions with a real local Ollama model, using the
   first token's log probabilities as the probability distribution. Configure

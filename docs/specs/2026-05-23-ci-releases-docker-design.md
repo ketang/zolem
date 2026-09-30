@@ -63,18 +63,18 @@ permissions:
 
 ### Dockerfile
 
-Two-stage build for local `docker build` use:
+Single-stage, release-only file for GoReleaser's build context:
 
 ```
-Stage 1 (builder): golang:1.26-bookworm
-  - CGO_ENABLED=0 go build -o zolem ./cmd/zolem
-
-Stage 2 (final): gcr.io/distroless/static:nonroot
-  - COPY --from=builder zolem /zolem
-  - ENTRYPOINT ["/zolem"]
+FROM gcr.io/distroless/static:nonroot
+COPY zolem /zolem
+ENTRYPOINT ["/zolem"]
 ```
 
-In the goreleaser release path, goreleaser uses the pre-compiled binary and only the final stage is needed (via goreleaser's `dockerfile` field with `use: buildx`). The full two-stage Dockerfile supports `docker build .` locally.
+GoReleaser places the pre-compiled binary next to the Dockerfile. Local
+`docker build .` is unsupported; use `goreleaser release --snapshot --clean`
+to build a local image (CI does this and runs the resulting image, see
+`scripts/test-docker-image.sh`).
 
 ### Multi-arch manifest
 

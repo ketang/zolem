@@ -136,7 +136,7 @@ streaming completed.
 
 Current local runtime limitations:
 
-- local-only, loopback addresses only
+- local-only, loopback addresses only by default; containers can opt in to wildcard binds (`0.0.0.0`, `::`) with `-allow-non-loopback-bind`, which requires `-allowed-host` and, in control-plane mode, `-listener-port-range` (see [INSTALL.md](INSTALL.md))
 - in-memory only; profiles and listeners disappear on restart
 - no auth or TTLs yet
 - currently supported local runtime backends: `lorem`, `faker`, `fixture`, `ollama`, `ollama-logprob` (typesafe only), `wasm`, `error`

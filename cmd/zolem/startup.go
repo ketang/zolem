@@ -85,6 +85,8 @@ type localOptions struct {
 	// AllowedHosts are extra Host-header values accepted in addition to
 	// loopback literals and "localhost".
 	AllowedHosts []string
+	// BindPolicy is the address policy; the zero value is loopback-only.
+	BindPolicy runtimecfg.BindPolicy
 }
 
 // scanFetcher is a no-op specFetcher for scan/test startup deps. Every lookup
@@ -184,6 +186,7 @@ func runLocal(opts localOptions, deps startupDeps) error {
 		deps.logf("warn: %s", warning)
 	}
 
+	logNonLoopbackBind(deps.logf, opts.BindPolicy, opts.AllowedHosts)
 	handler := hostGuard(app.handler, runtimecfg.NormalizeAllowedHosts(opts.AllowedHosts))
 	deps.logf("zolem local listener on %s for %s/%s", listenerRuntime.Spec.Addr, listenerRuntime.Spec.Provider, listenerRuntime.Spec.Profile)
 	if opts.TLS.enabled() {
@@ -490,7 +493,7 @@ func (o localOptions) runtime() (runtimecfg.ListenerRuntime, error) {
 	if addr == "" {
 		addr = "127.0.0.1:8080"
 	}
-	if err := runtimecfg.ValidateLoopbackAddr(addr); err != nil {
+	if err := o.BindPolicy.ValidateAddr(addr); err != nil {
 		return runtimecfg.ListenerRuntime{}, fmt.Errorf("invalid local addr %q: %w", addr, err)
 	}
 	profile := o.Profile
