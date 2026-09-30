@@ -81,6 +81,9 @@ func startProviderService(t *testing.T, provider string, backendArgs ...string) 
 		readinessPath = "/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse"
 		readinessBody = `{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`
 		readinessHeaders = []string{"x-goog-api-key: test-key"}
+	case "ollama":
+		readinessPath = "/api/chat"
+		readinessBody = `{"model":"llama3.2","stream":false,"messages":[{"role":"user","content":"hello"}]}`
 	default:
 		t.Fatalf("unsupported provider %q", provider)
 	}

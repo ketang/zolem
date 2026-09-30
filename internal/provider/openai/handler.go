@@ -180,19 +180,7 @@ func renderFixtureBodyBytes(ctx context.Context, f *fixture.Fixture) ([]byte, er
 func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture, req ChatCompletionRequest) {
 	responseModel := runtimecfg.ResponseModelForRequest(ctx, req.Model)
 	if !req.Stream {
-		if _, ok := runtimecfg.ListenerRuntimeFromContext(ctx); ok {
-			var resp ChatCompletionResponse
-			if err := json.Unmarshal(f.ResponseBody, &resp); err == nil {
-				resp.Model = responseModel
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(f.Status)
-				_ = json.NewEncoder(w).Encode(resp)
-				return
-			}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(f.Status)
-		w.Write(f.ResponseBody)
+		fixture.WriteVerbatim(w, f.Status, f.ResponseBody, "model", responseModel)
 		return
 	}
 	var resp ChatCompletionResponse

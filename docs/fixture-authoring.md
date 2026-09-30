@@ -103,6 +103,22 @@ Each step directory uses `meta.yaml` with `version: v1-responses`; its
 
 Zolem sends each array element as one WebSocket text frame.
 
+## Response Body Fidelity
+
+Non-streamed fixture responses are served verbatim: the rendered `response.json`
+bytes go out with the fixture's `status` and `Content-Type: application/json`.
+Fields zolem's own response types do not model (Anthropic `thinking` blocks and
+`cache_*_input_tokens`, OpenAI `system_fingerprint`/`logprobs`/`refusal`, Gemini
+`safetyRatings`/`responseId`, extra Ollama keys) are preserved, and error
+fixtures keep their provider-native error envelope.
+
+The one exception is the model key (`model` for OpenAI, Anthropic, and Ollama;
+`modelVersion` for Gemini). When the status is 2xx and the body is a JSON object
+that already contains that key, its value is replaced according to
+`response_model_policy`. Other keys are kept, though the body is re-encoded, so
+key order may change. Non-2xx bodies, bodies without the model key, and
+non-object bodies are never modified. Streamed fixtures are a separate path.
+
 ## TypeSafe
 
 Use `provider: typesafe` and `version: v1` in `fixtures.yaml`. A fixture's

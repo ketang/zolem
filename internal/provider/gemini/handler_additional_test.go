@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -388,7 +389,7 @@ func TestGenerateContent_V1BetaRoutingUsesVersion(t *testing.T) {
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)
 
-	fixtureBody := fixtureGenerateContentBody(t, "beta fixture", 9, "fixture-beta")
+	fixtureBody := fixtureGenerateContentBody(t, "beta fixture", 9, "gemini-2.0-flash")
 	fixtures := []fixture.Fixture{
 		compileGeminiFixture(t, runner, "beta-route", "v1beta", http.StatusCreated, fixtureBody, 0),
 	}
@@ -408,7 +409,12 @@ func TestGenerateContent_V1BetaRoutingUsesVersion(t *testing.T) {
 	if got := rr.Header().Get("Content-Type"); got != "application/json" {
 		t.Fatalf("content-type: got %q, want application/json", got)
 	}
-	if rr.Body.String() != string(fixtureBody) {
+	var gotMap, wantMap map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &gotMap); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	_ = json.Unmarshal(fixtureBody, &wantMap)
+	if !reflect.DeepEqual(gotMap, wantMap) {
 		t.Fatalf("body mismatch:\ngot  %s\nwant %s", rr.Body.String(), string(fixtureBody))
 	}
 }
@@ -441,8 +447,10 @@ func TestGenerateContent_FixtureResponse(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.ModelVersion != "fixture-model" {
-		t.Fatalf("modelVersion: got %q, want fixture-model", resp.ModelVersion)
+	// 2xx fixtures get modelVersion patched to the reported model (the
+	// request's model under the default policy).
+	if resp.ModelVersion != "gemini-2.0-flash" {
+		t.Fatalf("modelVersion: got %q, want gemini-2.0-flash", resp.ModelVersion)
 	}
 	if len(resp.Candidates) != 1 {
 		t.Fatalf("candidates: got %d, want 1", len(resp.Candidates))
