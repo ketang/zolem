@@ -13,6 +13,7 @@ func TestPatchModel(t *testing.T) {
 		want   string
 	}{
 		{"2xx patched, keys kept", 200, `{"model":"x","extra":{"a":1}}`, `{"extra":{"a":1},"model":"m"}`},
+		{"html chars not escaped", 200, `{"model":"x","t":"a<b> & c"}`, `{"model":"m","t":"a<b> & c"}`},
 		{"non-2xx untouched", 429, `{"model":"x"}`, `{"model":"x"}`},
 		{"no model key untouched", 200, `{"id":"x"}`, `{"id":"x"}`},
 		{"array untouched", 200, `[1,2]`, `[1,2]`},

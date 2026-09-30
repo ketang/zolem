@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 )
 
@@ -113,7 +114,7 @@ func writeVerbatimNamespace(t *testing.T, c verbatimCase, extra map[string]verba
 	for id, f := range fixtures {
 		dir := filepath.Join(root, id)
 		mustMkdir(t, dir)
-		meta := "id: " + id + "\nprovider: " + c.provider + "\nversion: " + c.version + "\nstatus: " + itoa(f.status) + "\n"
+		meta := "id: " + id + "\nprovider: " + c.provider + "\nversion: " + c.version + "\nstatus: " + strconv.Itoa(f.status) + "\n"
 		if err := os.WriteFile(filepath.Join(dir, "meta.yaml"), []byte(meta), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -133,11 +134,6 @@ func writeVerbatimNamespace(t *testing.T, c verbatimCase, extra map[string]verba
 type verbatimFixture struct {
 	status int
 	body   string
-}
-
-func itoa(n int) string {
-	b, _ := json.Marshal(n)
-	return string(b)
 }
 
 func jsonMap(t *testing.T, raw []byte) map[string]any {
@@ -161,7 +157,7 @@ func TestE2E_FixtureBodiesServedVerbatim(t *testing.T) {
 				if resp.StatusCode != c.errStatus {
 					t.Fatalf("status: got %d, want %d: %s", resp.StatusCode, c.errStatus, body)
 				}
-				if !reflect.DeepEqual(jsonMap(t, body), jsonMap(t, []byte(c.errBody))) {
+				if !bytes.Equal(bytes.TrimSpace(body), []byte(c.errBody)) {
 					t.Fatalf("error body altered:\n got: %s\nwant: %s", body, c.errBody)
 				}
 			})
@@ -196,19 +192,6 @@ func TestE2E_FixtureBodiesServedVerbatim(t *testing.T) {
 		}
 		if !bytes.Equal(bytes.TrimSpace(body), []byte(noModel)) {
 			t.Fatalf("body not byte-equal:\n got: %s\nwant: %s", body, noModel)
-		}
-	})
-
-	t.Run("ollama_error_verbatim", func(t *testing.T) {
-		c := verbatimCases()[3]
-		dir := writeVerbatimNamespace(t, c, nil)
-		svc := startProviderService(t, "ollama", "-local-backend", "fixture", "-local-fixtures-dir", dir)
-		resp, body := doRequest(t, svc.baseURL, http.MethodPost, c.path, c.requestBody("ratelimit"), "Content-Type: application/json")
-		if resp.StatusCode != 429 {
-			t.Fatalf("status %d: %s", resp.StatusCode, body)
-		}
-		if !bytes.Equal(bytes.TrimSpace(body), []byte(c.errBody)) {
-			t.Fatalf("body: got %s want %s", body, c.errBody)
 		}
 	})
 }

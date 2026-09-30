@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed
+
+- Non-streamed fixtures are served verbatim in every provider; only the
+  provider's model key is replaced, and only on 2xx bodies that already have
+  it, so error envelopes and unmodeled fields survive. Ollama non-streamed
+  fixtures no longer get `model` injected when the fixture lacks the key
+  (zolem-8ra).
+
 ### Added
 
 - `ollama-logprob` backend for the `typesafe` provider: answers `choice`,

@@ -1,6 +1,7 @@
 package fixture
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 )
@@ -30,14 +31,18 @@ func PatchModel(status int, body []byte, modelKey, model string) []byte {
 	if _, ok := obj[modelKey]; !ok {
 		return body
 	}
-	raw, err := json.Marshal(model)
-	if err != nil {
+	var mb bytes.Buffer
+	menc := json.NewEncoder(&mb)
+	menc.SetEscapeHTML(false)
+	if err := menc.Encode(model); err != nil {
 		return body
 	}
-	obj[modelKey] = raw
-	out, err := json.Marshal(obj)
-	if err != nil {
+	obj[modelKey] = bytes.TrimSuffix(mb.Bytes(), []byte("\n"))
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(obj); err != nil {
 		return body
 	}
-	return out
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
 }
