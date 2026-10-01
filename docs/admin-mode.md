@@ -649,6 +649,34 @@ For Gemini specifically:
 If you need a guaranteed function call from the local runtime, send
 `mode = "ANY"`.
 
+### Synthesized arguments
+
+The arguments of a synthesized call are generated deterministically from the
+tool's schema and then verified against it (JSON Schema validation with format
+assertions; nothing is loaded from disk or network). For OpenAI and Anthropic
+the schema is the tool's JSON Schema; for Gemini it is `parameters` (Gemini's
+upper-case OpenAPI subset, normalized first: lower-cased types, `nullable`) or,
+when `parameters` is absent, `parametersJsonSchema`.
+
+Supported subset (output validates when a valid value exists within the
+limits below): `type` (including type arrays and `null`), `const`, `enum`,
+`default`, `properties`/`required`, in-document `$ref` into `$defs`/`definitions`
+(depth 8), string `minLength`/`maxLength` and `format` (`email`, `date-time`,
+`date`, `uri`, `uuid`), numeric `minimum`/`maximum`/`exclusiveMinimum`/
+`exclusiveMaximum`, array `items`/`minItems`/`maxItems`, `anyOf`, `oneOf`, and
+`allOf` of object schemas (same-type primitive overlaps merge bounds and
+intersect enums). Required properties are always generated; optional ones (all
+properties when `required` is absent) are omitted when no valid value is found.
+
+Anything else (`pattern`, `not`, `if/then/else`, `patternProperties`,
+`dependentRequired`, non-object `allOf`, ...) is ignored when generating, so the
+result may not validate. Limits: schemas over 64 KiB or 2,000 objects, external
+`$ref`s, and non-standard `$schema` values skip verification and use a simple
+type-based fallback (`"lorem ipsum"`, `42`, `true`, `[]`); output is capped at
+64 KiB. When the result still does not satisfy the schema it is returned
+anyway and a `warn: synthesized tool arguments do not satisfy schema for tool`
+line is logged once per tool name.
+
 ## Response Model Policy
 
 Local runtime listeners can shape the provider-visible `model` field without
