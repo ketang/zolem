@@ -153,28 +153,31 @@ func normalizeSchemaRef(ref *openapi3.SchemaRef) (map[string]any, error) {
 	if schema.Required != nil {
 		result["required"] = schema.Required
 	}
-	if schema.Min != nil {
-		result["minimum"] = *schema.Min
-	}
-	if schema.Max != nil {
-		result["maximum"] = *schema.Max
-	}
-	// ExclusiveMin/ExclusiveMax changed from bool to openapi3.ExclusiveBound in
-	// kin-openapi v0.144 to support OpenAPI 3.1's numeric exclusiveMinimum/
-	// exclusiveMaximum (JSON Schema 2020-12), while OpenAPI 3.0 still expresses
-	// them as a boolean modifier on minimum/maximum (JSON Schema draft-04
-	// style). Preserve the boolean behavior as before and additionally pass
-	// through the 3.1 numeric bound when present, matching kin-openapi's own
-	// validator's interpretation of each style.
+	// kin-openapi's ExclusiveBound holds either a numeric Value (OpenAPI 3.1 /
+	// JSON Schema 2020-12) or a Bool modifier on minimum/maximum (OpenAPI 3.0,
+	// draft-04 style). The 2020-12 validator requires numeric
+	// exclusiveMinimum/exclusiveMaximum, so a true boolean is folded into the
+	// numeric form: minimum:N + exclusiveMinimum:true -> exclusiveMinimum:N.
+	// A boolean with no corresponding bound constrains nothing and is dropped.
 	if eb := schema.ExclusiveMin; eb.Value != nil {
 		result["exclusiveMinimum"] = *eb.Value
-	} else if eb.IsTrue() {
-		result["exclusiveMinimum"] = true
+		if schema.Min != nil {
+			result["minimum"] = *schema.Min
+		}
+	} else if eb.IsTrue() && schema.Min != nil {
+		result["exclusiveMinimum"] = *schema.Min
+	} else if schema.Min != nil {
+		result["minimum"] = *schema.Min
 	}
 	if eb := schema.ExclusiveMax; eb.Value != nil {
 		result["exclusiveMaximum"] = *eb.Value
-	} else if eb.IsTrue() {
-		result["exclusiveMaximum"] = true
+		if schema.Max != nil {
+			result["maximum"] = *schema.Max
+		}
+	} else if eb.IsTrue() && schema.Max != nil {
+		result["exclusiveMaximum"] = *schema.Max
+	} else if schema.Max != nil {
+		result["maximum"] = *schema.Max
 	}
 	if schema.MultipleOf != nil {
 		result["multipleOf"] = *schema.MultipleOf
