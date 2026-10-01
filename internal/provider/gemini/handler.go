@@ -184,7 +184,7 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 }
 
 func serveGeminiFunctionCallResponse(ctx context.Context, w http.ResponseWriter, req GenerateContentRequest, fd *FunctionDeclaration, model string, promptTokens int, stream bool) {
-	args := backend.SynthArgs(fd.Parameters)
+	args := backend.SynthArgsForTool(fd.Name, fd.argsSchema())
 	fc := FunctionCall{Name: fd.Name, Args: json.RawMessage(args)}
 	if stream {
 		streamFunctionCallContent(ctx, w, fc, model, promptTokens)

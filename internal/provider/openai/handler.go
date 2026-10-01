@@ -211,7 +211,7 @@ func labelsFromContext(_ context.Context) map[string]string {
 }
 
 func serveToolCallResponse(ctx context.Context, w http.ResponseWriter, req ChatCompletionRequest, tool *Tool, model string, promptTokens int) {
-	args := backend.SynthArgs(tool.Function.Parameters)
+	args := backend.SynthArgsForTool(tool.Function.Name, tool.Function.Parameters)
 	tc := ToolCall{
 		ID:   newToolCallID(),
 		Type: "function",
