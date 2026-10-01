@@ -85,6 +85,8 @@ func (h *Handler) responseCreateEvents(ctx context.Context, payload []byte) ([]j
 		}
 		matched, err := h.matcher.Match(ctx, matchReq)
 		if err != nil {
+			// Exhaustion keeps its own message; any other selector failure
+			// is prefixed so it is distinguishable from fixture render errors.
 			var ee *fixture.ExhaustError
 			if errors.As(err, &ee) {
 				return nil, err

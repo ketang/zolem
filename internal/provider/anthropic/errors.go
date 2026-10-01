@@ -3,10 +3,8 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 
-	"github.com/ketang/zolem/internal/fixture"
 	runtimecfg "github.com/ketang/zolem/internal/runtime"
 	"github.com/ketang/zolem/internal/zolemerr"
 )
@@ -89,21 +87,11 @@ func writeForcedProfileError(ctx context.Context, w http.ResponseWriter) bool {
 	return true
 }
 
-// writeFixtureExhausted serves the provider's server-error envelope (HTTP 500)
-// for an exhausted on_exhaust: error sequence, tagged X-Zolem-Error: true.
-func writeFixtureExhausted(w http.ResponseWriter, err error) {
-	w.Header().Set("X-Zolem-Error", "true")
-	writeErrorWithRequestID(w, http.StatusInternalServerError, "api_error", err.Error(), "req_zolem_fixture_exhausted")
-}
-
-// writeFixtureSelectionError reports a fixture selection failure: an exhausted
-// on_exhaust: error sequence becomes a provider-native 500, any other selector
-// error (e.g. a failing selector.wasm) becomes a zolem infrastructure error.
+// writeFixtureSelectionError reports a fixture selection failure; see
+// zolemerr.WriteFixtureSelectionError. This provider supplies only its native
+// HTTP 500 envelope for an exhausted on_exhaust: error sequence.
 func writeFixtureSelectionError(w http.ResponseWriter, err error) {
-	var ee *fixture.ExhaustError
-	if errors.As(err, &ee) {
-		writeFixtureExhausted(w, ee)
-		return
-	}
-	zolemerr.Write(w, "fixture selection failed: "+err.Error())
+	zolemerr.WriteFixtureSelectionError(w, err, func(w http.ResponseWriter, msg string) {
+		writeErrorWithRequestID(w, http.StatusInternalServerError, "api_error", msg, "req_zolem_fixture_exhausted")
+	})
 }

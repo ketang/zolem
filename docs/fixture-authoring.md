@@ -79,7 +79,8 @@ If an expression raises a CEL runtime error (for example
 counts as "no match" and evaluation continues with the next entry, so a later
 `true` catch-all still applies. The error is logged once per entry as
 `warn: fixtures.yaml namespace "<ns>" entry <n> (<label>): <error>`, where `<n>`
-is the 0-based entry index.
+is the 0-based entry index. Each failing entry is logged once per selector
+load, not once per request.
 
 ## Sequences
 
