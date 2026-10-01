@@ -321,11 +321,48 @@ func TestNormalizeSchemaRefCoversOpenAPIKeywords(t *testing.T) {
 	if len(nameType) != 2 || nameType[0] != "string" || nameType[1] != "null" {
 		t.Fatalf("nullable property type = %#v", nameType)
 	}
-	if got["exclusiveMinimum"] != true {
-		t.Fatalf("exclusiveMinimum (3.0 boolean style) = %#v, want true", got["exclusiveMinimum"])
+	// OpenAPI 3.0 boolean style is folded into the 2020-12 numeric form.
+	if got["exclusiveMinimum"] != min {
+		t.Fatalf("exclusiveMinimum = %#v, want %v", got["exclusiveMinimum"], min)
 	}
-	if got["exclusiveMaximum"] != true {
-		t.Fatalf("exclusiveMaximum (3.0 boolean style) = %#v, want true", got["exclusiveMaximum"])
+	if got["exclusiveMaximum"] != max {
+		t.Fatalf("exclusiveMaximum = %#v, want %v", got["exclusiveMaximum"], max)
+	}
+	if _, ok := got["minimum"]; ok {
+		t.Fatalf("minimum should be folded into exclusiveMinimum: %#v", got)
+	}
+	if _, ok := got["maximum"]; ok {
+		t.Fatalf("maximum should be folded into exclusiveMaximum: %#v", got)
+	}
+}
+
+// TestNormalizeSchemaRefBooleanExclusiveCompiles is the regression for
+// zolem-bfqe: an OpenAPI 3.0 minimum + exclusiveMinimum:true schema must
+// normalize to something the 2020-12 validator compiles and enforces.
+func TestNormalizeSchemaRefBooleanExclusiveCompiles(t *testing.T) {
+	raw := []byte(`{"openapi":"3.0.3","info":{"title":"t","version":"1"},"paths":{},
+"components":{"schemas":{"N":{"type":"number","minimum":1,"exclusiveMinimum":true,"maximum":5,"exclusiveMaximum":true}}}}`)
+	doc, err := openapi3.NewLoader().LoadFromData(raw)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	got, err := normalizeSchemaRef(doc.Components.Schemas["N"])
+	if err != nil {
+		t.Fatalf("normalizeSchemaRef: %v", err)
+	}
+	data, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := NewValidator()
+	if err := v.LoadRaw("p", "v", data); err != nil {
+		t.Fatalf("LoadRaw(%s): %v", data, err)
+	}
+	for body, wantOK := range map[string]bool{"0.5": false, "1": false, "3": true, "5": false, "6": false} {
+		err := v.Validate("p", "v", []byte(body))
+		if (err == nil) != wantOK {
+			t.Fatalf("Validate(%s) err = %v, wantOK %v", body, err, wantOK)
+		}
 	}
 }
 
