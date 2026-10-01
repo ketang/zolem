@@ -54,6 +54,25 @@ out-of-range value (including any 1xx code) at load time, naming the fixture
 and its `meta.yaml` path in the error. Omitting `status` (or setting it to
 `0`) defaults to `200`.
 
+Two more optional `meta.yaml` fields:
+
+- `stream` (bool) is exposed to templates as `.Fixture.Stream`.
+- `tags` (map of string to string) is passed to a namespace-level
+  `selector.wasm` as each candidate fixture's `tags`; nothing else reads it.
+
+A `sequence` entry in `fixtures.yaml` takes `on_exhaust`, which decides what
+happens once every step has been served. Omitted, it defaults to `last`:
+
+- `last` keeps returning the final step indefinitely.
+- `cycle` wraps back to the first step.
+- `fallthrough` stops matching this entry, so later `fixtures.yaml` entries are
+  evaluated.
+- `error` is intended to return a provider-native error once the sequence is
+  exhausted. Current behavior: the selection error is swallowed and the entry
+  acts like `fallthrough`. The fix is tracked in zolem-yma (stop swallowing
+  fixture selection errors); this section will describe the intended behavior
+  once that lands.
+
 CEL is the recommended expression language for common request predicates.
 Each expression must evaluate to a boolean; `fixtures.yaml` entries are
 evaluated in declared order and the first entry whose expression returns `true`
@@ -73,6 +92,34 @@ body["model"] == "gpt-4o-mini" &&
 labels["tenant"] == "acme" &&
 body["messages"][0]["content"] == "refund"
 ```
+
+If an expression raises a CEL runtime error (for example
+`body["metadata"]["tenant"]` when the request has no `metadata`), that entry
+counts as "no match" and evaluation continues with the next entry, so a later
+`true` catch-all still applies. The error is logged once per entry as
+`warn: fixtures.yaml namespace "<ns>" entry <n> (<label>): <error>`, where `<n>`
+is the 0-based entry index. Each failing entry is logged once per selector
+load, not once per request.
+
+## Sequences
+
+A `sequence` entry steps through its `steps` fixtures, one per matching
+request. `on_exhaust` decides what happens once the last step has been served:
+
+- `last` (default): keep serving the final step.
+- `cycle`: wrap around to the first step.
+- `error`: respond with a provider-native server error (HTTP 500, plus
+  `X-Zolem-Error: true`) with the message
+  `fixture sequence "<id>" in namespace "<ns>" exhausted`. On the Responses
+  WebSocket this is a single `response.failed` event with the same message and
+  `error.type` of `server_error`.
+- `fallthrough`: skip this entry and continue with later entries.
+
+Other selector failures (for example a trapping namespace `selector.wasm`) are
+never turned into generated text: HTTP requests get a 502 with
+`X-Zolem-Error: true`, and the Responses WebSocket gets one `response.failed`
+event whose message starts with `fixture selection failed:` while the
+connection stays open.
 
 ## WebSocket Responses Fixtures
 

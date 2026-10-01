@@ -250,7 +250,10 @@ Example response:
   "provider": "openai",
   "profile": "demo",
   "backend": "lorem",
-  "base_url": "http://127.0.0.1:19001"
+  "base_url": "http://127.0.0.1:19001",
+  "record_request_body_cap_bytes": 262144,
+  "record_response_body_cap_bytes": 262144,
+  "record_stream_event_cap": 1024
 }
 ```
 
@@ -486,7 +489,7 @@ Constraints:
 
 - modules must be binary WASM encoded as base64; WAT text is not accepted
 - modules must not import anything, including WASI or `env`
-- the exported surface must be exactly the required ABI exports above
+- the exported surface must be the required ABI exports above, plus only accepted linker boundary globals such as `__data_end` and `__heap_base` (see [wasm-modules.md](wasm-modules.md))
 - Zolem compiles the module at profile write/listener setup time and creates a fresh WASM instance per request
 - each instance has a fixed 16 MiB host memory limit
 - result bytes are capped at 1 MiB

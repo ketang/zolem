@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,6 +115,100 @@ func TestOpenAIResponsesWebSocket_E2E(t *testing.T) {
 		}
 		if lastEventType(events) != "response.completed" {
 			t.Fatalf("websocket fallback did not complete: %#v", events)
+		}
+	})
+}
+
+func readUntilResponseFailed(t *testing.T, conn *websocket.Conn) []map[string]any {
+	t.Helper()
+	var events []map[string]any
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	for {
+		_, payload, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("read websocket message: %v", err)
+		}
+		var event map[string]any
+		if err := json.Unmarshal(payload, &event); err != nil {
+			t.Fatalf("unmarshal websocket event: %v\n%s", err, payload)
+		}
+		events = append(events, event)
+		if event["type"] == "response.failed" {
+			return events
+		}
+	}
+}
+
+func failedEventError(t *testing.T, events []map[string]any) map[string]any {
+	t.Helper()
+	if len(events) != 1 || events[0]["type"] != "response.failed" {
+		t.Fatalf("want exactly one response.failed event, got %#v", events)
+	}
+	resp, _ := events[0]["response"].(map[string]any)
+	e, _ := resp["error"].(map[string]any)
+	if e == nil || e["type"] != "server_error" {
+		t.Fatalf("response.error missing or wrong type: %#v", events[0])
+	}
+	return e
+}
+
+func TestOpenAIResponsesWebSocket_FixtureSelectionErrors_E2E(t *testing.T) {
+	repoRoot := repoRoot(t)
+
+	t.Run("on_exhaust_error", func(t *testing.T) {
+		fixturesDir := t.TempDir()
+		writeResponsesWSFixture(t, fixturesDir, "turn-one", "resp_one", "turn-one")
+		yaml := `provider: openai
+version: v1-responses
+fixtures:
+  - expression: 'true'
+    sequence:
+      id: conversation
+      on_exhaust: error
+      steps: [turn-one]
+`
+		if err := os.WriteFile(filepath.Join(fixturesDir, "fixtures.yaml"), []byte(yaml), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		admin := startLocalAdminServiceWithFixtures(t, repoRoot, fixturesDir)
+		t.Cleanup(admin.Close)
+		base := createRuntimeListener(t, admin, "openai", map[string]any{"backend": "fixture"})
+
+		conn := dialResponsesWS(t, base)
+		defer conn.Close()
+		writeResponseCreate(t, conn, nil)
+		if got := completedResponseID(readUntilResponseCompleted(t, conn)); got != "resp_one" {
+			t.Fatalf("first turn id: got %q, want resp_one", got)
+		}
+		writeResponseCreate(t, conn, nil)
+		e := failedEventError(t, readUntilResponseFailed(t, conn))
+		want := `fixture sequence "conversation" in namespace "openai:v1-responses" exhausted`
+		if e["message"] != want {
+			t.Fatalf("message: got %v, want %q", e["message"], want)
+		}
+	})
+
+	t.Run("selector_wasm_trap_keeps_connection_open", func(t *testing.T) {
+		fixturesDir := t.TempDir()
+		writeResponsesWSFixture(t, fixturesDir, "turn-one", "resp_one", "turn-one")
+		if err := os.WriteFile(filepath.Join(fixturesDir, "selector.wasm"), trapSelectorWASM, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		admin := startLocalAdminServiceWithFixtures(t, repoRoot, fixturesDir)
+		t.Cleanup(admin.Close)
+		base := createRuntimeListener(t, admin, "openai", map[string]any{"backend": "fixture"})
+
+		conn := dialResponsesWS(t, base)
+		defer conn.Close()
+		for i := 0; i < 2; i++ {
+			writeResponseCreate(t, conn, nil)
+			e := failedEventError(t, readUntilResponseFailed(t, conn))
+			msg, _ := e["message"].(string)
+			if !strings.HasPrefix(msg, "fixture selection failed:") {
+				t.Fatalf("frame %d: message %q lacks %q prefix", i, msg, "fixture selection failed:")
+			}
 		}
 	})
 }

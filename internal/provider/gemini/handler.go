@@ -123,7 +123,11 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 			Labels: labelsFromContext(r.Context()),
 			Body:   json.RawMessage(body),
 		}
-		matched, _ := h.matcher.Match(r.Context(), matchReq)
+		matched, err := h.matcher.Match(r.Context(), matchReq)
+		if err != nil {
+			writeFixtureSelectionError(w, err)
+			return
+		}
 		if matched != nil {
 			rendered, ok := renderFixtureBody(w, r.Context(), matched)
 			if !ok {

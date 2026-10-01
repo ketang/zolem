@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	runtimecfg "github.com/ketang/zolem/internal/runtime"
+	"github.com/ketang/zolem/internal/zolemerr"
 )
 
 type errorEnvelope struct {
@@ -120,4 +121,13 @@ func writeForcedProfileError(ctx context.Context, w http.ResponseWriter) bool {
 		writeServerError(w)
 	}
 	return true
+}
+
+// writeFixtureSelectionError reports a fixture selection failure; see
+// zolemerr.WriteFixtureSelectionError. This provider supplies only its native
+// HTTP 500 envelope for an exhausted on_exhaust: error sequence.
+func writeFixtureSelectionError(w http.ResponseWriter, err error) {
+	zolemerr.WriteFixtureSelectionError(w, err, func(w http.ResponseWriter, msg string) {
+		writeDetailedError(w, http.StatusInternalServerError, "INTERNAL", msg, nil)
+	})
 }

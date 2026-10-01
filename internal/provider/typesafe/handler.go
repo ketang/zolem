@@ -118,7 +118,7 @@ func (h *Handler) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 		}
 		matched, err := h.matcher.Match(r.Context(), matchReq)
 		if err != nil {
-			writeBackendError(w, fmt.Errorf("fixture match failed: %w", err))
+			writeFixtureSelectionError(w, err)
 			return
 		}
 		if matched != nil {
