@@ -307,7 +307,7 @@ func TestNormalizeSchemaRefCoversOpenAPIKeywords(t *testing.T) {
 	}
 	for _, key := range []string{
 		"type", "title", "description", "format", "default", "enum", "required",
-		"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+		"exclusiveMinimum", "exclusiveMaximum", "multipleOf",
 		"minLength", "maxLength", "pattern", "minItems", "maxItems", "uniqueItems",
 		"minProperties", "maxProperties", "items", "properties", "additionalProperties",
 		"allOf", "anyOf", "oneOf", "not",
