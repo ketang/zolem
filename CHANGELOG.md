@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Ollama upstream IP policy is now one shared classifier for profile
+  validation and dialing: `0.0.0.0/8`, `::`, multicast, zoned, Teredo, and
+  NAT64/6to4/IPv4-compatible forms embedding blocked addresses are rejected at
+  profile creation even with `allow_external_ollama_upstream` (zolem-gbpq).
 - Non-streamed fixtures are served verbatim in every provider; only the
   provider's model key is replaced, and only on 2xx bodies that already have
   it, so error envelopes and unmodeled fields survive. Ollama non-streamed

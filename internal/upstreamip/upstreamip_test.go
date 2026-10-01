@@ -42,6 +42,18 @@ func TestClassify(t *testing.T) {
 		{"::a9fe:a9fe", Blocked},
 		{"::808:808", Public},
 		{"::a00:1", Private},
+		// 6to4 (2002::/16) embeds the IPv4 address in bits 16-47.
+		{"2002:a9fe:a9fe::", Blocked},
+		{"2002:7f00:1::1", Private},
+		{"2002:808:808::1", Public},
+		// NAT64 local-use and Teredo are blocked outright.
+		{"64:ff9b:1::1", Blocked},
+		{"64:ff9b:1:ffff::1", Blocked},
+		{"2001::1", Blocked},
+		{"2001:0:4136:e378:8000:63bf:3fff:fdd2", Blocked},
+		// Zoned literals are refused.
+		{"::1%eth0", Blocked},
+		{"fd00::1%eth0", Blocked},
 	}
 	for _, tt := range tests {
 		t.Run(tt.addr, func(t *testing.T) {
@@ -49,5 +61,12 @@ func TestClassify(t *testing.T) {
 				t.Fatalf("Classify(%s) = %v, want %v", tt.addr, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestZeroClassFailsClosed(t *testing.T) {
+	var c Class
+	if c != Blocked {
+		t.Fatalf("zero Class = %v, want Blocked", c)
 	}
 }
