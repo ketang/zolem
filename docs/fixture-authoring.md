@@ -74,6 +74,33 @@ labels["tenant"] == "acme" &&
 body["messages"][0]["content"] == "refund"
 ```
 
+If an expression raises a CEL runtime error (for example
+`body["metadata"]["tenant"]` when the request has no `metadata`), that entry
+counts as "no match" and evaluation continues with the next entry, so a later
+`true` catch-all still applies. The error is logged once per entry as
+`warn: fixtures.yaml namespace "<ns>" entry <n> (<label>): <error>`, where `<n>`
+is the 0-based entry index.
+
+## Sequences
+
+A `sequence` entry steps through its `steps` fixtures, one per matching
+request. `on_exhaust` decides what happens once the last step has been served:
+
+- `last` (default): keep serving the final step.
+- `cycle`: wrap around to the first step.
+- `error`: respond with a provider-native server error (HTTP 500, plus
+  `X-Zolem-Error: true`) with the message
+  `fixture sequence "<id>" in namespace "<ns>" exhausted`. On the Responses
+  WebSocket this is a single `response.failed` event with the same message and
+  `error.type` of `server_error`.
+- `fallthrough`: skip this entry and continue with later entries.
+
+Other selector failures (for example a trapping namespace `selector.wasm`) are
+never turned into generated text: HTTP requests get a 502 with
+`X-Zolem-Error: true`, and the Responses WebSocket gets one `response.failed`
+event whose message starts with `fixture selection failed:` while the
+connection stays open.
+
 ## WebSocket Responses Fixtures
 
 For OpenAI Responses WebSocket sequences, use `version: v1-responses` in
