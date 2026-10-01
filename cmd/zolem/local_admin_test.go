@@ -816,6 +816,20 @@ func TestLocalAdminHandler_ProfilePublicOllamaUpstreamAllowedWithOptOut(t *testi
 	}
 }
 
+func TestLocalAdminHandler_ProfileBlockedOllamaUpstreamRejectedEvenWithOptOut(t *testing.T) {
+	for _, host := range []string{"0.0.0.1", "0.0.0.0", "224.0.0.1", "[::]", "[::ffff:0.0.0.1]", "[64:ff9b::a9fe:a9fe]", "[::a9fe:a9fe]"} {
+		control := newTestLocalControlPlane(t, localAdminOptions{})
+		handler := buildLocalAdminHandler(control)
+
+		body := `{"backend":"ollama","ollama_upstream":"http://` + host + `:11434","allow_external_ollama_upstream":true}`
+		resp := doRequest(t, handler, httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(body)))
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("upstream host %s with opt-out: got %d, want 400", host, resp.StatusCode)
+		}
+	}
+}
+
 func TestLocalAdminHandler_UnknownPathReturnsJSON404(t *testing.T) {
 	control := newTestLocalControlPlane(t, localAdminOptions{})
 	handler := buildLocalAdminHandler(control)

@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
 
 func TestHTTPChatCompletion_Success(t *testing.T) {
@@ -488,5 +490,48 @@ func TestHTTPChatCompletion_ErrorBodyTruncated(t *testing.T) {
 	}
 	if len(err.Error()) > maxErrorBodyBytes+200 {
 		t.Fatalf("expected truncated error message (<= %d bytes), got %d bytes", maxErrorBodyBytes+200, len(err.Error()))
+	}
+}
+
+func TestDialControl_EmbeddedIPv4Forms(t *testing.T) {
+	for _, a := range []string{"0.0.0.1", "64:ff9b::a9fe:a9fe", "::a9fe:a9fe", "::ffff:0.0.0.1"} {
+		if err := dialAllowed(netip.MustParseAddr(a), true); err == nil {
+			t.Errorf("expected dial to %s to be refused even with external allowed", a)
+		}
+	}
+	for _, a := range []string{"64:ff9b::7f00:1", "::7f00:1"} {
+		if err := dialAllowed(netip.MustParseAddr(a), false); err != nil {
+			t.Errorf("expected embedded-loopback %s allowed: %v", a, err)
+		}
+	}
+	if err := dialAllowed(netip.MustParseAddr("64:ff9b::808:808"), false); err == nil {
+		t.Error("expected embedded-public NAT64 address refused without external")
+	}
+}
+
+// TestUpstreamPolicyConformance asserts profile-create validation and
+// dial-time enforcement agree for every IP literal when external upstreams
+// are allowed: validation must reject exactly the addresses the dialer
+// would refuse.
+func TestUpstreamPolicyConformance(t *testing.T) {
+	hosts := []string{
+		"127.0.0.1", "10.0.0.1", "8.8.8.8", "169.254.169.254", "0.0.0.0", "0.0.0.1",
+		"224.0.0.1", "[::1]", "[::]", "[fe80::1]", "[ff02::1]", "[fd00::1]",
+		"[::ffff:0.0.0.1]", "[::ffff:8.8.8.8]", "[64:ff9b::7f00:1]",
+		"[64:ff9b::a9fe:a9fe]", "[::a9fe:a9fe]", "[::7f00:1]", "[2001:4860:4860::8888]",
+	}
+	for _, h := range hosts {
+		for _, allow := range []bool{true, false} {
+			err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+				Name: "p", Backend: "ollama",
+				OllamaUpstream:              "http://" + h + ":11434",
+				AllowExternalOllamaUpstream: allow,
+			})
+			addr := netip.MustParseAddr(strings.Trim(h, "[]"))
+			dialErr := dialAllowed(addr, allow)
+			if (err != nil) != (dialErr != nil) {
+				t.Errorf("host %s allow=%v: validation err=%v, dial err=%v (policies disagree)", h, allow, err, dialErr)
+			}
+		}
 	}
 }
