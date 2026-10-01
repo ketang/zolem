@@ -32,20 +32,21 @@ func TestClassify(t *testing.T) {
 		{"::ffff:8.8.8.8", Public},
 		{"::ffff:127.0.0.1", Private},
 		// NAT64 (64:ff9b::/96) embeds the IPv4 address.
-		{"64:ff9b::7f00:1", Private},
-		{"64:ff9b::a00:1", Private},
+		{"64:ff9b::7f00:1", Public},
+		{"64:ff9b::a00:1", Public},
 		{"64:ff9b::a9fe:a9fe", Blocked},
 		{"64:ff9b::1", Blocked},
 		{"64:ff9b::808:808", Public},
 		// Deprecated IPv4-compatible (::a.b.c.d).
-		{"::7f00:1", Private},
+		{"::7f00:1", Public},
 		{"::a9fe:a9fe", Blocked},
 		{"::808:808", Public},
-		{"::a00:1", Private},
+		{"::a00:1", Public},
 		// 6to4 (2002::/16) embeds the IPv4 address in bits 16-47.
 		{"2002:a9fe:a9fe::", Blocked},
-		{"2002:7f00:1::1", Private},
+		{"2002:7f00:1::1", Public},
 		{"2002:808:808::1", Public},
+		{"2002:0a00:0001::", Public},
 		// NAT64 local-use and Teredo are blocked outright.
 		{"64:ff9b:1::1", Blocked},
 		{"64:ff9b:1:ffff::1", Blocked},

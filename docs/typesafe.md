@@ -219,8 +219,13 @@ attributes such mass to the single-letter label.
 - `ollama_upstream` (`-local-ollama-upstream`): defaults to
   `http://localhost:11434` and is subject to the same loopback/private-host
   policy as the `ollama` backend (`allow_external_ollama_upstream` opts out;
-  link-local, unspecified (`0.0.0.0/8`, `::`), and multicast addresses — including
-  IPv4 forms embedded in IPv6 (mapped, NAT64, IPv4-compatible) — are never allowed).
+  link-local, unspecified (`0.0.0.0/8`, `::`), multicast, zoned, Teredo
+  (`2001::/32`), and NAT64 local-use (`64:ff9b:1::/48`) addresses are never
+  allowed, nor are NAT64/6to4/IPv4-compatible forms embedding such IPv4
+  addresses). Loopback/private IPv4 embedded via NAT64 (`64:ff9b::/96`), 6to4
+  (`2002::/16`), or IPv4-compatible IPv6 is treated as external, since it routes
+  through a gateway; plain IPv4-mapped (`::ffff:a.b.c.d`) is classified as the
+  IPv4 address it is.
 - `calibration_temperature` (`-calibration-temperature` in `zolemc`,
   `-local-calibration-temperature` in fixed-listener mode): a positive, finite
   divisor applied to each log probability before exponentiating. Default `1.0`;

@@ -86,9 +86,8 @@ var overrideIPClass func(netip.Addr) (ipClass, bool)
 // classifyIP classifies addr for the dial-time policy check via the shared
 // upstreamip contract (also used by profile-create validation).
 func classifyIP(addr netip.Addr) ipClass {
-	addr = upstreamip.Embedded(addr)
 	if overrideIPClass != nil {
-		if class, ok := overrideIPClass(addr); ok {
+		if class, ok := overrideIPClass(upstreamip.Embedded(addr)); ok {
 			return class
 		}
 	}
