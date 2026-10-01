@@ -28,7 +28,7 @@ The snapshot intentionally covers only the request fields Zolem currently implem
 Message items are currently normalized as:
 
 - `role`: `"user"` or `"assistant"`
-- `content`: string
+- `content`: a string, or an array of content blocks (`$defs/message_content_block`: text, image, document, tool_use, tool_result, thinking, redacted_thinking)
 
 ## Update Workflow
 
@@ -40,12 +40,12 @@ When Zolem expands Anthropic request support or Anthropic changes the documented
    to match the documented request fields Zolem actually supports.
 3. Keep the snapshot normalized to JSON Schema draft 2020-12 so it can be compiled directly by the existing validator.
 4. Run the targeted validation tests:
-   - `env GOCACHE=/tmp/zolem-go-build-cache go test ./internal/specs -run 'TestVendoredFallbacks_AnthropicSnapshotValidatesMessagesRequests'`
-   - `env GOCACHE=/tmp/zolem-go-build-cache go test ./internal/specs -run 'TestSourceVerification_AnthropicV1SnapshotInvariants'`
-   - `env GOCACHE=/tmp/zolem-go-build-cache go test ./internal/provider/anthropic -run 'TestMessages_ValidationFailure'`
-   - `env GOCACHE=/tmp/zolem-go-build-cache go test ./cmd/zolem -run 'TestSpecSourceMap_CanonicalSourceInvariants'`
+   - `go test ./internal/specs -run 'TestVendoredFallbacks_AnthropicSnapshotValidatesMessagesRequests'`
+   - `go test ./internal/specs -run 'TestSourceVerification_AnthropicV1SnapshotInvariants'`
+   - `go test ./internal/provider/anthropic -run 'TestMessages_ValidationFailure'`
+   - `go test ./cmd/zolem -run 'TestSpecValidation_'`
 
 ## Notes
 
 - Zolem no longer depends on an Anthropic remote machine-readable URL at startup.
-- If a cache file exists for `anthropic:v1`, the fetcher still prefers that cache entry. Otherwise it falls back to the bundled snapshot.
+- At startup Zolem reads `$TMPDIR/zolem-specs/anthropic-v1.json` if that file exists and otherwise uses the embedded snapshot (`internal/specs/fetcher.go`: disk cache precedes the embedded fallback). Delete that file to force the snapshot. If loading fails, Zolem logs a warning and serves without validation for that schema; `/_zolem/state` `schemas_loaded` shows what loaded. Here `$TMPDIR` is `os.TempDir()`, per `cmd/zolem/startup.go`.

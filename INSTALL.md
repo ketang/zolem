@@ -36,8 +36,10 @@ Each release also ships:
 ### Verify the checksum
 
 ```bash
-sha256sum -c checksums.txt
+sha256sum -c --ignore-missing checksums.txt
 ```
+
+`checksums.txt` lists every archive and SBOM in the release; `--ignore-missing` skips the ones you did not download.
 
 ### Install
 
@@ -59,6 +61,9 @@ cosign verify-blob \
 ```
 
 Exit code `0` means the signature is valid and traces to the release workflow.
+
+`checksums.txt` has its own signature, `checksums.txt.bundle`, which you can
+verify the same way (substituting `checksums.txt` for the archive).
 
 ### Inspect the SBOM
 
@@ -197,6 +202,17 @@ the stable `:latest` image is never updated by a nightly run.
 
 ```bash
 docker pull ghcr.io/ketang/zolem:nightly
+```
+
+Nightly archives are signed by the nightly workflow, so verify them with its
+certificate identity rather than the release one:
+
+```bash
+cosign verify-blob \
+  --bundle zolem-<version>-<os>-<arch>.tar.gz.bundle \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity "https://github.com/ketang/zolem/.github/workflows/nightly.yml@refs/heads/main" \
+  zolem-<version>-<os>-<arch>.tar.gz
 ```
 
 Nightly builds are not recommended for production use.

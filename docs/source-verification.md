@@ -1,8 +1,6 @@
 # Source Verification
 
-Phase 6 adds a dedicated source-verification suite for contract drift detection.
-
-Its purpose is to fail loudly when Zolem's parser assumptions stop matching the configured source artifacts.
+This suite detects contract drift: it fails loudly when Zolem's parser assumptions stop matching its source inputs. Those inputs are the embedded Anthropic snapshot (`specs.VendoredFallbacks()["anthropic:v1"]`, checked by `TestSourceVerification_AnthropicV1SnapshotInvariants`) and the Gemini discovery fixtures in `testdata/specs/` (`gemini-discovery-v1.json`, `gemini-discovery-v1beta.json`, read via `readDiscoveryFixture` in `internal/specs/discovery_test.go`).
 
 ## What It Verifies
 
@@ -21,8 +19,8 @@ Its purpose is to fail loudly when Zolem's parser assumptions stop matching the 
 Run the source verification suite directly:
 
 ```bash
-env GOCACHE=/tmp/zolem-go-build-cache go test ./internal/specs -run 'TestSourceVerification_'
-env GOCACHE=/tmp/zolem-go-build-cache go test ./cmd/zolem -run 'TestSpecSourceMap_CanonicalSourceInvariants'
+go test ./internal/specs -run 'TestSourceVerification_'
+go test ./cmd/zolem -run 'TestSpecValidation_'
 ```
 
 ## When To Run It
@@ -32,6 +30,4 @@ Run this suite before landing work that changes:
 - source URLs
 - source parsers
 - vendored fallback snapshots
-- refresh-loop behavior
-
-It is intended to be the preflight check for the later refresh-loop phase, where upstream fetch success and parser correctness become runtime concerns.
+- schema normalization (`internal/specs/openapi.go`, `discovery.go`)
