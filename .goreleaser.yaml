@@ -172,7 +172,7 @@ docker_signs:
       - "${artifact}"
 
 snapshot:
-  version_template: "{{ .Version }}-nightly"
+  version_template: "nightly"
 
 changelog:
   sort: asc

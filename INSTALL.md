@@ -195,25 +195,43 @@ go install github.com/ketang/zolem/cmd/zolemc@latest
 
 ## Nightly builds
 
-Nightly builds run on a daily schedule from the tip of `main` and are
-published as pre-releases on GitHub Releases (under the moving
-`v0.0.0-nightly` tag). The multi-arch Docker image is tagged `:nightly` and
-the stable `:latest` image is never updated by a nightly run.
+Nightly builds run daily from the tip of `main`, only after the same
+verification gate as CI passes, and are published as a pre-release under a
+single moving, non-semver `nightly` tag. Go tooling ignores non-semver tags, so
+moving it never affects module resolution.
 
 ```bash
+gh release download nightly -R ketang/zolem
 docker pull ghcr.io/ketang/zolem:nightly
+go install github.com/ketang/zolem/cmd/zolem@main   # resolves to a pseudo-version
 ```
+
+The release notes name the built commit and UTC date. Nightly binaries report
+version `nightly`; use the release notes (or the image's
+`org.opencontainers.image.revision` label) to identify the commit. The stable
+`:latest` image is never updated by a nightly run.
+
+Publication is staged: assets and images are uploaded and verified under
+internal staging names first, then promoted. If a nightly download 404s, retry
+in a few minutes. The `:nightly-candidate`, `:nightly-candidate-amd64`, and
+`:nightly-candidate-arm64` image tags are internal staging tags that share
+manifests with `:nightly`; do not use or delete them. They are overwritten by
+the next run.
 
 Nightly archives are signed by the nightly workflow, so verify them with its
 certificate identity rather than the release one:
 
 ```bash
 cosign verify-blob \
-  --bundle zolem-<version>-<os>-<arch>.tar.gz.bundle \
+  --bundle zolem-nightly-<os>-<arch>.tar.gz.bundle \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity "https://github.com/ketang/zolem/.github/workflows/nightly.yml@refs/heads/main" \
-  zolem-<version>-<os>-<arch>.tar.gz
+  zolem-nightly-<os>-<arch>.tar.gz
 ```
+
+Verify downloads with `sha256sum -c --ignore-missing checksums.txt`;
+`checksums.txt` has its own `checksums.txt.bundle`, signed by the same
+identity. The workflow signs every archive, every SBOM, and `checksums.txt`.
 
 Nightly builds are not recommended for production use.
 

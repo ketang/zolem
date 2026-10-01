@@ -124,6 +124,17 @@ cover.
   ./scripts/test-shatter-focused-scan-sandbox.sh
   ```
 
+## Nightly Release Workflow
+
+- The nightly publication state classifier has a network-free unit test; run it
+  when changing `scripts/nightly-state.sh` or `.github/workflows/nightly.yml`:
+
+  ```bash
+  ./scripts/test-nightly-state.sh
+  ```
+
+- Validate workflow changes with `actionlint .github/workflows/*.yml`.
+
 ## Local Binding
 
 - Zolem is loopback-only by default: the admin server and listeners bind to
