@@ -48,7 +48,8 @@ func ParseExhaustAction(s string) (ExhaustAction, error) {
 
 // ExhaustError signals that a sequence configured with on_exhaust: error has
 // run past its final step. The dispatch layer translates this into a
-// provider-native error response (e.g. via BackendError); the fixture package
+// provider-native server-error response (HTTP 500 with X-Zolem-Error: true);
+// the fixture package
 // never constructs provider wire formats itself.
 type ExhaustError struct {
 	SequenceID string

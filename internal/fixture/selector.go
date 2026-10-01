@@ -3,7 +3,8 @@ package fixture
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"log"
+	"sync"
 
 	runtimecfg "github.com/ketang/zolem/internal/runtime"
 )
@@ -101,6 +102,23 @@ type fixturesYAMLSelector struct {
 	entries   []fixturesYAMLEntry
 	counters  *SequenceCounters
 	namespace string
+
+	// logf reports per-entry CEL errors; defaults to log.Printf.
+	logf func(format string, args ...any)
+	// warned records entry indexes whose CEL error has already been logged,
+	// so a persistently failing entry logs once rather than per request.
+	warned sync.Map
+}
+
+func (s *fixturesYAMLSelector) warnEntry(i int, e fixturesYAMLEntry, err error) {
+	if _, loaded := s.warned.LoadOrStore(i, struct{}{}); loaded {
+		return
+	}
+	logf := s.logf
+	if logf == nil {
+		logf = log.Printf
+	}
+	logf("warn: fixtures.yaml namespace %q entry %d (%s): %v", s.namespace, i, e.label(), err)
 }
 
 func (s *fixturesYAMLSelector) Select(ctx context.Context, req MatchRequest, candidates []Fixture) (*Fixture, error) {
@@ -109,10 +127,13 @@ func (s *fixturesYAMLSelector) Select(ctx context.Context, req MatchRequest, can
 		byID[candidates[i].ID] = &candidates[i]
 	}
 	profile := profileFromContext(ctx)
-	for _, e := range s.entries {
+	for i, e := range s.entries {
 		score, err := e.matcher.Score(ctx, req)
 		if err != nil {
-			return nil, fmt.Errorf("evaluate selector entry for fixture %q: %w", e.label(), err)
+			// A failing expression (e.g. a missing body key) means "no match"
+			// for this entry only, consistent with LegacySelector.
+			s.warnEntry(i, e, err)
+			continue
 		}
 		if score < 0 {
 			continue
