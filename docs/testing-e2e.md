@@ -30,8 +30,8 @@ Prefer extending an existing harness before creating a new one.
 
 Cross-process Go E2E tests should:
 
-- start a real `go run ./cmd/zolem` process
-- configure it through real config files or real admin API calls
+- build the binary once per test run with `go build -o <tmpdir>/zolem ./cmd/zolem` and start it as a real process (see `buildZolemBinary` in `cmd/zolem/local_calls_e2e_test.go`, which runs `go build -buildvcs=false -o <path> .`)
+- configure it through CLI flags and real admin API calls
 - exercise real HTTP endpoints
 - assert status, headers, and provider-specific body shape
 - use temp dirs and isolated caches
