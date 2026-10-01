@@ -124,3 +124,62 @@ func TestToolCallNamed_NonStreaming(t *testing.T) {
 		t.Errorf("expected get_weather, got %v", fn["name"])
 	}
 }
+
+func TestToolCallRequired_ArgumentsConformToSchema(t *testing.T) {
+	h := newHandler(t)
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"tool_choice":"required",` +
+		`"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object",` +
+		`"required":["unit","n","u","tags","email","k"],"properties":{` +
+		`"unit":{"type":"string","enum":["c","f"]},"n":{"type":["integer","null"]},` +
+		`"u":{"anyOf":[{"type":"integer"},{"type":"null"}]},` +
+		`"tags":{"type":"array","items":{"type":"string"},"minItems":1},` +
+		`"email":{"type":"string","format":"email"},"k":{"const":"fixed"}}}}}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer sk-test")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	var resp struct {
+		Choices []struct {
+			Message struct {
+				ToolCalls []struct {
+					Function struct {
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil || len(resp.Choices) == 0 || len(resp.Choices[0].Message.ToolCalls) == 0 {
+		t.Fatalf("decode: %v; body: %s", err, rr.Body.String())
+	}
+	var args struct {
+		Unit  string   `json:"unit"`
+		N     *float64 `json:"n"`
+		U     *float64 `json:"u"`
+		Tags  []string `json:"tags"`
+		Email string   `json:"email"`
+		K     string   `json:"k"`
+	}
+	if err := json.Unmarshal([]byte(resp.Choices[0].Message.ToolCalls[0].Function.Arguments), &args); err != nil {
+		t.Fatalf("arguments do not decode into the schema's types: %v\n%s", err, resp.Choices[0].Message.ToolCalls[0].Function.Arguments)
+	}
+	if args.Unit != "c" && args.Unit != "f" {
+		t.Errorf("unit: got %q", args.Unit)
+	}
+	if args.N == nil || *args.N != float64(int(*args.N)) {
+		t.Errorf("n: want integer, got %v", args.N)
+	}
+	if args.U == nil || *args.U != float64(int(*args.U)) {
+		t.Errorf("u: want integer, got %v", args.U)
+	}
+	if len(args.Tags) < 1 || args.Tags[0] == "" {
+		t.Errorf("tags: want >=1 string, got %v", args.Tags)
+	}
+	if !strings.Contains(args.Email, "@") {
+		t.Errorf("email: got %q", args.Email)
+	}
+	if args.K != "fixed" {
+		t.Errorf("k: got %q", args.K)
+	}
+}
