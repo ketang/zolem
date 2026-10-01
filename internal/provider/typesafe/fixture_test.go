@@ -34,15 +34,44 @@ func (firstMatchSelector) Select(_ context.Context, _ fixture.MatchRequest, cand
 	return &candidates[0], nil
 }
 
-func TestFixture_MatchErrorIs500(t *testing.T) {
+func TestFixture_MatchErrorIsInfrastructure502(t *testing.T) {
 	runner := fixture.NewRunner()
 	t.Cleanup(runner.Close)
 	f := fixture.Fixture{ID: "broken-selector", Provider: "typesafe", Version: "v1", Status: http.StatusOK}
 	matcher := fixture.NewMatcher(runner, []fixture.Fixture{f}, failingSelector{})
 	h := typesafe.NewHandler(specs.NewValidator(), matcher, response.NewLoremGenerator())
 	rr := postSystemOne(t, h, runtimecfg.RuntimeProfile{Name: "fx", Backend: runtimecfg.BackendFixture}, oneNoulQuestionBody)
-	if rr.Code != http.StatusInternalServerError || !bytes.Contains(rr.Body.Bytes(), []byte("selection failed")) {
-		t.Fatalf("fixture selection failure was hidden: status=%d body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusBadGateway || rr.Header().Get("X-Zolem-Error") != "true" ||
+		!bytes.Contains(rr.Body.Bytes(), []byte("selection failed")) {
+		t.Fatalf("fixture selection failure: status=%d header=%q body=%s", rr.Code, rr.Header().Get("X-Zolem-Error"), rr.Body.String())
+	}
+}
+
+type exhaustedSelector struct{}
+
+func (exhaustedSelector) Select(context.Context, fixture.MatchRequest, []fixture.Fixture) (*fixture.Fixture, error) {
+	return nil, &fixture.ExhaustError{SequenceID: "s", Namespace: "typesafe:v1"}
+}
+
+func TestFixture_ExhaustedSequenceIsProviderNative500(t *testing.T) {
+	runner := fixture.NewRunner()
+	t.Cleanup(runner.Close)
+	f := fixture.Fixture{ID: "a", Provider: "typesafe", Version: "v1", Status: http.StatusOK}
+	matcher := fixture.NewMatcher(runner, []fixture.Fixture{f}, exhaustedSelector{})
+	h := typesafe.NewHandler(specs.NewValidator(), matcher, response.NewLoremGenerator())
+	rr := postSystemOne(t, h, runtimecfg.RuntimeProfile{Name: "fx", Backend: runtimecfg.BackendFixture}, oneNoulQuestionBody)
+	if rr.Code != http.StatusInternalServerError || rr.Header().Get("X-Zolem-Error") != "true" {
+		t.Fatalf("status=%d header=%q body=%s", rr.Code, rr.Header().Get("X-Zolem-Error"), rr.Body.String())
+	}
+	var env struct {
+		Error struct{ Type, Message string }
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	want := `fixture sequence "s" in namespace "typesafe:v1" exhausted`
+	if env.Error.Type != "api_error" || env.Error.Message != want {
+		t.Fatalf("envelope: %s", rr.Body.String())
 	}
 }
 

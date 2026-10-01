@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -82,7 +83,16 @@ func (h *Handler) responseCreateEvents(ctx context.Context, payload []byte) ([]j
 			Labels: labelsFromContext(ctx),
 			Body:   json.RawMessage(payload),
 		}
-		matched, _ := h.matcher.Match(ctx, matchReq)
+		matched, err := h.matcher.Match(ctx, matchReq)
+		if err != nil {
+			// Exhaustion keeps its own message; any other selector failure
+			// is prefixed so it is distinguishable from fixture render errors.
+			var ee *fixture.ExhaustError
+			if errors.As(err, &ee) {
+				return nil, err
+			}
+			return nil, fmt.Errorf("fixture selection failed: %w", err)
+		}
 		if matched != nil {
 			body, err := renderFixtureBodyBytes(ctx, matched)
 			if err != nil {
