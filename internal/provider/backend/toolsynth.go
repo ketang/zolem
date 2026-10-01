@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"math"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -25,6 +28,9 @@ const (
 	maxLeafCandidates = 8        // candidates tried per leaf
 	maxStringBytes    = 1024
 	maxArrayItems     = 64
+	maxWork           = 20000 // generation steps (nodes, candidates, validations) per call
+	maxWorkTime       = 500 * time.Millisecond
+	maxNormalizeDepth = 64
 
 	rootSchemaURL = "mem://zolem/tool-schema.json"
 	loremValue    = "lorem ipsum"
@@ -85,6 +91,8 @@ func SynthArgsForTool(tool string, schema json.RawMessage) json.RawMessage {
 
 type synthStats struct {
 	WholeValidations int
+	Work             int
+	Aborted          bool
 	Valid            bool
 }
 
@@ -127,7 +135,7 @@ func synthesize(tool string, schema json.RawMessage) (json.RawMessage, synthStat
 		return simpleArgs(doc), st
 	}
 
-	g := &synth{root: doc, compiler: compiler, compiled: map[string]*jsonschema.Schema{}}
+	g := &synth{root: doc, compiler: compiler, compiled: map[string]*jsonschema.Schema{}, deadline: time.Now().Add(maxWorkTime)}
 	var last json.RawMessage
 	seen := map[string]bool{}
 	for attempt := range maxWholeChecks {
@@ -139,6 +147,13 @@ func synthesize(tool string, schema json.RawMessage) (json.RawMessage, synthStat
 			valid = false
 		}
 		last = out
+		if g.aborted {
+			out = simpleArgs(doc)
+			last = out
+			valid = false
+			g.lastErr = fmt.Errorf("generation work limit exceeded")
+			break
+		}
 		if valid {
 			st.Valid = true
 			break
@@ -149,6 +164,8 @@ func synthesize(tool string, schema json.RawMessage) (json.RawMessage, synthStat
 		seen[string(out)] = true
 	}
 	st.WholeValidations = g.whole
+	st.Work = g.work
+	st.Aborted = g.aborted
 	if !st.Valid {
 		warnOnce(tool, g.lastErr)
 	}
@@ -172,8 +189,26 @@ type synth struct {
 	rot       int
 	whole     int
 	exhausted bool
+	work      int
+	aborted   bool
+	deadline  time.Time
 	lastErr   error
 	produced  int
+}
+
+// tick charges one unit of work and reports whether generation may continue.
+// Once the per-call budget or deadline is exceeded generation is aborted and
+// the caller falls back to the unverified type-walker.
+func (g *synth) tick() bool {
+	if g.aborted {
+		return false
+	}
+	g.work++
+	if g.work > maxWork || (g.work%64 == 0 && time.Now().After(g.deadline)) {
+		g.aborted = true
+		return false
+	}
+	return true
 }
 
 func (g *synth) compile(ptr string) *jsonschema.Schema {
@@ -189,6 +224,9 @@ func (g *synth) compile(ptr string) *jsonschema.Schema {
 }
 
 func (g *synth) valid(ptrs []string, v any) bool {
+	if !g.tick() {
+		return false
+	}
 	for _, p := range ptrs {
 		if p == "" {
 			if g.whole >= maxWholeChecks {
@@ -225,7 +263,7 @@ func listOf(v any) []any {
 // rot-th valid one for anyOf/oneOf nodes). The bool reports whether a
 // candidate validated.
 func (g *synth) node(sc *sch, depth int) (any, bool) {
-	if depth > maxDepth {
+	if depth > maxDepth || g.exhausted || !g.tick() {
 		return nil, false
 	}
 	sc, depth = g.resolve(sc, depth)
@@ -331,6 +369,9 @@ func childPtr(base string, toks ...string) string {
 }
 
 func (g *synth) candidates(sc *sch, depth int) []any {
+	if !g.tick() {
+		return nil
+	}
 	m := sc.m
 	var out []any
 	if c, ok := m["const"]; ok {
@@ -377,9 +418,12 @@ func (g *synth) candidates(sc *sch, depth int) []any {
 }
 
 // branchCandidates collects candidates from anyOf/oneOf branches in order,
-// non-null branches first. Branches inherit the parent's type when they have none.
+// non-null branches first. Branches inherit the parent's type when they have
+// none. Branches are resolved up front (cheap) but their candidates are
+// generated lazily, stopping once maxLeafCandidates are collected.
 func (g *synth) branchCandidates(sc *sch, depth int) []any {
-	var nonNull, null []any
+	var nonNull, null []*sch
+	var depths = map[*sch]int{}
 	for _, key := range []string{"anyOf", "oneOf"} {
 		for i, b := range listOf(sc.m[key]) {
 			bm, ok := b.(map[string]any)
@@ -388,9 +432,7 @@ func (g *synth) branchCandidates(sc *sch, depth int) []any {
 			}
 			if _, has := bm["type"]; !has && sc.m["type"] != nil {
 				cp := make(map[string]any, len(bm)+1)
-				for k, v := range bm {
-					cp[k] = v
-				}
+				maps.Copy(cp, bm)
 				cp["type"] = sc.m["type"]
 				bm = cp
 			}
@@ -398,18 +440,26 @@ func (g *synth) branchCandidates(sc *sch, depth int) []any {
 			if bsc == nil || d > maxDepth {
 				continue
 			}
-			cands := g.candidates(bsc, d)
-			if len(cands) > 3 {
-				cands = cands[:3]
-			}
+			depths[bsc] = d
 			if isNullType(bsc.m) {
-				null = append(null, cands...)
+				null = append(null, bsc)
 			} else {
-				nonNull = append(nonNull, cands...)
+				nonNull = append(nonNull, bsc)
 			}
 		}
 	}
-	return append(nonNull, null...)
+	var out []any
+	for _, bsc := range append(nonNull, null...) {
+		if len(out) >= maxLeafCandidates || g.aborted {
+			break
+		}
+		cands := g.candidates(bsc, depths[bsc])
+		if len(cands) > 3 {
+			cands = cands[:3]
+		}
+		out = append(out, cands...)
+	}
+	return out
 }
 
 func isNullType(m map[string]any) bool {
@@ -869,7 +919,7 @@ func NormalizeGeminiSchema(raw json.RawMessage) json.RawMessage {
 	if !ok {
 		return raw
 	}
-	normalizeGeminiNode(m)
+	normalizeGeminiNode(m, 0)
 	out, err := json.Marshal(m)
 	if err != nil {
 		return raw
@@ -877,7 +927,10 @@ func NormalizeGeminiSchema(raw json.RawMessage) json.RawMessage {
 	return out
 }
 
-func normalizeGeminiNode(m map[string]any) {
+func normalizeGeminiNode(m map[string]any, depth int) {
+	if depth > maxNormalizeDepth {
+		return
+	}
 	for _, k := range []string{"minItems", "maxItems", "minLength", "maxLength", "minProperties", "maxProperties"} {
 		if s, ok := m[k].(string); ok {
 			if _, err := strconv.ParseInt(s, 10, 64); err == nil {
@@ -895,7 +948,7 @@ func normalizeGeminiNode(m map[string]any) {
 		case nil:
 		}
 		if e, ok := m["enum"].([]any); ok {
-			m["enum"] = append(e, nil)
+			m["enum"] = append(slices.Clone(e), nil)
 		}
 	}
 	delete(m, "nullable")
@@ -903,20 +956,20 @@ func normalizeGeminiNode(m map[string]any) {
 		if pm, ok := m[k].(map[string]any); ok {
 			for _, v := range pm {
 				if c, ok := v.(map[string]any); ok {
-					normalizeGeminiNode(c)
+					normalizeGeminiNode(c, depth+1)
 				}
 			}
 		}
 	}
 	for _, k := range []string{"items", "additionalProperties", "not"} {
 		if c, ok := m[k].(map[string]any); ok {
-			normalizeGeminiNode(c)
+			normalizeGeminiNode(c, depth+1)
 		}
 	}
 	for _, k := range []string{"anyOf", "oneOf", "allOf"} {
 		for _, v := range listOf(m[k]) {
 			if c, ok := v.(map[string]any); ok {
-				normalizeGeminiNode(c)
+				normalizeGeminiNode(c, depth+1)
 			}
 		}
 	}

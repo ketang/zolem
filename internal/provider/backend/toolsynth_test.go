@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -236,6 +237,16 @@ func bigSchema(n int) string {
 	return b.String()
 }
 
+// fanoutSchema: $defs/a is an anyOf of n object branches, each requiring a
+// property y that $refs a again. Unbounded generation is exponential.
+func fanoutSchema(n int) string {
+	var br []string
+	for i := 0; i < n; i++ {
+		br = append(br, fmt.Sprintf(`{"type":"object","required":["y"],"properties":{"y":{"$ref":"#/$defs/a"},"i":{"const":%d}}}`, i))
+	}
+	return `{"type":"object","required":["x"],"properties":{"x":{"$ref":"#/$defs/a"}},"$defs":{"a":{"anyOf":[` + strings.Join(br, ",") + `]}}}`
+}
+
 var limitCases = []struct{ name, schema string }{
 	{"pattern", `{"type":"object","required":["a"],"properties":{"a":{"type":"string","pattern":"^[0-9]{5}$"}}}`},
 	{"not", `{"type":"object","required":["a"],"properties":{"a":{"not":{"type":"string"}}}}`},
@@ -245,6 +256,7 @@ var limitCases = []struct{ name, schema string }{
 	{"nodes_3000", bigSchema(3000)},
 	{"nested_arrays", `{"type":"object","required":["a"],"properties":{"a":{"type":"array","minItems":64,"items":{"type":"array","minItems":64,"items":{"type":"array","minItems":64,"items":{"type":"array","minItems":64,"items":{"type":"string","minLength":1000}}}}}}}`},
 	{"recursive_ref", `{"type":"object","required":["n"],"properties":{"n":{"$ref":"#/$defs/n"}},"$defs":{"n":{"type":"object","required":["n"],"properties":{"n":{"$ref":"#/$defs/n"}}}}}`},
+	{"fanout_ref_cycle_anyOf", fanoutSchema(16)},
 	{"many_oneOf", `{"type":"object","required":["a"],"properties":{"a":{"oneOf":[{"type":"integer"},{"type":"integer"},{"type":"integer"},{"type":"integer"}]}}}`},
 }
 
@@ -311,6 +323,7 @@ func FuzzSynthArgs(f *testing.F) {
 	for _, tc := range supportedCases {
 		f.Add(tc.schema)
 	}
+	f.Add(fanoutSchema(16))
 	for _, tc := range limitCases[:6] {
 		if len(tc.schema) < 8192 {
 			f.Add(tc.schema)
@@ -320,7 +333,14 @@ func FuzzSynthArgs(f *testing.F) {
 	log.SetOutput(io.Discard)
 	f.Cleanup(func() { log.SetOutput(prev) })
 	f.Fuzz(func(t *testing.T, schema string) {
+		start := time.Now()
 		out, st := synthesize("fuzz", json.RawMessage(schema))
+		if st.Work > maxWork+1 {
+			t.Fatalf("work %d exceeds budget %d", st.Work, maxWork)
+		}
+		if el := time.Since(start); el > 5*time.Second {
+			t.Fatalf("synthesis took %v", el)
+		}
 		if len(out) > maxOutputBytes {
 			t.Fatalf("output %d bytes", len(out))
 		}
@@ -386,5 +406,48 @@ func TestTypeAllows(t *testing.T) {
 	}
 	if !typeAllows([]any{"null", "object"}, "object") || typeAllows([]any{"null"}, "object") || !typeAllows(7, "object") {
 		t.Error("array/other handling")
+	}
+}
+
+func TestSynthArgs_FanoutIsBounded(t *testing.T) {
+	buf := captureLog(t)
+	start := time.Now()
+	out, st := synthesize(uniqueTool(), json.RawMessage(fanoutSchema(16)))
+	if el := time.Since(start); el > time.Second {
+		t.Fatalf("took %v, want well under a second", el)
+	}
+	if !st.Aborted || st.Work > maxWork+1 {
+		t.Errorf("expected work-budget abort within %d units, got aborted=%v work=%d", maxWork, st.Aborted, st.Work)
+	}
+	if !json.Valid(out) || !strings.Contains(buf.String(), "do not satisfy schema for tool") {
+		t.Errorf("want fallback JSON plus warning; out=%s log=%q", out, buf.String())
+	}
+}
+
+func TestNormalizeGeminiSchema_DeepNesting(t *testing.T) {
+	const n = 5000
+	deep := strings.Repeat(`{"type":"OBJECT","properties":{"a":`, n) + `{"type":"STRING"}` + strings.Repeat(`}}`, n)
+	start := time.Now()
+	out := NormalizeGeminiSchema(json.RawMessage(deep))
+	if len(out) == 0 || time.Since(start) > 2*time.Second {
+		t.Fatalf("deep normalize: len=%d in %v", len(out), time.Since(start))
+	}
+	_ = SynthArgsForTool(uniqueTool(), out)
+}
+
+func TestNormalizeGeminiSchema_NullableEnumDoesNotMutateShared(t *testing.T) {
+	in := json.RawMessage(`{"type":"OBJECT","properties":{"a":{"type":"STRING","nullable":true,"enum":["x"]}}}`)
+	a := NormalizeGeminiSchema(in)
+	b := NormalizeGeminiSchema(in)
+	if !bytes.Equal(a, b) || !strings.Contains(string(a), `["x",null]`) {
+		t.Errorf("unexpected normalization: %s / %s", a, b)
+	}
+}
+
+func TestSynthArgs_FalseBooleanPropertySchema(t *testing.T) {
+	// Optional property whose schema is `false` can never validate: omitted.
+	out, st := synthesize(uniqueTool(), json.RawMessage(`{"type":"object","properties":{"a":false,"b":{"type":"string"}}}`))
+	if !st.Valid || string(out) != `{"b":"lorem ipsum"}` {
+		t.Errorf("got %s valid=%v", out, st.Valid)
 	}
 }
