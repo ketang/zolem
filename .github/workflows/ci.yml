@@ -7,35 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Print Go version
-        run: go version
-
-      - name: Run quality gates
-        run: make check
-
-      - name: Scan for reachable vulnerabilities
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
-
-      - name: Build zolem
-        run: go build ./cmd/zolem
-
-      - name: Build zolemc
-        run: go build ./cmd/zolemc
-
-      - name: Smoke test
-        run: ./scripts/smoke.sh
+  gate:
+    uses: ./.github/workflows/gate.yml
 
   docker-image:
     runs-on: ubuntu-latest

@@ -1,0 +1,50 @@
+name: Gate
+
+# Reusable verification gate. Used by ci.yml, release.yml, and nightly.yml so a
+# publish job can `needs:` it and a failing gate publishes nothing.
+on:
+  workflow_call:
+    inputs:
+      force_failure:
+        description: Fail the first step (test control for the nightly gate proof).
+        type: boolean
+        default: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Force gate failure (test control)
+        if: ${{ inputs.force_failure }}
+        run: |
+          echo "force_failure requested" >&2
+          exit 1
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Print Go version
+        run: go version
+
+      - name: Run quality gates
+        run: make check
+
+      - name: Scan for reachable vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
+      - name: Build zolem
+        run: go build ./cmd/zolem
+
+      - name: Build zolemc
+        run: go build ./cmd/zolemc
+
+      - name: Smoke test
+        run: ./scripts/smoke.sh
