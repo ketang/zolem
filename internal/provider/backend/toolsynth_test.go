@@ -347,6 +347,8 @@ func FuzzSynthArgs(f *testing.F) {
 	for _, sc := range adversarialShapes() {
 		f.Add(sc)
 	}
+	f.Add(patternBomb(0))
+	f.Add(patternBomb(2))
 	for _, tc := range limitCases[:6] {
 		if len(tc.schema) < 8192 {
 			f.Add(tc.schema)
@@ -618,33 +620,144 @@ func TestSynthArgs_AdversarialShapesAreBounded(t *testing.T) {
 	}
 }
 
-func TestSynthArgs_ConcurrentAdversarialDoesNotStarveNormalCalls(t *testing.T) {
+// patternBomb: pattern of 1500 alternations of (?:(?:a{10}){10}){10},
+// optionally reached through refs.
+func patternBomb(refs int) string {
+	alt := strings.Repeat(`(?:(?:a{10}){10}){10}|`, 1500) + "b"
+	if refs == 0 {
+		return `{"type":"object","required":["x"],"properties":{"x":{"type":"string","pattern":"` + alt + `"}}}`
+	}
+	defs := []string{`"d0":{"type":"string","pattern":"` + alt + `"}`}
+	props := []string{}
+	for i := 1; i <= refs; i++ {
+		defs = append(defs, fmt.Sprintf(`"d%d":{"$ref":"#/$defs/d%d"}`, i, i-1))
+		props = append(props, fmt.Sprintf(`"p%d":{"$ref":"#/$defs/d%d"}`, i, i))
+	}
+	return `{"type":"object","properties":{` + strings.Join(props, ",") + `},"$defs":{` + strings.Join(defs, ",") + `}}`
+}
+
+func slotsFreeWithin(d time.Duration) bool {
+	end := time.Now().Add(d)
+	for time.Now().Before(end) {
+		if len(synthSem) == 0 {
+			return true
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	return len(synthSem) == 0
+}
+
+func TestSynthArgs_PatternBombsDoNotPinSlotsOrMemory(t *testing.T) {
+	var ms runtime.MemStats
+	for _, refs := range []int{0, 2, 8} {
+		t.Run(fmt.Sprintf("refs%d", refs), func(t *testing.T) {
+			captureLog(t)
+			runtime.ReadMemStats(&ms)
+			before := ms.TotalAlloc
+			start := time.Now()
+			out, st := synthesize(uniqueTool(), json.RawMessage(patternBomb(refs)))
+			el := time.Since(start)
+			runtime.ReadMemStats(&ms)
+			alloc := ms.TotalAlloc - before
+			t.Logf("refs=%d: %v, %d MB", refs, el, alloc>>20)
+			if el > time.Second || alloc > 200<<20 {
+				t.Errorf("took %v, %d MB", el, alloc>>20)
+			}
+			if !slotsFreeWithin(100 * time.Millisecond) {
+				t.Errorf("verification slot still held 100ms after return")
+			}
+			if !json.Valid(out) || !st.Valid && refs == 0 {
+				t.Errorf("out=%s valid=%v", out, st.Valid)
+			}
+		})
+	}
+}
+
+func TestSynthArgs_ConcurrentPatternBombsDoNotStarveNormalCalls(t *testing.T) {
 	captureLog(t)
 	var wg sync.WaitGroup
-	for i := 0; i < 16; i++ {
-		for _, schema := range []string{adversarialShapes()["big_instance_medium_schema"], adversarialShapes()["dag_anyOf"]} {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				start := time.Now()
-				synthesize(uniqueTool(), json.RawMessage(schema))
-				if el := time.Since(start); el > 2*time.Second {
-					t.Errorf("concurrent call took %v", el)
-				}
-			}()
-		}
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			synthesize(uniqueTool(), json.RawMessage(patternBomb(2)))
+		}()
 	}
 	wg.Wait()
-	// Abandoned work may briefly hold slots; verification must recover.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, st := synthesize(uniqueTool(), json.RawMessage(`{"type":"object","required":["a"],"properties":{"a":{"type":"string"}}}`)); st.Valid {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("normal call never verified again after adversarial load")
-		}
-		time.Sleep(50 * time.Millisecond)
+	start := time.Now()
+	_, st := synthesize(uniqueTool(), json.RawMessage(`{"type":"object","required":["a"],"properties":{"a":{"type":"string"}}}`))
+	if el := time.Since(start); !st.Valid || el > 500*time.Millisecond {
+		t.Errorf("normal call after adversarial load: valid=%v in %v", st.Valid, el)
+	}
+}
+
+func TestSynthArgs_AdversarialShapesDoNotPinSlots(t *testing.T) {
+	captureLog(t)
+	for name, schema := range adversarialShapes() {
+		synthesize(uniqueTool(), json.RawMessage(schema))
+		_ = name
+	}
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for len(synthSem) != 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(synthSem) != 0 {
+		t.Error("slots pinned 500ms after adversarial shapes returned")
+	}
+}
+
+func TestSynthArgs_RecursiveSchemasStayVerified(t *testing.T) {
+	for name, schema := range map[string]string{
+		"binary_tree": `{"type":"object","required":["t"],"properties":{"t":{"$ref":"#/$defs/n"}},"$defs":{"n":{"type":"object","properties":{"v":{"type":"integer"},"l":{"anyOf":[{"$ref":"#/$defs/n"},{"type":"null"}]},"r":{"anyOf":[{"$ref":"#/$defs/n"},{"type":"null"}]}}}}}`,
+		"kids_next":   `{"type":"object","required":["t"],"properties":{"t":{"$ref":"#/$defs/n"}},"$defs":{"n":{"type":"object","properties":{"v":{"type":"string"},"kids":{"type":"array","items":{"$ref":"#/$defs/n"}},"next":{"anyOf":[{"$ref":"#/$defs/n"},{"type":"null"}]}}}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, st := synthesize(uniqueTool(), json.RawMessage(schema))
+			if !st.Valid {
+				t.Fatalf("not verified: %s", out)
+			}
+			if err := oracle(t, []byte(schema), out); err != nil {
+				t.Fatalf("%s violates original schema: %v", out, err)
+			}
+		})
+	}
+}
+
+func TestSimpleArgs_FollowsRefsAndBranches(t *testing.T) {
+	doc, _ := jsonschema.UnmarshalJSON(strings.NewReader(`{"type":"object","required":["a","b","c","d"],"properties":{` +
+		`"a":{"$ref":"#/$defs/n"},"b":{"$ref":"#/$defs/e"},"c":{"anyOf":[{"type":"null"},{"type":"integer"}]},"d":{"type":["null","boolean"]}},` +
+		`"$defs":{"n":{"type":"integer"},"e":{"type":"string","enum":["q","r"]}}}`))
+	if got, want := string(simpleArgs(doc)), `{"a":42,"b":"q","c":42,"d":true}`; got != want {
+		t.Errorf("got %s want %s", got, want)
+	}
+	// Self-referencing and DAG schemas stay bounded.
+	cyc, _ := jsonschema.UnmarshalJSON(strings.NewReader(dagSchema("anyOf", 30)))
+	start := time.Now()
+	out := simpleArgs(cyc)
+	if time.Since(start) > 200*time.Millisecond || !json.Valid(out) {
+		t.Errorf("fallback not bounded: %v", time.Since(start))
+	}
+}
+
+func TestExpander_DropsPatternsAndCapsData(t *testing.T) {
+	doc, _ := jsonschema.UnmarshalJSON(strings.NewReader(`{"properties":{"pattern":{"type":"string","pattern":"^a+$"},"p":{"patternProperties":{"x":{}}}}}`))
+	ex := &expander{doc: doc}
+	out := ex.schema(doc, 0).(map[string]any)["properties"].(map[string]any)
+	if _, ok := out["pattern"].(map[string]any)["pattern"]; ok {
+		t.Error("pattern keyword should be dropped")
+	}
+	if _, ok := out["pattern"]; !ok {
+		t.Error("property named pattern must survive")
+	}
+	if _, ok := out["p"].(map[string]any)["patternProperties"]; ok {
+		t.Error("patternProperties should be dropped")
+	}
+	big := `{"properties":{"a":{"enum":["` + strings.Repeat("x", 100<<10) + `"]}}}`
+	doc, _ = jsonschema.UnmarshalJSON(strings.NewReader(big))
+	ex = &expander{doc: doc}
+	ex.schema(doc, 0)
+	if ex.err == nil {
+		t.Error("oversized enum data should refuse verification")
 	}
 }
 

@@ -32,9 +32,13 @@ const (
 	maxWork           = 20000 // generation steps (nodes, candidates, validations) per call
 	maxWorkTime       = 250 * time.Millisecond
 	maxNormalizeDepth = 64
-	maxExpandedNodes  = 500  // schema objects after inlining $refs; above this verification is skipped
-	maxInstanceNodes  = 2000 // JSON values generated per attempt
-	maxConcurrent     = 8    // concurrent verified syntheses
+	maxExpandedNodes  = 500       // schema objects after inlining $refs; above this verification is skipped
+	maxExpandedBytes  = 128 << 10 // approximate JSON size of the inlined tree (keys + enum/const/default data)
+	maxDataBytes      = 64 << 10  // enum/const/default bytes across the inlined tree
+	maxRecursion      = 2         // times one $ref target may appear on a single expansion path
+	maxValidationWork = 50000     // schema nodes x instance nodes per validation
+	maxInstanceNodes  = 2000      // JSON values generated per attempt
+	maxConcurrent     = 8         // concurrent verified syntheses
 	semWait           = 100 * time.Millisecond
 	hardTimeout       = maxWorkTime + 100*time.Millisecond
 
@@ -145,7 +149,9 @@ func synthesize(tool string, schema json.RawMessage) (json.RawMessage, synthStat
 		warnOnce(tool, "verification capacity exhausted")
 		return simpleArgs(doc), st
 	}
-	g := &synth{root: expanded, compiled: map[string]*jsonschema.Schema{}, deadline: time.Now().Add(maxWorkTime)}
+	g := &synth{root: expanded, compiled: map[string]*jsonschema.Schema{}, deadline: time.Now().Add(maxWorkTime),
+		// Bound validation work: (schema nodes) x (instance nodes) <= maxValidationWork.
+		instCap: min(maxInstanceNodes, max(64, maxValidationWork/max(ex.nodes, 1)))}
 	type result struct {
 		out   json.RawMessage
 		st    synthStats
@@ -246,6 +252,7 @@ type synth struct {
 	work      int
 	aborted   atomic.Bool
 	inst      int
+	instCap   int
 	deadline  time.Time
 	lastErr   error
 	produced  int
@@ -688,7 +695,7 @@ func (g *synth) arrayCandidates(sc *sch, depth int) []any {
 		n = max(maxOutputBytes/per, 1)
 	}
 	per := countInstance(item)
-	if allowed := (maxInstanceNodes - g.inst) / per; allowed < n {
+	if allowed := (g.instCap - g.inst) / per; allowed < n {
 		if allowed < 1 {
 			return []any{[]any{}}
 		}
@@ -883,17 +890,31 @@ func countObjects(v any) int {
 }
 
 // simpleArgs is the unverified type-walker used when the schema cannot be
-// compiled or exceeds the input limits: required properties (all properties
-// when required is absent) with constant values by type.
+// verified (compile failure, input limits, unsupported ref forms, timeouts):
+// required properties (all properties when required is absent) with constant
+// values by type. It follows in-document $refs a few hops, takes the first
+// enum/const value and the first non-null anyOf/oneOf branch, and visits at
+// most maxSimpleNodes schemas, so its work is bounded for any input.
 func simpleArgs(schema any) json.RawMessage {
-	out, _ := json.Marshal(simpleLeaf(schema, 0, true))
+	w := &simpleWalker{root: schema, budget: maxSimpleNodes}
+	out, _ := json.Marshal(w.leaf(schema, 0, 0, true))
 	if len(out) > maxOutputBytes {
 		return json.RawMessage("{}")
 	}
 	return out
 }
 
-func simpleLeaf(schema any, depth int, top bool) any {
+const (
+	maxSimpleNodes = 500
+	maxSimpleHops  = 3
+)
+
+type simpleWalker struct {
+	root   any
+	budget int
+}
+
+func (w *simpleWalker) leaf(schema any, depth, hops int, top bool) any {
 	m, ok := schema.(map[string]any)
 	if !ok {
 		if top {
@@ -901,7 +922,41 @@ func simpleLeaf(schema any, depth int, top bool) any {
 		}
 		return loremValue
 	}
+	if w.budget--; w.budget < 0 {
+		return loremValue
+	}
+	if ref, _ := m["$ref"].(string); ref != "" && hops < maxSimpleHops {
+		if target, _, ok := lookupPointer(w.root, ref); ok {
+			return w.leaf(target, depth, hops+1, top)
+		}
+	}
+	if c, ok := m["const"]; ok && !top {
+		return c
+	}
+	if e := listOf(m["enum"]); e != nil && !top {
+		return e[0]
+	}
+	if !top {
+		for _, key := range []string{"anyOf", "oneOf"} {
+			for _, b := range listOf(m[key]) {
+				if bm, ok := b.(map[string]any); ok && bm["type"] != "null" {
+					return w.leaf(b, depth+1, hops, false)
+				}
+			}
+		}
+	}
 	t, _ := m["type"].(string)
+	if ts, ok := m["type"].([]any); ok {
+		for _, e := range ts {
+			if s, _ := e.(string); s != "null" && s != "" {
+				t = s
+				break
+			}
+		}
+	}
+	if t == "" && (m["properties"] != nil || m["required"] != nil) {
+		t = "object"
+	}
 	if top && t != "" && t != "object" {
 		return map[string]any{}
 	}
@@ -938,7 +993,7 @@ func simpleLeaf(schema any, depth int, top bool) any {
 				result[k] = loremValue
 				continue
 			}
-			result[k] = simpleLeaf(p, depth+1, false)
+			result[k] = w.leaf(p, depth+1, hops, false)
 		}
 		return result
 	default:
@@ -1030,6 +1085,9 @@ var synthSem = make(chan struct{}, maxConcurrent)
 type expander struct {
 	doc   any
 	nodes int
+	bytes int // approximate size of the inlined tree (keys + data)
+	data  int // enum/const/default and other verbatim data bytes
+	path  map[string]int
 	err   error
 }
 
@@ -1064,8 +1122,16 @@ func (e *expander) schema(v any, hops int) any {
 	}
 	out := make(map[string]any, len(m))
 	for k, val := range m {
+		e.bytes += len(k) + 4
+		if e.bytes > maxExpandedBytes {
+			return e.fail("schema exceeds the verification byte limit after inlining $refs")
+		}
 		switch {
 		case k == "$ref" || k == "$id" || k == "$defs" || k == "definitions":
+		case k == "pattern" || k == "patternProperties":
+			// Dropped from the verification copy: compiling request-supplied
+			// regular expressions has unbounded CPU/memory cost, and the
+			// generator never builds strings from patterns anyway.
 		case schemaKeys[k]:
 			out[k] = e.schema(val, hops)
 		case schemaMapKeys[k]:
@@ -1094,6 +1160,11 @@ func (e *expander) schema(v any, hops int) any {
 			if containsRefKeyword(val) {
 				return e.fail("schema carries a reference keyword inside data")
 			}
+			d := dataSize(val)
+			e.bytes += d
+			if e.data += d; e.bytes > maxExpandedBytes || e.data > maxDataBytes {
+				return e.fail("schema exceeds the verification byte limit after inlining $refs")
+			}
 			out[k] = val
 		}
 	}
@@ -1105,14 +1176,25 @@ func (e *expander) schema(v any, hops int) any {
 	if !strings.HasPrefix(rs, "#") {
 		return e.fail("schema has a $ref that is not an in-document pointer")
 	}
-	if hops+1 > maxDepth {
-		return map[string]any{}
-	}
 	target, _, ok := lookupPointer(e.doc, rs)
 	if !ok {
 		return e.fail("schema has an unresolvable $ref")
 	}
+	if hops+1 > maxDepth || e.path[rs] >= maxRecursion {
+		// Cut recursion: keep only the target's type so the cut value is at
+		// least shaped like the real one.
+		cut := map[string]any{}
+		if t, ok := target["type"]; ok {
+			cut["type"] = t
+		}
+		return cut
+	}
+	if e.path == nil {
+		e.path = map[string]int{}
+	}
+	e.path[rs]++
 	exp, _ := e.schema(target, hops+1).(map[string]any)
+	e.path[rs]--
 	if e.err != nil {
 		return nil
 	}
@@ -1167,4 +1249,27 @@ func countInstance(v any) int {
 		}
 	}
 	return n
+}
+
+// dataSize approximates the JSON size of a decoded value without allocating.
+func dataSize(v any) int {
+	switch t := v.(type) {
+	case string:
+		return len(t) + 2
+	case map[string]any:
+		n := 2
+		for k, c := range t {
+			n += len(k) + 3 + dataSize(c)
+		}
+		return n
+	case []any:
+		n := 2
+		for _, c := range t {
+			n += dataSize(c) + 1
+		}
+		return n
+	case json.Number:
+		return len(t)
+	}
+	return 5
 }
