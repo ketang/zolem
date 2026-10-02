@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -29,10 +30,13 @@ const (
 	maxStringBytes    = 1024
 	maxArrayItems     = 64
 	maxWork           = 20000 // generation steps (nodes, candidates, validations) per call
-	maxWorkTime       = 500 * time.Millisecond
+	maxWorkTime       = 250 * time.Millisecond
 	maxNormalizeDepth = 64
-	maxExpansion      = 2000 // estimated schema-node visits per validation above which verification is skipped
+	maxExpandedNodes  = 500  // schema objects after inlining $refs; above this verification is skipped
+	maxInstanceNodes  = 2000 // JSON values generated per attempt
 	maxConcurrent     = 8    // concurrent verified syntheses
+	semWait           = 100 * time.Millisecond
+	hardTimeout       = maxWorkTime + 100*time.Millisecond
 
 	rootSchemaURL = "mem://zolem/tool-schema.json"
 	loremValue    = "lorem ipsum"
@@ -125,64 +129,101 @@ func synthesize(tool string, schema json.RawMessage) (json.RawMessage, synthStat
 		return simpleArgs(doc), st
 	}
 
-	if expansionEstimate(doc) > maxExpansion {
-		warnOnce(tool, "schema's $ref/combinator expansion exceeds the verification limit")
+	// Inline every $ref into a bounded, ref-free tree. Verification then costs
+	// at most (expanded schema nodes) x (generated instance nodes), so shared
+	// definitions, DAGs and cycles cannot blow up validation.
+	ex := &expander{doc: doc}
+	expanded, ok := ex.schema(root, 0).(map[string]any)
+	if ex.err != nil || !ok {
+		warnOnce(tool, ex.err)
 		return simpleArgs(doc), st
 	}
 
-	synthSem <- struct{}{}
-	defer func() { <-synthSem }()
+	select {
+	case synthSem <- struct{}{}:
+	case <-time.After(semWait):
+		warnOnce(tool, "verification capacity exhausted")
+		return simpleArgs(doc), st
+	}
+	g := &synth{root: expanded, compiled: map[string]*jsonschema.Schema{}, deadline: time.Now().Add(maxWorkTime)}
+	type result struct {
+		out   json.RawMessage
+		st    synthStats
+		cause any
+	}
+	done := make(chan result, 1)
+	go func() {
+		// The slot is released only when the goroutine really finishes, so
+		// abandoned (timed-out) work still counts against concurrency.
+		defer func() { <-synthSem }()
+		defer func() {
+			if r := recover(); r != nil {
+				done <- result{cause: fmt.Sprint("internal error: ", r)}
+			}
+		}()
+		out, st, cause := g.run(expanded, doc)
+		done <- result{out, st, cause}
+	}()
+	select {
+	case r := <-done:
+		if r.out == nil {
+			warnOnce(tool, r.cause)
+			return simpleArgs(doc), r.st
+		}
+		return r.out, r.st
+	case <-time.After(hardTimeout):
+		g.aborted.Store(true)
+		warnOnce(tool, "synthesis timed out")
+		return simpleArgs(doc), synthStats{Aborted: true}
+	}
+}
 
+// run compiles the expanded schema and generates verified arguments. A nil
+// output means the caller must use the fallback; cause says why.
+func (g *synth) run(expanded map[string]any, orig any) (json.RawMessage, synthStats, any) {
+	var st synthStats
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
 	compiler.UseLoader(rejectLoader{})
-	if err := compiler.AddResource(rootSchemaURL, doc); err != nil {
-		warnOnce(tool, err)
-		return simpleArgs(doc), st
+	if err := compiler.AddResource(rootSchemaURL, expanded); err != nil {
+		return nil, st, err
 	}
 	if _, err := compiler.Compile(rootSchemaURL); err != nil {
-		warnOnce(tool, err)
-		return simpleArgs(doc), st
+		return nil, st, err
 	}
+	g.compiler = compiler
 
-	g := &synth{root: doc, compiler: compiler, compiled: map[string]*jsonschema.Schema{}, deadline: time.Now().Add(maxWorkTime)}
 	var last json.RawMessage
 	seen := map[string]bool{}
 	for attempt := range maxWholeChecks {
 		g.rot = attempt
-		v, valid := g.node(&sch{m: root, vptrs: []string{""}}, 0)
+		g.inst = 0
+		v, valid := g.node(&sch{m: expanded, vptrs: []string{""}}, 0)
+		st.WholeValidations = g.whole
+		st.Work = g.work
+		if g.aborted.Load() {
+			st.Aborted = true
+			return nil, st, "generation work limit exceeded"
+		}
 		out, err := json.Marshal(v)
 		if _, isObj := v.(map[string]any); err != nil || !isObj || len(out) > maxOutputBytes {
-			out = simpleArgs(doc)
 			valid = false
-		}
-		last = out
-		if g.aborted {
-			out = simpleArgs(doc)
-			last = out
-			valid = false
-			g.lastErr = fmt.Errorf("generation work limit exceeded")
-			break
 		}
 		if valid {
 			st.Valid = true
+			return out, st, nil
+		}
+		last = out
+		if seen[string(last)] || g.exhausted {
 			break
 		}
-		if seen[string(out)] || g.exhausted {
-			break
-		}
-		seen[string(out)] = true
+		seen[string(last)] = true
 	}
-	st.WholeValidations = g.whole
-	st.Work = g.work
-	st.Aborted = g.aborted
-	if !st.Valid {
-		// Never emit arguments known to violate the schema (or oversized
-		// ones): use the bounded type-walker instead.
-		last = simpleArgs(doc)
-		warnOnce(tool, g.lastErr)
+	// Never emit arguments known to violate the schema (or oversized ones).
+	if g.lastErr == nil {
+		g.lastErr = fmt.Errorf("no valid candidate")
 	}
-	return last, st
+	return nil, st, g.lastErr
 }
 
 // sch is a schema node being generated: its decoded form, the JSON pointer of
@@ -203,7 +244,8 @@ type synth struct {
 	whole     int
 	exhausted bool
 	work      int
-	aborted   bool
+	aborted   atomic.Bool
+	inst      int
 	deadline  time.Time
 	lastErr   error
 	produced  int
@@ -213,12 +255,12 @@ type synth struct {
 // Once the per-call budget or deadline is exceeded generation is aborted and
 // the caller falls back to the unverified type-walker.
 func (g *synth) tick() bool {
-	if g.aborted {
+	if g.aborted.Load() {
 		return false
 	}
 	g.work++
 	if g.work > maxWork || (time.Now().After(g.deadline)) {
-		g.aborted = true
+		g.aborted.Store(true)
 		return false
 	}
 	return true
@@ -309,24 +351,8 @@ func (g *synth) node(sc *sch, depth int) (any, bool) {
 	return cands[0], false
 }
 
-// resolve follows in-document $ref chains, consuming depth per hop.
-func (g *synth) resolve(sc *sch, depth int) (*sch, int) {
-	for {
-		ref, _ := sc.m["$ref"].(string)
-		if ref == "" {
-			return sc, depth
-		}
-		depth++
-		if depth > maxDepth {
-			return nil, depth
-		}
-		target, ptr, ok := lookupPointer(g.root, ref)
-		if !ok {
-			return &sch{m: map[string]any{}, base: sc.base, vptrs: sc.vptrs}, depth
-		}
-		sc = &sch{m: target, base: ptr, vptrs: sc.vptrs}
-	}
-}
+// resolve is the identity: $refs were inlined by expander before generation.
+func (g *synth) resolve(sc *sch, depth int) (*sch, int) { return sc, depth }
 
 func lookupPointer(root any, ref string) (map[string]any, string, bool) {
 	if !strings.HasPrefix(ref, "#") {
@@ -463,7 +489,7 @@ func (g *synth) branchCandidates(sc *sch, depth int) []any {
 	}
 	var out []any
 	for _, bsc := range append(nonNull, null...) {
-		if len(out) >= maxLeafCandidates || g.aborted {
+		if len(out) >= maxLeafCandidates || g.aborted.Load() {
 			break
 		}
 		cands := g.candidates(bsc, depths[bsc])
@@ -659,11 +685,16 @@ func (g *synth) arrayCandidates(sc *sch, depth int) []any {
 	item, _ := g.node(&sch{m: items, base: itemPtr, vptrs: []string{itemPtr}}, depth+1)
 	enc, _ := json.Marshal(item)
 	if per := len(enc) + 1; per*n > maxOutputBytes {
-		n = maxOutputBytes / per
-		if n < 1 {
-			n = 1
-		}
+		n = max(maxOutputBytes/per, 1)
 	}
+	per := countInstance(item)
+	if allowed := (maxInstanceNodes - g.inst) / per; allowed < n {
+		if allowed < 1 {
+			return []any{[]any{}}
+		}
+		n = allowed
+	}
+	g.inst += n * per
 	g.produced += len(enc) * n
 	arr := make([]any, n)
 	for i := range arr {
@@ -990,66 +1021,150 @@ func normalizeGeminiNode(m map[string]any, depth int) {
 
 var synthSem = make(chan struct{}, maxConcurrent)
 
-// expansionEstimate bounds how many schema-node visits one validation can
-// make: it counts every schema object reachable from the root, expanding each
-// $ref and combinator branch at every place it is referenced (so a DAG of
-// shared definitions is counted as the tree it unfolds into). The result
-// saturates just above maxExpansion. Recursive $refs count once per cycle
-// (validation depth is bounded by the finite instance). The walk is memoized
-// per $ref target, so it is linear in the document size.
-func expansionEstimate(root any) int {
-	const sat = maxExpansion + 1
-	memo := map[string]int{}
-	inProgress := map[string]bool{}
-	var walk func(v any) int
-	var refCost func(ref string) int
-	add := func(a, b int) int { return min(a+b, sat) }
-	refCost = func(ref string) int {
-		if c, ok := memo[ref]; ok {
-			return c
-		}
-		if inProgress[ref] {
-			return 1
-		}
-		target, _, ok := lookupPointer(root, ref)
-		if !ok {
-			return 1
-		}
-		inProgress[ref] = true
-		c := walk(target)
-		delete(inProgress, ref)
-		memo[ref] = c
-		return c
+// expander inlines in-document $refs into a copy of the schema, walking only
+// schema positions (so property names like "enum" or "$ref" are just names).
+// It fails on anything it cannot inline soundly: non-local refs, anchors,
+// dynamic refs, ref keywords inside data, or more than maxExpandedNodes
+// schema objects. Annotation-free $ref siblings are merged; recursion deeper
+// than maxDepth hops is replaced by the accept-anything schema.
+type expander struct {
+	doc   any
+	nodes int
+	err   error
+}
+
+var (
+	schemaKeys     = map[string]bool{"items": true, "additionalProperties": true, "not": true, "if": true, "then": true, "else": true, "contains": true, "propertyNames": true, "unevaluatedItems": true, "unevaluatedProperties": true, "additionalItems": true}
+	schemaMapKeys  = map[string]bool{"properties": true, "patternProperties": true, "dependentSchemas": true}
+	schemaListKeys = map[string]bool{"anyOf": true, "oneOf": true, "allOf": true, "prefixItems": true}
+	annotationKeys = map[string]bool{"description": true, "title": true, "$comment": true, "examples": true, "example": true, "deprecated": true, "readOnly": true, "writeOnly": true}
+	refLikeKeys    = []string{"$ref", "$dynamicRef", "$recursiveRef", "$anchor", "$dynamicAnchor", "$recursiveAnchor"}
+)
+
+func (e *expander) fail(msg string) any {
+	if e.err == nil {
+		e.err = fmt.Errorf("%s", msg)
 	}
-	walk = func(v any) int {
-		switch t := v.(type) {
-		case map[string]any:
-			c := 1
-			for k, child := range t {
-				switch k {
-				case "enum", "const", "default", "examples", "example", "$defs", "definitions":
-					continue
-				}
-				c = add(c, walk(child))
-				if c >= sat {
-					return sat
-				}
-			}
-			if ref, ok := t["$ref"].(string); ok {
-				c = add(c, refCost(ref))
-			}
-			return c
-		case []any:
-			c := 0
-			for _, child := range t {
-				c = add(c, walk(child))
-				if c >= sat {
-					return sat
-				}
-			}
-			return c
-		}
-		return 0
+	return nil
+}
+
+func (e *expander) schema(v any, hops int) any {
+	m, ok := v.(map[string]any)
+	if !ok || e.err != nil {
+		return v
 	}
-	return walk(root)
+	e.nodes++
+	if e.nodes > maxExpandedNodes {
+		return e.fail("schema exceeds the verification size limit after inlining $refs")
+	}
+	for _, k := range refLikeKeys[1:] {
+		if _, has := m[k]; has {
+			return e.fail("schema uses " + k + ", which is not verified")
+		}
+	}
+	out := make(map[string]any, len(m))
+	for k, val := range m {
+		switch {
+		case k == "$ref" || k == "$id" || k == "$defs" || k == "definitions":
+		case schemaKeys[k]:
+			out[k] = e.schema(val, hops)
+		case schemaMapKeys[k]:
+			pm, ok := val.(map[string]any)
+			if !ok {
+				out[k] = val
+				continue
+			}
+			cp := make(map[string]any, len(pm))
+			for name, sub := range pm {
+				cp[name] = e.schema(sub, hops)
+			}
+			out[k] = cp
+		case schemaListKeys[k] || k == "items":
+			l, ok := val.([]any)
+			if !ok {
+				out[k] = val
+				continue
+			}
+			cp := make([]any, len(l))
+			for i, sub := range l {
+				cp[i] = e.schema(sub, hops)
+			}
+			out[k] = cp
+		default:
+			if containsRefKeyword(val) {
+				return e.fail("schema carries a reference keyword inside data")
+			}
+			out[k] = val
+		}
+	}
+	ref, has := m["$ref"]
+	if !has {
+		return out
+	}
+	rs, _ := ref.(string)
+	if !strings.HasPrefix(rs, "#") {
+		return e.fail("schema has a $ref that is not an in-document pointer")
+	}
+	if hops+1 > maxDepth {
+		return map[string]any{}
+	}
+	target, _, ok := lookupPointer(e.doc, rs)
+	if !ok {
+		return e.fail("schema has an unresolvable $ref")
+	}
+	exp, _ := e.schema(target, hops+1).(map[string]any)
+	if e.err != nil {
+		return nil
+	}
+	for k := range annotationKeys {
+		delete(out, k)
+	}
+	if len(out) == 0 {
+		return exp
+	}
+	for k := range out {
+		if _, clash := exp[k]; clash {
+			return map[string]any{"allOf": []any{exp, out}}
+		}
+	}
+	maps.Copy(exp, out)
+	return exp
+}
+
+func containsRefKeyword(v any) bool {
+	switch t := v.(type) {
+	case map[string]any:
+		for _, k := range refLikeKeys {
+			if _, has := t[k]; has {
+				return true
+			}
+		}
+		for _, c := range t {
+			if containsRefKeyword(c) {
+				return true
+			}
+		}
+	case []any:
+		for _, c := range t {
+			if containsRefKeyword(c) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func countInstance(v any) int {
+	n := 1
+	switch t := v.(type) {
+	case map[string]any:
+		for _, c := range t {
+			n += countInstance(c)
+		}
+	case []any:
+		for _, c := range t {
+			n += countInstance(c)
+		}
+	}
+	return n
 }

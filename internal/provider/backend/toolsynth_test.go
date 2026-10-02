@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -342,8 +344,8 @@ func FuzzSynthArgs(f *testing.F) {
 		f.Add(tc.schema)
 	}
 	f.Add(fanoutSchema(16))
-	for _, c := range []string{"anyOf", "oneOf", "allOf"} {
-		f.Add(dagSchema(c, 6))
+	for _, sc := range adversarialShapes() {
+		f.Add(sc)
 	}
 	for _, tc := range limitCases[:6] {
 		if len(tc.schema) < 8192 {
@@ -437,8 +439,8 @@ func TestSynthArgs_FanoutIsBounded(t *testing.T) {
 	if el := time.Since(start); el > time.Second {
 		t.Fatalf("took %v, want well under a second", el)
 	}
-	if !st.Aborted || st.Work > maxWork+1 {
-		t.Errorf("expected work-budget abort within %d units, got aborted=%v work=%d", maxWork, st.Aborted, st.Work)
+	if st.Work > maxWork+1 {
+		t.Errorf("work %d exceeds budget %d", st.Work, maxWork)
 	}
 	if !json.Valid(out) || !strings.Contains(buf.String(), "do not satisfy schema for tool") {
 		t.Errorf("want fallback JSON plus warning; out=%s log=%q", out, buf.String())
@@ -494,24 +496,149 @@ func TestSynthArgs_RefDAGExpansionIsBounded(t *testing.T) {
 	}
 }
 
-func TestExpansionEstimate(t *testing.T) {
-	doc, _ := jsonschema.UnmarshalJSON(strings.NewReader(dagSchema("anyOf", 6)))
-	if got := expansionEstimate(doc); got <= maxExpansion {
-		t.Errorf("DAG estimate %d should exceed %d", got, maxExpansion)
+func TestExpander(t *testing.T) {
+	parse := func(in string) map[string]any {
+		doc, err := jsonschema.UnmarshalJSON(strings.NewReader(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return doc.(map[string]any)
 	}
-	doc, _ = jsonschema.UnmarshalJSON(strings.NewReader(dagSchema("anyOf", 1)))
-	if got := expansionEstimate(doc); got > maxExpansion {
-		t.Errorf("small DAG estimate %d should not exceed %d", got, maxExpansion)
+	// Property names that look like keywords are just names; refs inline.
+	root := parse(`{"type":"object","properties":{"enum":{"$ref":"#/$defs/a","description":"d"},"default":{"type":"string"}},"$defs":{"a":{"type":"integer"}}}`)
+	ex := &expander{doc: root}
+	out := ex.schema(root, 0).(map[string]any)
+	if ex.err != nil {
+		t.Fatal(ex.err)
 	}
-	for _, tc := range supportedCases {
-		doc, _ := jsonschema.UnmarshalJSON(strings.NewReader(tc.schema))
-		if got := expansionEstimate(doc); got > maxExpansion/10 {
-			t.Errorf("%s: ordinary schema estimate %d too high", tc.name, got)
+	props := out["properties"].(map[string]any)
+	if props["enum"].(map[string]any)["type"] != "integer" || out["$defs"] != nil {
+		t.Errorf("not inlined: %v", out)
+	}
+	for name, in := range map[string]string{
+		"anchor_ref":   `{"properties":{"a":{"$ref":"#x"}}}`,
+		"abs_ref":      `{"properties":{"a":{"$ref":"mem://zolem/tool-schema.json#/$defs/a"}},"$defs":{"a":{}}}`,
+		"dynamic_ref":  `{"properties":{"a":{"$dynamicRef":"#a"}}}`,
+		"recursiveRef": `{"$recursiveRef":"#"}`,
+		"anchor":       `{"$anchor":"a"}`,
+		"ref_in_data":  `{"properties":{"a":{"enum":[{"$ref":"x"}]}}}`,
+		"unresolvable": `{"properties":{"a":{"$ref":"#/$defs/nope"}}}`,
+	} {
+		d := parse(in)
+		ex := &expander{doc: d}
+		ex.schema(d, 0)
+		if ex.err == nil {
+			t.Errorf("%s: expected expansion to be refused", name)
 		}
 	}
-	// Recursive refs terminate.
-	doc, _ = jsonschema.UnmarshalJSON(strings.NewReader(`{"$ref":"#/$defs/n","$defs":{"n":{"properties":{"n":{"$ref":"#/$defs/n"}}}}}`))
-	_ = expansionEstimate(doc)
+	// Sibling clash wraps in allOf.
+	d := parse(`{"properties":{"a":{"$ref":"#/$defs/a","type":"string"}},"$defs":{"a":{"type":"integer"}}}`)
+	ex = &expander{doc: d}
+	if got := ex.schema(d, 0).(map[string]any)["properties"].(map[string]any)["a"].(map[string]any); got["allOf"] == nil {
+		t.Errorf("clash should wrap in allOf: %v", got)
+	}
+	// Ordinary schemas stay verified.
+	for _, tc := range supportedCases {
+		d := parse(tc.schema)
+		ex := &expander{doc: d}
+		ex.schema(d, 0)
+		if ex.err != nil || ex.nodes > maxExpandedNodes/5 {
+			t.Errorf("%s: err=%v nodes=%d", tc.name, ex.err, ex.nodes)
+		}
+	}
+}
+
+// adversarial request-supplied schemas that previously (or naively) blow up
+// validation time or memory.
+func adversarialShapes() map[string]string {
+	m := map[string]string{}
+	for _, comb := range []string{"anyOf", "oneOf", "allOf"} {
+		m["dag_"+comb] = dagSchema(comb, 6)
+	}
+	m["fanout_cycle"] = fanoutSchema(16)
+	// DAG whose entry point is a property literally named like a keyword.
+	for _, name := range []string{"enum", "default", "const", "examples", "$defs", "$ref"} {
+		m["dag_prop_"+name] = strings.Replace(dagSchema("anyOf", 6), `"properties":{"x"`, `"properties":{"`+name+`"`, 1)
+		m["dag_prop_"+name] = strings.Replace(m["dag_prop_"+name], `"required":["x"]`, `"required":["`+name+`"]`, 1)
+	}
+	// Absolute-URL and $anchor refs to the same DAG.
+	abs := dagSchema("anyOf", 6)
+	for i := 0; i <= 6; i++ {
+		abs = strings.ReplaceAll(abs, fmt.Sprintf(`"#/$defs/d%d"`, i), fmt.Sprintf(`"mem://zolem/tool-schema.json#/$defs/d%d"`, i))
+	}
+	m["dag_absolute_ref"] = abs
+	anch := dagSchema("anyOf", 6)
+	for i := 0; i <= 6; i++ {
+		anch = strings.ReplaceAll(anch, fmt.Sprintf(`"#/$defs/d%d"`, i), fmt.Sprintf(`"#a%d"`, i))
+		anch = strings.Replace(anch, fmt.Sprintf(`"d%d":{`, i), fmt.Sprintf(`"d%d":{"$anchor":"a%d",`, i, i), 1)
+	}
+	m["dag_anchor_ref"] = anch
+	m["dag_dynamicRef"] = strings.ReplaceAll(dagSchema("anyOf", 6), `"$ref"`, `"$dynamicRef"`)
+	// Cyclic fan-out through property names and $defs inside properties.
+	var br []string
+	for i := 0; i < 16; i++ {
+		br = append(br, `{"type":"object","required":["enum"],"properties":{"enum":{"$ref":"#/$defs/a"}}}`)
+	}
+	m["cycle_prop_enum"] = `{"type":"object","required":["x"],"properties":{"x":{"$ref":"#/$defs/a"}},"$defs":{"a":{"anyOf":[` + strings.Join(br, ",") + `]}}}`
+	// Big generated instance over a medium schema.
+	var triv []string
+	for i := 0; i < 450; i++ {
+		triv = append(triv, `{"minLength":0}`)
+	}
+	arr := `{"type":"array","minItems":64,"items":%s}`
+	inner := `{"type":"string","allOf":[` + strings.Join(triv, ",") + `]}`
+	m["big_instance_medium_schema"] = `{"type":"object","required":["a"],"properties":{"a":` +
+		fmt.Sprintf(arr, fmt.Sprintf(arr, fmt.Sprintf(arr, inner))) + `}}`
+	return m
+}
+
+func TestSynthArgs_AdversarialShapesAreBounded(t *testing.T) {
+	var ms runtime.MemStats
+	for name, schema := range adversarialShapes() {
+		t.Run(name, func(t *testing.T) {
+			captureLog(t)
+			runtime.ReadMemStats(&ms)
+			before := ms.TotalAlloc
+			start := time.Now()
+			out, _ := synthesize(uniqueTool(), json.RawMessage(schema))
+			el := time.Since(start)
+			runtime.ReadMemStats(&ms)
+			alloc := ms.TotalAlloc - before
+			t.Logf("%s: %v, %d MB", name, el, alloc>>20)
+			if el > time.Second {
+				t.Errorf("took %v, want <1s", el)
+			}
+			if alloc > 200<<20 {
+				t.Errorf("allocated %d MB, want <200 MB", alloc>>20)
+			}
+			if !json.Valid(out) || len(out) > maxOutputBytes {
+				t.Errorf("bad output (%d bytes)", len(out))
+			}
+		})
+	}
+}
+
+func TestSynthArgs_ConcurrentAdversarialDoesNotStarveNormalCalls(t *testing.T) {
+	captureLog(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		for _, schema := range []string{adversarialShapes()["big_instance_medium_schema"], adversarialShapes()["dag_anyOf"]} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				start := time.Now()
+				synthesize(uniqueTool(), json.RawMessage(schema))
+				if el := time.Since(start); el > 2*time.Second {
+					t.Errorf("concurrent call took %v", el)
+				}
+			}()
+		}
+	}
+	wg.Wait()
+	_, st := synthesize(uniqueTool(), json.RawMessage(`{"type":"object","required":["a"],"properties":{"a":{"type":"string"}}}`))
+	if !st.Valid {
+		t.Error("normal call not verified after adversarial load")
+	}
 }
 
 func TestSynthArgs_InvalidResultUsesBoundedFallback(t *testing.T) {
