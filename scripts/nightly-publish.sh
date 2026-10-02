@@ -23,7 +23,7 @@ FORCE_REPUBLISH="${FORCE_REPUBLISH:-false}"
 REPO="$GITHUB_REPOSITORY"
 IMG=ghcr.io/ketang/zolem
 B="$(git rev-parse HEAD)"
-IDENTITY_RE='^https://github.com/ketang/zolem/\.github/workflows/nightly\.yml@'
+IDENTITY_RE='^https://github\.com/ketang/zolem/\.github/workflows/nightly\.yml@refs/heads/main$'
 OIDC_ISSUER=https://token.actions.githubusercontent.com
 
 stop() {
@@ -37,8 +37,10 @@ digest_of() {
   docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' 2>/dev/null | jq -r .digest 2>/dev/null || true
 }
 
-# Retry a command a few times; used for the 4.3 -> 4.4 hand-off so a transient
-# API error cannot leave the public release deleted.
+# Retry a command a few times; used for steps 4.3 and 4.4 so a transient API
+# error cannot leave the public release deleted. Must be given idempotent
+# commands (hence the delete_public_release wrapper).
+# shellcheck disable=SC2317  # invoked via retry callers below
 retry() {
   local n
   for n in 1 2 3 4 5; do
@@ -47,6 +49,24 @@ retry() {
     sleep $((n * 5))
   done
   return 1
+}
+
+# shellcheck disable=SC2317  # invoked indirectly via retry
+delete_public_release() {
+  if gh release view nightly >/dev/null 2>&1; then
+    gh release delete nightly --yes
+  fi
+}
+
+# Print the first line of stdin without closing the pipe early (SIGPIPE-safe
+# under pipefail).
+first_line() { awk 'NR==1'; }
+
+# Revision label of the linux/amd64 image behind a ref: the commit it was built
+# from. Empty if it cannot be determined.
+image_commit() {
+  docker buildx imagetools inspect "$1" --format '{{json .Image}}' 2>/dev/null |
+    jq -r '(.["linux/amd64"] // .) | (.config // .Config // {}) | .Labels["org.opencontainers.image.revision"] // empty' 2>/dev/null || true
 }
 
 notes_for() {
@@ -60,28 +80,41 @@ gather_facts() {
   local row body
   HAS_DRAFT=false DRAFT_COMMIT=""
   row="$(gh api --paginate "repos/$REPO/releases" \
-    --jq '.[] | select(.draft and .tag_name=="nightly-candidate") | [.id, .target_commitish] | @tsv' | head -n1)"
+    --jq '.[] | select(.draft and .tag_name=="nightly-candidate") | [.id, .target_commitish] | @tsv' | first_line)"
   if [ -n "$row" ]; then
     HAS_DRAFT=true
     DRAFT_COMMIT="${row#*$'\t'}"
   fi
   HAS_RELEASE=false RELEASE_COMMIT=unknown
-  if body="$(gh api "repos/$REPO/releases/tags/nightly" --jq .body 2>/dev/null)"; then
+  # Only a clear 404 means "no public release"; any other failure (5xx, rate
+  # limit, network) aborts the run with no state change.
+  local err
+  err="$(mktemp)"
+  if body="$(gh api "repos/$REPO/releases/tags/nightly" --jq .body 2>"$err")"; then
     HAS_RELEASE=true
     if [[ "$body" =~ ^([0-9a-f]{40})([[:space:]]|$) ]]; then
       RELEASE_COMMIT="${BASH_REMATCH[1]}"
     fi
+  elif grep -q 'HTTP 404' "$err"; then
+    :
+  else
+    echo "cannot determine public nightly release state:" >&2
+    cat "$err" >&2
+    exit 1
   fi
+  rm -f "$err"
   NIGHTLY_DIGEST="$(digest_of "$IMG:nightly")"
   CANDIDATE_DIGEST="$(digest_of "$IMG:nightly-candidate")"
+  CANDIDATE_COMMIT="$(image_commit "$IMG:nightly-candidate")"
   echo "facts: draft=$HAS_DRAFT($DRAFT_COMMIT) release=$HAS_RELEASE($RELEASE_COMMIT)" \
-    "nightly=$NIGHTLY_DIGEST candidate=$CANDIDATE_DIGEST build=$B tag=$(git ls-remote origin refs/tags/nightly | cut -f1)"
+    "nightly=$NIGHTLY_DIGEST candidate=$CANDIDATE_DIGEST($CANDIDATE_COMMIT) build=$B tag=$(git ls-remote origin refs/tags/nightly | cut -f1)"
 }
 
 classify() {
   HAS_DRAFT="$HAS_DRAFT" DRAFT_COMMIT="$DRAFT_COMMIT" \
     HAS_RELEASE="$HAS_RELEASE" RELEASE_COMMIT="$RELEASE_COMMIT" \
     NIGHTLY_DIGEST="$NIGHTLY_DIGEST" CANDIDATE_DIGEST="$CANDIDATE_DIGEST" \
+    CANDIDATE_COMMIT="$CANDIDATE_COMMIT" \
     BUILD_COMMIT="$B" FORCE_REPUBLISH="$FORCE_REPUBLISH" \
     ./scripts/nightly-state.sh
 }
@@ -116,11 +149,14 @@ build_and_stage() {
   cosign sign --yes "$IMG:nightly-candidate@$d"
 }
 
-# Step 3: verify the staged set (draft assets and candidate image).
+# Step 3: verify the staged set (draft assets and candidate image) for commit
+# $1: the candidate image must have been built from that commit, so a stale
+# image from an earlier completed run can never validate a partial draft.
 verify_staged() {
-  local id d f row
+  local want="$1" id d f
+  [ "$(image_commit "$IMG:nightly-candidate")" = "$want" ] || return 1
   id="$(gh api --paginate "repos/$REPO/releases" \
-    --jq '.[] | select(.draft and .tag_name=="nightly-candidate") | .id' | head -n1)"
+    --jq '.[] | select(.draft and .tag_name=="nightly-candidate") | .id' | first_line)"
   [ -n "$id" ] || return 1
   rm -rf verify && mkdir verify
   gh api "repos/$REPO/releases/$id" --jq '.assets[] | [.id, .name] | @tsv' > verify.list
@@ -153,26 +189,30 @@ promote() {
   git tag -f nightly "$commit"
   git push -f origin refs/tags/nightly
   # 4.3: delete the old public release only, keeping the tag.
-  if gh release view nightly >/dev/null 2>&1; then
-    gh release delete nightly --yes
-  fi
+  retry delete_public_release
   stop after_4_3
   # 4.4: publish the draft as the new nightly.
-  gh release edit nightly-candidate --tag nightly --draft=false --prerelease \
+  retry gh release edit nightly-candidate --tag nightly --draft=false --prerelease \
     --title Nightly --notes "$(notes_for "$commit")"
 }
 
+# Every state with a draft verifies it (including the candidate image's commit)
+# before promoting; a draft that fails verification is deleted and rebuilt.
 for _ in 1 2 3; do
   gather_facts
   state="$(classify)"
   echo "state: $state"
   case "$state" in
     S-release-deleted | S-image-moved)
-      promote "$DRAFT_COMMIT"
-      [ "$DRAFT_COMMIT" != "$B" ] || exit 0
+      if verify_staged "$DRAFT_COMMIT"; then
+        promote "$DRAFT_COMMIT"
+        [ "$DRAFT_COMMIT" != "$B" ] || exit 0
+      else
+        gh release delete nightly-candidate --yes
+      fi
       ;;
     S-staged)
-      if [ "$DRAFT_COMMIT" = "$B" ] && verify_staged; then
+      if [ "$DRAFT_COMMIT" = "$B" ] && verify_staged "$B"; then
         promote "$B"
         exit 0
       fi
@@ -183,7 +223,7 @@ for _ in 1 2 3; do
       ;;
     S-ready | S-bootstrap)
       build_and_stage
-      verify_staged
+      verify_staged "$B"
       promote "$B"
       exit 0
       ;;

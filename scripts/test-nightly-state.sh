@@ -9,7 +9,8 @@ B=bbbb
 
 # classify HAS_DRAFT HAS_RELEASE RELEASE_COMMIT NIGHTLY_DIGEST CANDIDATE_DIGEST FORCE
 classify() {
-  HAS_DRAFT="$1" DRAFT_COMMIT="${DRAFT_COMMIT:-dddd}" HAS_RELEASE="$2" \
+  HAS_DRAFT="$1" DRAFT_COMMIT="${DRAFT_COMMIT:-dddd}" \
+    CANDIDATE_COMMIT="${CANDIDATE_COMMIT-dddd}" HAS_RELEASE="$2" \
     RELEASE_COMMIT="$3" NIGHTLY_DIGEST="$4" CANDIDATE_DIGEST="$5" \
     BUILD_COMMIT="$B" FORCE_REPUBLISH="$6" ./scripts/nightly-state.sh
 }
@@ -38,6 +39,11 @@ expect S-image-moved true true "$B" sha256:aa sha256:aa true
 expect S-staged true true "$B" sha256:aa sha256:bb true
 # Missing digests are never "equal" (empty != empty for a draft+release).
 expect S-staged true true "$B" "" "" false
+
+# Stale equal digests from an earlier completed run must not look like a
+# promotion in progress when the candidate image is from another commit.
+CANDIDATE_COMMIT=old expect S-staged true true "$B" sha256:aa sha256:aa false
+CANDIDATE_COMMIT="" expect S-staged true true "$B" sha256:aa sha256:aa false
 
 # Exhaustive: exactly one valid state for every combination.
 valid=" S-release-deleted S-image-moved S-staged S-done S-ready S-bootstrap "

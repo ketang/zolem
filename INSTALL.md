@@ -163,7 +163,8 @@ docker run --rm -p 127.0.0.1:8080:8080 \
 published port as shown in the quick-start examples in [README.md](README.md).
 
 Image tags have no `v` prefix: `:0.1.0` (pinned release), `:latest` (latest
-stable), `:nightly`.
+stable), `:prerelease` (latest pre-release tag, e.g. `v0.3.0-rc1`),
+`:nightly`.
 
 ---
 

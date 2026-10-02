@@ -21,6 +21,7 @@ check:
 		exit 1; \
 	fi
 	./scripts/test-nightly-state.sh
+	./scripts/test-nightly-publish.sh
 	go test ./cmd/...
 	go test -race ./internal/...
 
