@@ -213,7 +213,10 @@ version `nightly`; use the release notes (or the image's
 
 Publication is staged: assets and images are uploaded and verified under
 internal staging names first, then promoted. If a nightly download 404s, retry
-in a few minutes. The `:nightly-candidate`, `:nightly-candidate-amd64`, and
+in a few minutes. Known limitation: promotion replaces the old public release
+in two consecutive steps (delete, then publish the draft, both retried); if a
+run dies between them, the nightly release may be missing until the next
+successful run. The `:nightly-candidate`, `:nightly-candidate-amd64`, and
 `:nightly-candidate-arm64` image tags are internal staging tags that share
 manifests with `:nightly`; do not use or delete them. They are overwritten by
 the next run.
@@ -232,6 +235,10 @@ cosign verify-blob \
 Verify downloads with `sha256sum -c --ignore-missing checksums.txt`;
 `checksums.txt` has its own `checksums.txt.bundle`, signed by the same
 identity. The workflow signs every archive, every SBOM, and `checksums.txt`.
+
+Both nightly and tagged-release publication are gated on `make check`, the
+build and smoke checks, and `govulncheck`, so a newly published vulnerability
+advisory can block a release or nightly until it is addressed.
 
 Nightly builds are not recommended for production use.
 

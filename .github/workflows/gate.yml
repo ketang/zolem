@@ -13,6 +13,8 @@ on:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Force gate failure (test control)
