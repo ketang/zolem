@@ -31,6 +31,8 @@ const (
 	maxWork           = 20000 // generation steps (nodes, candidates, validations) per call
 	maxWorkTime       = 500 * time.Millisecond
 	maxNormalizeDepth = 64
+	maxExpansion      = 2000 // estimated schema-node visits per validation above which verification is skipped
+	maxConcurrent     = 8    // concurrent verified syntheses
 
 	rootSchemaURL = "mem://zolem/tool-schema.json"
 	loremValue    = "lorem ipsum"
@@ -123,6 +125,14 @@ func synthesize(tool string, schema json.RawMessage) (json.RawMessage, synthStat
 		return simpleArgs(doc), st
 	}
 
+	if expansionEstimate(doc) > maxExpansion {
+		warnOnce(tool, "schema's $ref/combinator expansion exceeds the verification limit")
+		return simpleArgs(doc), st
+	}
+
+	synthSem <- struct{}{}
+	defer func() { <-synthSem }()
+
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
 	compiler.UseLoader(rejectLoader{})
@@ -167,6 +177,9 @@ func synthesize(tool string, schema json.RawMessage) (json.RawMessage, synthStat
 	st.Work = g.work
 	st.Aborted = g.aborted
 	if !st.Valid {
+		// Never emit arguments known to violate the schema (or oversized
+		// ones): use the bounded type-walker instead.
+		last = simpleArgs(doc)
 		warnOnce(tool, g.lastErr)
 	}
 	return last, st
@@ -204,7 +217,7 @@ func (g *synth) tick() bool {
 		return false
 	}
 	g.work++
-	if g.work > maxWork || (g.work%64 == 0 && time.Now().After(g.deadline)) {
+	if g.work > maxWork || (time.Now().After(g.deadline)) {
 		g.aborted = true
 		return false
 	}
@@ -973,4 +986,70 @@ func normalizeGeminiNode(m map[string]any, depth int) {
 			}
 		}
 	}
+}
+
+var synthSem = make(chan struct{}, maxConcurrent)
+
+// expansionEstimate bounds how many schema-node visits one validation can
+// make: it counts every schema object reachable from the root, expanding each
+// $ref and combinator branch at every place it is referenced (so a DAG of
+// shared definitions is counted as the tree it unfolds into). The result
+// saturates just above maxExpansion. Recursive $refs count once per cycle
+// (validation depth is bounded by the finite instance). The walk is memoized
+// per $ref target, so it is linear in the document size.
+func expansionEstimate(root any) int {
+	const sat = maxExpansion + 1
+	memo := map[string]int{}
+	inProgress := map[string]bool{}
+	var walk func(v any) int
+	var refCost func(ref string) int
+	add := func(a, b int) int { return min(a+b, sat) }
+	refCost = func(ref string) int {
+		if c, ok := memo[ref]; ok {
+			return c
+		}
+		if inProgress[ref] {
+			return 1
+		}
+		target, _, ok := lookupPointer(root, ref)
+		if !ok {
+			return 1
+		}
+		inProgress[ref] = true
+		c := walk(target)
+		delete(inProgress, ref)
+		memo[ref] = c
+		return c
+	}
+	walk = func(v any) int {
+		switch t := v.(type) {
+		case map[string]any:
+			c := 1
+			for k, child := range t {
+				switch k {
+				case "enum", "const", "default", "examples", "example", "$defs", "definitions":
+					continue
+				}
+				c = add(c, walk(child))
+				if c >= sat {
+					return sat
+				}
+			}
+			if ref, ok := t["$ref"].(string); ok {
+				c = add(c, refCost(ref))
+			}
+			return c
+		case []any:
+			c := 0
+			for _, child := range t {
+				c = add(c, walk(child))
+				if c >= sat {
+					return sat
+				}
+			}
+			return c
+		}
+		return 0
+	}
+	return walk(root)
 }

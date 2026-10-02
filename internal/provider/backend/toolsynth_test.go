@@ -247,6 +247,23 @@ func fanoutSchema(n int) string {
 	return `{"type":"object","required":["x"],"properties":{"x":{"$ref":"#/$defs/a"}},"$defs":{"a":{"anyOf":[` + strings.Join(br, ",") + `]}}}`
 }
 
+// dagSchema: d_i is a comb ("anyOf", "oneOf" or "allOf") of 16 $refs to
+// d_{i-1}; d_0 always fails. Non-cyclic, but validation cost is 16^k.
+func dagSchema(comb string, k int) string {
+	refs := func(i int) string {
+		r := make([]string, 16)
+		for j := range r {
+			r[j] = fmt.Sprintf(`{"$ref":"#/$defs/d%d"}`, i)
+		}
+		return strings.Join(r, ",")
+	}
+	defs := []string{`"d0":{"not":{}}`}
+	for i := 1; i <= k; i++ {
+		defs = append(defs, fmt.Sprintf(`"d%d":{"%s":[%s]}`, i, comb, refs(i-1)))
+	}
+	return fmt.Sprintf(`{"type":"object","required":["x"],"properties":{"x":{"$ref":"#/$defs/d%d"}},"$defs":{%s}}`, k, strings.Join(defs, ","))
+}
+
 var limitCases = []struct{ name, schema string }{
 	{"pattern", `{"type":"object","required":["a"],"properties":{"a":{"type":"string","pattern":"^[0-9]{5}$"}}}`},
 	{"not", `{"type":"object","required":["a"],"properties":{"a":{"not":{"type":"string"}}}}`},
@@ -257,6 +274,7 @@ var limitCases = []struct{ name, schema string }{
 	{"nested_arrays", `{"type":"object","required":["a"],"properties":{"a":{"type":"array","minItems":64,"items":{"type":"array","minItems":64,"items":{"type":"array","minItems":64,"items":{"type":"array","minItems":64,"items":{"type":"string","minLength":1000}}}}}}}`},
 	{"recursive_ref", `{"type":"object","required":["n"],"properties":{"n":{"$ref":"#/$defs/n"}},"$defs":{"n":{"type":"object","required":["n"],"properties":{"n":{"$ref":"#/$defs/n"}}}}}`},
 	{"fanout_ref_cycle_anyOf", fanoutSchema(16)},
+	{"dag_anyOf", dagSchema("anyOf", 6)},
 	{"many_oneOf", `{"type":"object","required":["a"],"properties":{"a":{"oneOf":[{"type":"integer"},{"type":"integer"},{"type":"integer"},{"type":"integer"}]}}}`},
 }
 
@@ -324,6 +342,9 @@ func FuzzSynthArgs(f *testing.F) {
 		f.Add(tc.schema)
 	}
 	f.Add(fanoutSchema(16))
+	for _, c := range []string{"anyOf", "oneOf", "allOf"} {
+		f.Add(dagSchema(c, 6))
+	}
 	for _, tc := range limitCases[:6] {
 		if len(tc.schema) < 8192 {
 			f.Add(tc.schema)
@@ -449,5 +470,61 @@ func TestSynthArgs_FalseBooleanPropertySchema(t *testing.T) {
 	out, st := synthesize(uniqueTool(), json.RawMessage(`{"type":"object","properties":{"a":false,"b":{"type":"string"}}}`))
 	if !st.Valid || string(out) != `{"b":"lorem ipsum"}` {
 		t.Errorf("got %s valid=%v", out, st.Valid)
+	}
+}
+
+func TestSynthArgs_RefDAGExpansionIsBounded(t *testing.T) {
+	for _, comb := range []string{"anyOf", "oneOf", "allOf"} {
+		for _, k := range []int{6, 30} {
+			t.Run(fmt.Sprintf("%s_k%d", comb, k), func(t *testing.T) {
+				buf := captureLog(t)
+				start := time.Now()
+				out, st := synthesize(uniqueTool(), json.RawMessage(dagSchema(comb, k)))
+				if el := time.Since(start); el > time.Second {
+					t.Fatalf("took %v, want <1s", el)
+				}
+				if !json.Valid(out) || len(out) > maxOutputBytes || st.Valid {
+					t.Errorf("want bounded fallback JSON, got %s valid=%v", out, st.Valid)
+				}
+				if !strings.Contains(buf.String(), "do not satisfy schema for tool") {
+					t.Errorf("missing warning: %q", buf.String())
+				}
+			})
+		}
+	}
+}
+
+func TestExpansionEstimate(t *testing.T) {
+	doc, _ := jsonschema.UnmarshalJSON(strings.NewReader(dagSchema("anyOf", 6)))
+	if got := expansionEstimate(doc); got <= maxExpansion {
+		t.Errorf("DAG estimate %d should exceed %d", got, maxExpansion)
+	}
+	doc, _ = jsonschema.UnmarshalJSON(strings.NewReader(dagSchema("anyOf", 1)))
+	if got := expansionEstimate(doc); got > maxExpansion {
+		t.Errorf("small DAG estimate %d should not exceed %d", got, maxExpansion)
+	}
+	for _, tc := range supportedCases {
+		doc, _ := jsonschema.UnmarshalJSON(strings.NewReader(tc.schema))
+		if got := expansionEstimate(doc); got > maxExpansion/10 {
+			t.Errorf("%s: ordinary schema estimate %d too high", tc.name, got)
+		}
+	}
+	// Recursive refs terminate.
+	doc, _ = jsonschema.UnmarshalJSON(strings.NewReader(`{"$ref":"#/$defs/n","$defs":{"n":{"properties":{"n":{"$ref":"#/$defs/n"}}}}}`))
+	_ = expansionEstimate(doc)
+}
+
+func TestSynthArgs_InvalidResultUsesBoundedFallback(t *testing.T) {
+	buf := captureLog(t)
+	out := SynthArgsForTool(uniqueTool(), json.RawMessage(`{"type":"object","required":["a"],"properties":{"a":{"type":"integer","minimum":1,"maximum":0}}}`))
+	if string(out) != `{"a":42}` {
+		t.Errorf("want type-walker fallback, got %s", out)
+	}
+	if !strings.Contains(buf.String(), "do not satisfy") {
+		t.Error("missing warning")
+	}
+	big := SynthArgsForTool(uniqueTool(), json.RawMessage(`{"type":"object","required":["t"],"properties":{"t":{"type":"array","minItems":1000000000,"items":{"type":"string","minLength":1000}}}}`))
+	if len(big) > 100 {
+		t.Errorf("oversized invalid args emitted: %d bytes", len(big))
 	}
 }
