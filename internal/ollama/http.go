@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/ketang/zolem/internal/upstreamip"
 )
 
 // ChatMessage represents a single message in a chat conversation.
@@ -67,18 +69,12 @@ func allowExternalUpstreamFromContext(ctx context.Context) bool {
 
 // --- Dial-time IP policy ----------------------------------------------------
 
-type ipClass int
+type ipClass = upstreamip.Class
 
 const (
-	// classPrivate covers loopback and private (RFC1918/RFC4193) addresses:
-	// always permitted.
-	classPrivate ipClass = iota
-	// classPublic covers all other routable addresses: permitted only when
-	// the policy allows external upstreams.
-	classPublic
-	// classBlocked covers link-local, unspecified, and multicast addresses:
-	// never permitted, regardless of policy.
-	classBlocked
+	classPrivate = upstreamip.Private
+	classPublic  = upstreamip.Public
+	classBlocked = upstreamip.Blocked
 )
 
 // overrideIPClass lets tests fake IP classification for addresses that
@@ -87,26 +83,15 @@ const (
 // this.
 var overrideIPClass func(netip.Addr) (ipClass, bool)
 
-// classifyIP classifies addr for the dial-time policy check. IPv4-mapped
-// IPv6 addresses are unmapped first so they are classified by their embedded
-// IPv4 address.
+// classifyIP classifies addr for the dial-time policy check via the shared
+// upstreamip contract (also used by profile-create validation).
 func classifyIP(addr netip.Addr) ipClass {
-	addr = addr.Unmap()
 	if overrideIPClass != nil {
-		if class, ok := overrideIPClass(addr); ok {
+		if class, ok := overrideIPClass(upstreamip.Embedded(addr)); ok {
 			return class
 		}
 	}
-	switch {
-	case addr.IsLoopback():
-		return classPrivate
-	case addr.IsLinkLocalUnicast(), addr.IsLinkLocalMulticast(), addr.IsInterfaceLocalMulticast(), addr.IsUnspecified(), addr.IsMulticast():
-		return classBlocked
-	case addr.IsPrivate():
-		return classPrivate
-	default:
-		return classPublic
-	}
+	return upstreamip.Classify(addr)
 }
 
 // dialAllowed reports whether a connection to addr is permitted under the

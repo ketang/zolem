@@ -60,18 +60,10 @@ Two more optional `meta.yaml` fields:
 - `tags` (map of string to string) is passed to a namespace-level
   `selector.wasm` as each candidate fixture's `tags`; nothing else reads it.
 
-A `sequence` entry in `fixtures.yaml` takes `on_exhaust`, which decides what
-happens once every step has been served. Omitted, it defaults to `last`:
-
-- `last` keeps returning the final step indefinitely.
-- `cycle` wraps back to the first step.
-- `fallthrough` stops matching this entry, so later `fixtures.yaml` entries are
-  evaluated.
-- `error` is intended to return a provider-native error once the sequence is
-  exhausted. Current behavior: the selection error is swallowed and the entry
-  acts like `fallthrough`. The fix is tracked in zolem-yma (stop swallowing
-  fixture selection errors); this section will describe the intended behavior
-  once that lands.
+A `sequence` entry in `fixtures.yaml` takes `on_exhaust` (`last`, `cycle`,
+`error` or `fallthrough`; default `last`), which decides what happens once
+every step has been served. `error` returns a provider-native HTTP 500 with
+`X-Zolem-Error: true`. See [Sequences](#sequences) for each value.
 
 CEL is the recommended expression language for common request predicates.
 Each expression must evaluate to a boolean; `fixtures.yaml` entries are
