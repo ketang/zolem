@@ -7,12 +7,15 @@ import (
 	"math"
 	"math/rand"
 	"net"
+	"net/netip"
 	"net/url"
 	"path"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ketang/zolem/internal/upstreamip"
 )
 
 var (
@@ -312,12 +315,13 @@ func validateOllamaUpstream(profile RuntimeProfile) error {
 	if u.Host == "" {
 		return errors.New("ollama_upstream must include a host")
 	}
-	// Link-local addresses (IPv4 169.254.0.0/16, IPv6 fe80::/10) are never
+	// Link-local, unspecified, and multicast addresses (including IPv4
+	// embedded in IPv6 via mapped/NAT64/compatible forms) are never
 	// permitted, even with the opt-out flag: they include the cloud metadata
 	// endpoint 169.254.169.254 (AWS/GCP/Azure) and forwarding to them enables
 	// SSRF against instance metadata.
-	if ollamaUpstreamHostIsLinkLocal(u.Hostname()) {
-		return errors.New("ollama_upstream host must not be a link-local address (169.254.0.0/16 or fe80::/10); these include the cloud metadata endpoint and cannot be forwarded to even with allow_external_ollama_upstream")
+	if ollamaUpstreamHostIsBlocked(u.Hostname()) {
+		return errors.New("ollama_upstream host must not be a link-local, unspecified (0.0.0.0/8, ::), or multicast address; link-local addresses include the cloud metadata endpoint (169.254.169.254), and none of these can be forwarded to even with allow_external_ollama_upstream")
 	}
 	if profile.AllowExternalOllamaUpstream {
 		return nil
@@ -328,18 +332,24 @@ func validateOllamaUpstream(profile RuntimeProfile) error {
 	return nil
 }
 
-// ollamaUpstreamHostIsLinkLocal reports whether an ollama_upstream host is an
-// IP literal in a link-local range (IPv4 169.254.0.0/16 or IPv6 fe80::/10).
-// IsLinkLocalUnicast covers both families and the cloud metadata IP
-// 169.254.169.254. A non-literal hostname returns false here; resolving it is
-// itself a rebinding vector, so name-based external targets stay gated behind
-// the opt-out flag and the private-host check.
-func ollamaUpstreamHostIsLinkLocal(host string) bool {
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return false
+// ollamaUpstreamHostClass classifies an ollama_upstream host that is an IP
+// literal using the shared upstreamip contract, which dial-time enforcement
+// also uses. ok is false for a non-literal hostname: resolving it is itself a
+// rebinding vector, so name-based targets stay gated behind the opt-out flag
+// and the private-host check.
+func ollamaUpstreamHostClass(host string) (class upstreamip.Class, ok bool) {
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return 0, false
 	}
-	return ip.IsLinkLocalUnicast()
+	return upstreamip.Classify(addr), true
+}
+
+// ollamaUpstreamHostIsBlocked reports whether an ollama_upstream host is an IP
+// literal in a never-permitted class (link-local, unspecified, multicast).
+func ollamaUpstreamHostIsBlocked(host string) bool {
+	class, ok := ollamaUpstreamHostClass(host)
+	return ok && class == upstreamip.Blocked
 }
 
 // ollamaUpstreamHostIsPrivate reports whether an ollama_upstream host stays
@@ -350,11 +360,8 @@ func ollamaUpstreamHostIsPrivate(host string) bool {
 	if strings.EqualFold(host, "localhost") {
 		return true
 	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return false
-	}
-	return ip.IsLoopback() || ip.IsPrivate()
+	class, ok := ollamaUpstreamHostClass(host)
+	return ok && class == upstreamip.Private
 }
 
 func validateErrorProfile(profile RuntimeProfile) error {
