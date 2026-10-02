@@ -23,6 +23,8 @@ FORCE_REPUBLISH="${FORCE_REPUBLISH:-false}"
 REPO="$GITHUB_REPOSITORY"
 IMG=ghcr.io/ketang/zolem
 B="$(git rev-parse HEAD)"
+ERR_FILE="$(mktemp)"
+trap 'rm -f "$ERR_FILE"' EXIT
 IDENTITY_RE='^https://github\.com/ketang/zolem/\.github/workflows/nightly\.yml@refs/heads/main$'
 OIDC_ISSUER=https://token.actions.githubusercontent.com
 
@@ -45,6 +47,7 @@ retry() {
   local n
   for n in 1 2 3 4 5; do
     "$@" && return 0
+    [ "$n" -lt 5 ] || break
     echo "retry $n/5: $*" >&2
     sleep $((n * 5))
   done
@@ -52,9 +55,16 @@ retry() {
 }
 
 # shellcheck disable=SC2317  # invoked indirectly via retry
+# Delete the public nightly release if present. Only a clear 404 means absent;
+# any other lookup failure fails (and is retried) rather than skipping.
 delete_public_release() {
-  if gh release view nightly >/dev/null 2>&1; then
+  if gh api "repos/$REPO/releases/tags/nightly" >/dev/null 2>"$ERR_FILE"; then
     gh release delete nightly --yes
+  elif grep -q 'HTTP 404' "$ERR_FILE"; then
+    return 0
+  else
+    cat "$ERR_FILE" >&2
+    return 1
   fi
 }
 
@@ -88,21 +98,18 @@ gather_facts() {
   HAS_RELEASE=false RELEASE_COMMIT=unknown
   # Only a clear 404 means "no public release"; any other failure (5xx, rate
   # limit, network) aborts the run with no state change.
-  local err
-  err="$(mktemp)"
-  if body="$(gh api "repos/$REPO/releases/tags/nightly" --jq .body 2>"$err")"; then
+  if body="$(gh api "repos/$REPO/releases/tags/nightly" --jq .body 2>"$ERR_FILE")"; then
     HAS_RELEASE=true
     if [[ "$body" =~ ^([0-9a-f]{40})([[:space:]]|$) ]]; then
       RELEASE_COMMIT="${BASH_REMATCH[1]}"
     fi
-  elif grep -q 'HTTP 404' "$err"; then
+  elif grep -q 'HTTP 404' "$ERR_FILE"; then
     :
   else
     echo "cannot determine public nightly release state:" >&2
-    cat "$err" >&2
+    cat "$ERR_FILE" >&2
     exit 1
   fi
-  rm -f "$err"
   NIGHTLY_DIGEST="$(digest_of "$IMG:nightly")"
   CANDIDATE_DIGEST="$(digest_of "$IMG:nightly-candidate")"
   CANDIDATE_COMMIT="$(image_commit "$IMG:nightly-candidate")"
@@ -149,26 +156,43 @@ build_and_stage() {
   cosign sign --yes "$IMG:nightly-candidate@$d"
 }
 
+ARCHIVES=(zolem-nightly-linux-amd64.tar.gz zolem-nightly-linux-arm64.tar.gz zolem-nightly-darwin-arm64.tar.gz)
+
+# Verify file $1 against its required $1.bundle.
+verify_blob() {
+  if [ ! -s "$1" ] || [ ! -s "$1.bundle" ]; then
+    echo "missing $1 or its bundle" >&2
+    return 1
+  fi
+  cosign verify-blob --bundle "$1.bundle" \
+    --certificate-identity-regexp "$IDENTITY_RE" \
+    --certificate-oidc-issuer "$OIDC_ISSUER" "$1"
+}
+
 # Step 3: verify the staged set (draft assets and candidate image) for commit
 # $1: the candidate image must have been built from that commit, so a stale
 # image from an earlier completed run can never validate a partial draft.
 verify_staged() {
-  local want="$1" id d f
+  local want="$1" id d a name aid
   [ "$(image_commit "$IMG:nightly-candidate")" = "$want" ] || return 1
   id="$(gh api --paginate "repos/$REPO/releases" \
-    --jq '.[] | select(.draft and .tag_name=="nightly-candidate") | .id' | first_line)"
+    --jq '.[] | select(.draft and .tag_name=="nightly-candidate") | .id' | first_line)" || return 1
   [ -n "$id" ] || return 1
-  rm -rf verify && mkdir verify
-  gh api "repos/$REPO/releases/$id" --jq '.assets[] | [.id, .name] | @tsv' > verify.list
+  rm -rf verify && mkdir verify || return 1
+  gh api "repos/$REPO/releases/$id" --jq '.assets[] | [.id, .name] | @tsv' >verify.list || return 1
   [ -s verify.list ] || return 1
   while IFS=$'\t' read -r aid name; do
-    gh api -H 'Accept: application/octet-stream' "repos/$REPO/releases/assets/$aid" > "verify/$name"
-  done < verify.list
+    gh api -H 'Accept: application/octet-stream' "repos/$REPO/releases/assets/$aid" >"verify/$name" || return 1
+  done <verify.list
   (cd verify && sha256sum -c checksums.txt) || return 1
-  f=verify/zolem-nightly-linux-amd64.tar.gz
-  cosign verify-blob --bundle "$f.bundle" \
-    --certificate-identity-regexp "$IDENTITY_RE" \
-    --certificate-oidc-issuer "$OIDC_ISSUER" "$f" || return 1
+  # Every signed file must be present with a valid bundle: each archive, its
+  # SBOM, and checksums.txt. (Bundles are signed after checksumming, so they
+  # are not listed in checksums.txt.)
+  for a in "${ARCHIVES[@]}"; do
+    verify_blob "verify/$a" || return 1
+    verify_blob "verify/$a.sbom" || return 1
+  done
+  verify_blob verify/checksums.txt || return 1
   d="$(digest_of "$IMG:nightly-candidate")"
   [ -n "$d" ] || return 1
   cosign verify "$IMG:nightly-candidate@$d" \
@@ -204,7 +228,10 @@ for _ in 1 2 3; do
   echo "state: $state"
   case "$state" in
     S-release-deleted | S-image-moved)
-      if verify_staged "$DRAFT_COMMIT"; then
+      # In S-release-deleted the draft is the only copy of the release, so
+      # retry transient verification failures before discarding it.
+      if { [ "$state" = S-release-deleted ] && retry verify_staged "$DRAFT_COMMIT"; } ||
+        { [ "$state" != S-release-deleted ] && verify_staged "$DRAFT_COMMIT"; }; then
         promote "$DRAFT_COMMIT"
         [ "$DRAFT_COMMIT" != "$B" ] || exit 0
       else

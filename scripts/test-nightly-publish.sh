@@ -58,7 +58,14 @@ if [ "$1 $2 $3" = "buildx imagetools inspect" ]; then
 fi
 exit 0
 STUB
-printf '#!/usr/bin/env bash\necho "cosign $*" >>"$STUB_STATE/calls"\n' >"$T/bin/cosign"
+cat >"$T/bin/cosign" <<'STUB'
+#!/usr/bin/env bash
+ST="$STUB_STATE"
+echo "cosign $*" >>"$ST/calls"
+n=$(($(cat "$ST/n_cosign" 2>/dev/null || echo 0) + 1))
+echo "$n" >"$ST/n_cosign"
+[ "$n" -gt "${COSIGN_FAILS:-0}" ]
+STUB
 printf '#!/usr/bin/env bash\necho "goreleaser $*" >>"$STUB_STATE/calls"\nexit 1\n' >"$T/bin/goreleaser"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$T/bin/sleep"
 chmod +x "$T/bin/"*
@@ -73,9 +80,9 @@ cp "$ROOT/scripts/nightly-state.sh" "$T/repo/scripts/"
 )
 B="$(git -C "$T/repo" rev-parse HEAD)"
 
-archive=zolem-nightly-linux-amd64.tar.gz
+archives="zolem-nightly-linux-amd64.tar.gz zolem-nightly-linux-arm64.tar.gz zolem-nightly-darwin-arm64.tar.gz"
 
-# reset_state <release_mode> <draft_commit|-> <candidate_label> <assets:full|partial>
+# reset_state <release_mode> <draft_commit|-> <candidate_label> <missing-asset-regex|-> [truncate]
 reset_state() {
   rm -f "$ST"/* "$T"/repo/verify.list
   git -C "$T/repo" push -q origin --delete nightly 2>/dev/null || true
@@ -86,14 +93,22 @@ reset_state() {
   echo sha256:aa >"$ST/nightly_digest"
   echo sha256:aa >"$ST/candidate_digest"
   echo "$3" >"$ST/candidate_label"
-  echo archive >"$ST/asset.2"
-  printf '%s\t%s\n2\t%s\n' 1 checksums.txt "$archive" >"$ST/assets.list"
-  printf '3\t%s.bundle\n' "$archive" >>"$ST/assets.list"
-  echo bundle >"$ST/asset.3"
-  (cd "$ST" && printf 'archive\n' | sha256sum | sed "s/-/$archive/" >asset.1)
-  if [ "$4" = partial ]; then
-    printf '2\t%s\n' "$archive" >"$ST/assets.list"
-  fi
+  local names="checksums.txt checksums.txt.bundle" a id=0
+  for a in $archives; do names="$names $a $a.bundle $a.sbom $a.sbom.bundle"; done
+  : >"$ST/checksums.src"
+  for a in $archives; do
+    echo "content-$a" >"$ST/content.$a"
+    (cd "$ST" && sha256sum "content.$a" | sed "s/content\.$a/$a/") >>"$ST/checksums.src"
+  done
+  : >"$ST/assets.list"
+  for a in $names; do
+    id=$((id + 1))
+    if [ "$4" != - ] && [[ "$a" =~ $4 ]]; then continue; fi
+    printf '%s\t%s\n' "$id" "$a" >>"$ST/assets.list"
+    if [ "$a" = checksums.txt ]; then cp "$ST/checksums.src" "$ST/asset.$id"
+    elif [ -f "$ST/content.$a" ]; then cp "$ST/content.$a" "$ST/asset.$id"
+    else echo "data-$a" >"$ST/asset.$id"; fi
+  done
 }
 
 run() { # run [ENV=VAL...]; sets rc
@@ -105,7 +120,7 @@ count() { grep -cF -- "$1" "$ST/calls" || true; }
 origin_tag() { git -C "$T/repo" ls-remote origin refs/tags/nightly | cut -f1; }
 
 # 1. Transient failures in 4.3/4.4 are retried (a legitimate S-image-moved).
-reset_state ok "$B" "$B" full
+reset_state ok "$B" "$B" -
 run DELETE_FAILS=2 EDIT_FAILS=1
 [ "$rc" -eq 0 ] || { bad "retry run exited $rc"; cat "$T/out" >&2; }
 [ "$(count 'release delete nightly --yes')" -eq 3 ] || bad "delete not retried to success"
@@ -114,7 +129,7 @@ run DELETE_FAILS=2 EDIT_FAILS=1
 ok "4.3/4.4 retried"
 
 # 2. Stale equal digests + draft whose image is from another commit: no promote.
-reset_state ok "$B" oldcommit full
+reset_state ok "$B" oldcommit -
 run
 [ "$rc" -ne 0 ] || bad "stale-digest run should stop at the build (stubbed failure)"
 [ "$(count 'release delete nightly --yes')" -eq 0 ] || bad "stale draft deleted public release"
@@ -124,14 +139,33 @@ run
 ok "stale image digest does not promote a draft"
 
 # 2b. Matching image but incomplete draft assets: no promote.
-reset_state ok "$B" "$B" partial
+reset_state ok "$B" "$B" "^checksums\\.txt$"
 run
 [ "$(count 'release delete nightly --yes')" -eq 0 ] && [ "$(count 'release edit')" -eq 0 ] && [ -z "$(origin_tag)" ] ||
   bad "incomplete draft was promoted"
 ok "incomplete draft is not promoted"
 
+# 2c. Any missing signed file or bundle: no promote.
+for missing in 'arm64\.tar\.gz\.bundle$' 'darwin-arm64\.tar\.gz\.bundle$' '^checksums\.txt\.bundle$' 'linux-arm64\.tar\.gz\.sbom$' 'darwin-arm64\.tar\.gz\.sbom\.bundle$'; do
+  reset_state ok "$B" "$B" "$missing"
+  run
+  [ "$(count 'release delete nightly --yes')" -eq 0 ] && [ "$(count 'release edit')" -eq 0 ] && [ -z "$(origin_tag)" ] ||
+    bad "draft missing /$missing/ was promoted"
+  [ "$(count 'release delete nightly-candidate --yes')" -ge 1 ] || bad "draft missing /$missing/ not discarded"
+done
+ok "drafts missing bundles/SBOMs are not promoted"
+
+# 2d. S-release-deleted: transient verify failures are retried, draft kept.
+reset_state 404 "$B" "$B" -
+run COSIGN_FAILS=2
+[ "$rc" -eq 0 ] || { bad "transient verify failures not retried (rc=$rc)"; cat "$T/out" >&2; }
+[ "$(count 'release delete nightly-candidate --yes')" -eq 0 ] || bad "draft discarded after transient failure"
+[ "$(count 'release edit')" -eq 1 ] || bad "draft not published after retried verify"
+[ "$(origin_tag)" = "$B" ] || bad "tag not moved after recovered promote"
+ok "S-release-deleted retries verify before discarding"
+
 # 3. Non-404 failure reading the public release aborts with no state change.
-reset_state 500 "$B" "$B" full
+reset_state 500 "$B" "$B" -
 run
 [ "$rc" -ne 0 ] || bad "5xx on release lookup should fail the run"
 [ "$(count 'release delete')" -eq 0 ] && [ "$(count 'release edit')" -eq 0 ] && [ -z "$(origin_tag)" ] ||
