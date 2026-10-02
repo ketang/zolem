@@ -99,14 +99,16 @@ dockers:
       - "--label=org.opencontainers.image.created={{ .Date }}"
       - "--label=org.opencontainers.image.source=https://github.com/ketang/zolem"
 
-  # Mutable tag: `nightly` for prerelease builds, `latest` for stable releases.
-  # Keyed off `.Prerelease` (not `.IsSnapshot`) so that `:latest` is only ever
-  # updated by a real, non-prerelease release.
+  # Mutable tag: `latest` only for real, non-prerelease releases; `prerelease`
+  # for real prerelease tags; `snapshot` for snapshot builds (the nightly build
+  # is a snapshot whose version is the non-semver "nightly", so .Prerelease is
+  # empty there). The nightly workflow never pushes these mutable tags; it
+  # publishes the versioned `nightly-<arch>` images under its own names.
   - id: zolem-amd64-mutable
     ids:
       - zolem
     image_templates:
-      - "ghcr.io/ketang/zolem:{{ if .Prerelease }}nightly{{ else }}latest{{ end }}-amd64"
+      - "ghcr.io/ketang/zolem:{{ if .Prerelease }}prerelease{{ else if .IsSnapshot }}snapshot{{ else }}latest{{ end }}-amd64"
     goos: linux
     goarch: amd64
     use: buildx
@@ -123,7 +125,7 @@ dockers:
     ids:
       - zolem
     image_templates:
-      - "ghcr.io/ketang/zolem:{{ if .Prerelease }}nightly{{ else }}latest{{ end }}-arm64"
+      - "ghcr.io/ketang/zolem:{{ if .Prerelease }}prerelease{{ else if .IsSnapshot }}snapshot{{ else }}latest{{ end }}-arm64"
     goos: linux
     goarch: arm64
     use: buildx
@@ -159,10 +161,10 @@ docker_manifests:
       - "ghcr.io/ketang/zolem:{{ .Version }}-amd64"
       - "ghcr.io/ketang/zolem:{{ .Version }}-arm64"
 
-  - name_template: "ghcr.io/ketang/zolem:{{ if .Prerelease }}nightly{{ else }}latest{{ end }}"
+  - name_template: "ghcr.io/ketang/zolem:{{ if .Prerelease }}prerelease{{ else if .IsSnapshot }}snapshot{{ else }}latest{{ end }}"
     image_templates:
-      - "ghcr.io/ketang/zolem:{{ if .Prerelease }}nightly{{ else }}latest{{ end }}-amd64"
-      - "ghcr.io/ketang/zolem:{{ if .Prerelease }}nightly{{ else }}latest{{ end }}-arm64"
+      - "ghcr.io/ketang/zolem:{{ if .Prerelease }}prerelease{{ else if .IsSnapshot }}snapshot{{ else }}latest{{ end }}-amd64"
+      - "ghcr.io/ketang/zolem:{{ if .Prerelease }}prerelease{{ else if .IsSnapshot }}snapshot{{ else }}latest{{ end }}-arm64"
 
 docker_signs:
   - artifacts: all
@@ -172,7 +174,7 @@ docker_signs:
       - "${artifact}"
 
 snapshot:
-  version_template: "{{ .Version }}-nightly"
+  version_template: "nightly"
 
 changelog:
   sort: asc

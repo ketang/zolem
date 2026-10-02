@@ -124,6 +124,24 @@ cover.
   ./scripts/test-shatter-focused-scan-sandbox.sh
   ```
 
+## Nightly Release Workflow
+
+- The nightly publication state classifier has a network-free unit test; run it
+  when changing `scripts/nightly-state.sh` or `.github/workflows/nightly.yml`:
+
+  ```bash
+  ./scripts/test-nightly-state.sh
+  ./scripts/test-nightly-publish.sh   # stubbed gh/docker/cosign
+  ```
+
+- Validate workflow changes with `actionlint .github/workflows/*.yml`.
+- The stubs do not prove live behavior. The first real `workflow_dispatch` on
+  `main` must confirm that `gh` finds draft releases by tag, that
+  `checksums.txt` lists only uploaded files, that the candidate image's
+  revision label is readable via `docker buildx imagetools inspect`, and that
+  `goreleaser --snapshot` accepts a non-semver `nightly` tag at HEAD on the
+  second run.
+
 ## Local Binding
 
 - Zolem is loopback-only by default: the admin server and listeners bind to

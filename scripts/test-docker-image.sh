@@ -1,11 +1,23 @@
 #!/usr/bin/env bash
 # Runs the locally built snapshot image (never a pulled tag) with the
 # non-loopback opt-in flags and exercises it through published ports.
-# Expects `goreleaser release --snapshot --clean` to have produced
+# Expects `goreleaser release --snapshot --clean` (version_template "nightly") to have produced
 # dist/artifacts.json.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+
+# A snapshot build must never produce a :latest tag, and the versioned image
+# names must be deterministic (the nightly workflow retags nightly-<arch>).
+names="$(jq -r '.[] | select(.type == "Docker Image") | .name' dist/artifacts.json)"
+if grep -q ':latest' <<<"$names"; then
+  echo "snapshot produced a :latest image tag:" >&2
+  echo "$names" >&2
+  exit 1
+fi
+for want in ghcr.io/ketang/zolem:nightly-amd64 ghcr.io/ketang/zolem:nightly-arm64; do
+  grep -qx "$want" <<<"$names" || { echo "missing snapshot image $want in:" >&2; echo "$names" >&2; exit 1; }
+done
 
 image="$(jq -r '[.[] | select(.type == "Docker Image" and .goarch == "amd64")][0].name' dist/artifacts.json)"
 if [ -z "$image" ] || [ "$image" = "null" ]; then

@@ -4,7 +4,26 @@ on:
   schedule:
     # 07:00 UTC daily, after most work has landed on main.
     - cron: "0 7 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force_gate_failure:
+        description: Test control - fail the gate's first step.
+        type: boolean
+        default: false
+      stop_at:
+        description: Test control - exit non-zero right after this point in publication.
+        type: choice
+        options: [none, before_promote, after_4_1, after_4_3]
+        default: none
+      force_republish:
+        description: Treat an already-published commit as unpublished and rebuild it.
+        type: boolean
+        default: false
+
+# Serialize runs so two never stage or promote at once.
+concurrency:
+  group: nightly
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -12,8 +31,22 @@ permissions:
   id-token: write
 
 jobs:
-  nightly:
+  gate:
+    uses: ./.github/workflows/gate.yml
+    with:
+      force_failure: ${{ (github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner && inputs.force_gate_failure) || false }}
+
+  publish:
+    # Dispatches from other branches run the gate only and never publish.
+    if: github.ref == 'refs/heads/main'
+    needs: gate
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Test controls are honored only for the repository owner's manual
+      # dispatches; scheduled runs and other actors always get the defaults.
+      STOP_AT: ${{ (github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner && inputs.stop_at) || 'none' }}
+      FORCE_REPUBLISH: ${{ (github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner && inputs.force_republish) || false }}
 
     steps:
       - name: Check out repository
@@ -43,25 +76,12 @@ jobs:
         # GoReleaser's `sboms:` block shells out to syft; it is not bundled.
         uses: anchore/sbom-action/download-syft@v0
 
-      - name: Reset nightly release and tag
-        # The nightly tag moves to the tip of main on every run. Delete the
-        # previous GitHub release and its tag first so GoReleaser can publish a
-        # fresh one without colliding with stale assets, then re-point the tag.
-        # `v0.0.0-nightly` is valid semver with a prerelease segment, which is
-        # what GoReleaser requires (a bare `nightly` is rejected) and what marks
-        # the build as a prerelease so it never updates the `:latest` image.
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release delete v0.0.0-nightly --yes --cleanup-tag || true
-          git tag -f v0.0.0-nightly
-          git push -f origin v0.0.0-nightly
-
-      - name: Run GoReleaser
+      - name: Install GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GORELEASER_CURRENT_TAG: v0.0.0-nightly
+          install-only: true
+
+      - name: Publish nightly
+        # Staged publication and recovery; see scripts/nightly-publish.sh.
+        run: ./scripts/nightly-publish.sh

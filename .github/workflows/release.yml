@@ -11,7 +11,11 @@ permissions:
   id-token: write
 
 jobs:
+  gate:
+    uses: ./.github/workflows/gate.yml
+
   release:
+    needs: gate
     runs-on: ubuntu-latest
 
     steps:

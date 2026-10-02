@@ -3,7 +3,7 @@
 help:
 	@printf 'Targets:\n'
 	@printf '  build            Build zolem and zolemc binaries into bin/\n'
-	@printf '  check            Run CI quality gates (vet, gofmt check, tests)\n'
+	@printf '  check            Run CI quality gates (vet, gofmt check, script tests, tests)\n'
 	@printf '  smoke            Run smoke tests\n'
 	@printf '  shatter          Run full shatter scan (requires SHATTER_BIN)\n'
 	@printf '  shatter-focused  Run focused shatter scan: make shatter-focused INCLUDE=<glob ...>\n'
@@ -20,6 +20,8 @@ check:
 		printf 'gofmt needs to be run on:\n%s\n' "$$unformatted"; \
 		exit 1; \
 	fi
+	./scripts/test-nightly-state.sh
+	./scripts/test-nightly-publish.sh
 	go test ./cmd/...
 	go test -race ./internal/...
 
