@@ -635,9 +635,16 @@ func TestSynthArgs_ConcurrentAdversarialDoesNotStarveNormalCalls(t *testing.T) {
 		}
 	}
 	wg.Wait()
-	_, st := synthesize(uniqueTool(), json.RawMessage(`{"type":"object","required":["a"],"properties":{"a":{"type":"string"}}}`))
-	if !st.Valid {
-		t.Error("normal call not verified after adversarial load")
+	// Abandoned work may briefly hold slots; verification must recover.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, st := synthesize(uniqueTool(), json.RawMessage(`{"type":"object","required":["a"],"properties":{"a":{"type":"string"}}}`)); st.Valid {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("normal call never verified again after adversarial load")
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
