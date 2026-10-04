@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1181,7 +1180,7 @@ func pickPort(t *testing.T) int {
 }
 
 // TestZolemcOllamaUpstreamFlagE2E verifies that zolemc profiles create accepts
-// -ollama-upstream and -stream-delay-mode flags and the server stores them.
+// -backend ollama with -ollama-upstream and the server stores the upstream.
 func TestZolemcOllamaUpstreamFlagE2E(t *testing.T) {
 	repoRoot := repoRoot(t)
 	admin := startLocalAdminService(t, repoRoot)
@@ -1197,44 +1196,94 @@ func TestZolemcOllamaUpstreamFlagE2E(t *testing.T) {
 	}
 }
 
-// TestZolemcStreamDelaySeedFlag verifies that zolemc profiles create accepts
-// -stream-delay-seed and forwards it to the admin API inside the stream_delay
-// payload. Seed is a *int64 on the profile, so the flag must only set the
-// pointer when explicitly provided.
-func TestZolemcStreamDelaySeedFlag(t *testing.T) {
-	var capturedBody []byte
+// TestZolemcStreamDelayFlagsE2E drives the stream-delay flags against a real
+// admin so that payloads the server rejects cannot pass as they could against
+// a fake admin.
+func TestZolemcStreamDelayFlagsE2E(t *testing.T) {
+	repoRoot := repoRoot(t)
+	admin := startLocalAdminService(t, repoRoot)
+	t.Cleanup(admin.Close)
+
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"random-seed", []string{"s", "-stream-delay-mode", "random", "-stream-delay-min-ms", "1", "-stream-delay-max-ms", "5", "-stream-delay-seed", "42"}, []string{`"seed":42`, `"mode":"random"`}},
+		{"fixed", []string{"f", "-stream-delay-mode", "fixed", "-stream-delay-ms", "10"}, []string{`"mode":"fixed"`}},
+		{"fixed-zero", []string{"z2", "-stream-delay-mode", "fixed", "-stream-delay-ms", "0"}, []string{`"mode":"fixed"`}},
+		{"random-zero", []string{"z3", "-stream-delay-mode", "random", "-stream-delay-min-ms", "0", "-stream-delay-max-ms", "0", "-stream-delay-seed", "0"}, []string{`"seed":0`, `"mode":"random"`}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"-json", "-admin-url", admin.baseURL, "profiles", "create"}, tc.args...)
+			result := runZolemc(t, repoRoot, args...)
+			for _, want := range tc.want {
+				if !strings.Contains(result.stdout, want) {
+					t.Fatalf("output missing %s:\n%s", want, result.stdout)
+				}
+			}
+		})
+	}
+}
+
+// TestZolemcStreamDelayClientValidation verifies that invalid stream-delay
+// flag combinations are rejected before any request is sent.
+func TestZolemcStreamDelayClientValidation(t *testing.T) {
 	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.Method == http.MethodPut && req.URL.Path == "/_zolem/profiles/seed-test" {
-			capturedBody, _ = io.ReadAll(req.Body)
-			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"name":"seed-test","backend":"lorem"}`)
-			return
-		}
 		t.Errorf("unexpected request: %s %s", req.Method, req.URL.Path)
-		w.WriteHeader(http.StatusNotFound)
+		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(admin.Close)
 
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"unknown-mode", []string{"u", "-stream-delay-mode", "uniform"}, "-stream-delay-mode must be fixed or random"},
+		{"token-mode", []string{"u", "-stream-delay-mode", "token"}, "-stream-delay-mode must be fixed or random"},
+		{"seed-no-mode", []string{"s", "-stream-delay-seed", "42"}, "-stream-delay-seed requires -stream-delay-mode random"},
+		{"min-no-mode", []string{"s", "-stream-delay-min-ms", "1"}, "-stream-delay-min-ms requires -stream-delay-mode random"},
+		{"max-fixed", []string{"s", "-stream-delay-mode", "fixed", "-stream-delay-max-ms", "1"}, "-stream-delay-max-ms requires -stream-delay-mode random"},
+		{"min-fixed", []string{"m", "-stream-delay-mode", "fixed", "-stream-delay-min-ms", "1"}, "-stream-delay-min-ms requires -stream-delay-mode random"},
+		{"ms-no-mode", []string{"m", "-stream-delay-ms", "5"}, "-stream-delay-ms requires -stream-delay-mode fixed"},
+		{"ms-zero-random", []string{"z1", "-stream-delay-mode", "random", "-stream-delay-ms", "0"}, "-stream-delay-ms requires -stream-delay-mode fixed"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			args := append([]string{"-admin-url", admin.URL, "profiles", "create"}, tc.args...)
+			err := run(context.Background(), args, &stdout, &stderr)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestZolemcProfilesCreateHelpStreamDelay verifies the help text advertises
+// exactly the modes the server accepts.
+func TestZolemcProfilesCreateHelpStreamDelay(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	args := []string{"-json", "-admin-url", admin.URL,
-		"profiles", "create", "seed-test", "-stream-delay-seed", "42"}
-	if err := run(context.Background(), args, &stdout, &stderr); err != nil {
-		t.Fatalf("profiles create with -stream-delay-seed failed: %v\nstderr:\n%s", err, stderr.String())
+	_ = run(context.Background(), []string{"profiles", "create", "-h"}, &stdout, &stderr)
+	help := stderr.String() + stdout.String()
+	if !strings.Contains(help, "-stream-delay-mode") {
+		t.Fatalf("help missing -stream-delay-mode:\n%s", help)
+	}
+	for _, bad := range []string{"uniform", "token"} {
+		if strings.Contains(help, bad) {
+			t.Fatalf("help mentions %q:\n%s", bad, help)
+		}
+	}
+	if !strings.Contains(help, "fixed") || !strings.Contains(help, "random") {
+		t.Fatalf("help missing fixed/random:\n%s", help)
 	}
 
-	var payload struct {
-		StreamDelay struct {
-			Seed *int64 `json:"seed"`
-		} `json:"stream_delay"`
-	}
-	if err := json.Unmarshal(capturedBody, &payload); err != nil {
-		t.Fatalf("decode captured PUT body: %v\nbody:\n%s", err, capturedBody)
-	}
-	if payload.StreamDelay.Seed == nil {
-		t.Fatalf("stream_delay.seed missing from payload:\n%s", capturedBody)
-	}
-	if *payload.StreamDelay.Seed != 42 {
-		t.Fatalf("stream_delay.seed = %d, want 42\nbody:\n%s", *payload.StreamDelay.Seed, capturedBody)
+	var usageOut bytes.Buffer
+	usage(&usageOut)
+	if !strings.Contains(usageOut.String(), "-stream-delay-mode") {
+		t.Fatalf("usage missing -stream-delay-mode:\n%s", usageOut.String())
 	}
 }
 

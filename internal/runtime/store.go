@@ -3,6 +3,7 @@ package runtimecfg
 import (
 	"context"
 	"errors"
+	"fmt"
 	"hash/fnv"
 	"math"
 	"math/rand"
@@ -418,7 +419,7 @@ func validateStreamDelay(delay StreamDelay) error {
 			return errors.New("stream_delay mode is required when stream_delay fields are set")
 		}
 		return nil
-	case "fixed":
+	case StreamDelayFixed:
 		if delay.MS < 0 {
 			return errors.New("stream_delay.ms must be non-negative")
 		}
@@ -426,7 +427,7 @@ func validateStreamDelay(delay StreamDelay) error {
 			return errors.New("fixed stream_delay only allows ms")
 		}
 		return nil
-	case "random":
+	case StreamDelayRandom:
 		if delay.MinMS < 0 || delay.MaxMS < 0 {
 			return errors.New("stream_delay min_ms and max_ms must be non-negative")
 		}
@@ -438,7 +439,7 @@ func validateStreamDelay(delay StreamDelay) error {
 		}
 		return nil
 	default:
-		return errors.New("stream_delay mode must be fixed or random")
+		return fmt.Errorf("stream_delay mode must be %s or %s", StreamDelayFixed, StreamDelayRandom)
 	}
 }
 
@@ -451,12 +452,12 @@ func StreamDelayForRequest(ctx context.Context) StreamDelayFunc {
 	}
 	delay := rt.Profile.StreamDelay
 	switch delay.Mode {
-	case "fixed":
+	case StreamDelayFixed:
 		d := time.Duration(delay.MS) * time.Millisecond
 		return func(ctx context.Context) error {
 			return sleepContext(ctx, d)
 		}
-	case "random":
+	case StreamDelayRandom:
 		ordinal := ProfileRequestSequenceFromContext(ctx)
 		seed := int64(0)
 		if delay.Seed != nil {

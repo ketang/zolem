@@ -24,6 +24,12 @@ type RuntimeProfile struct {
 }
 
 // StreamDelay describes per-profile streaming pacing.
+// Accepted StreamDelay.Mode values.
+const (
+	StreamDelayFixed  = "fixed"
+	StreamDelayRandom = "random"
+)
+
 type StreamDelay struct {
 	Mode  string `json:"mode,omitempty"`
 	MS    int    `json:"ms,omitempty"`
