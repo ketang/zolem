@@ -29,6 +29,11 @@ func TestVendoredFallbacks_CoverAllServedProviders(t *testing.T) {
 			invalid: `{"model":"gpt-4o","messages":[{"role":"user","content":123}]}`,
 		},
 		{
+			key:     "ollama:v1-generate",
+			valid:   `{"model":"llama3.2","keep_alive":0,"suffix":"x","invented":1}`,
+			invalid: `{"prompt":"hi"}`,
+		},
+		{
 			key:     "gemini:v1",
 			valid:   `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`,
 			invalid: `{"contents":[{"role":"user","parts":[{}]}]}`,

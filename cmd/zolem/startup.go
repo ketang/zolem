@@ -473,7 +473,7 @@ func providerSpecKeys(provider string) []string {
 	case "gemini":
 		return []string{"gemini:v1", "gemini:v1beta"}
 	case "ollama":
-		return []string{"ollama:v1"}
+		return []string{"ollama:v1", "ollama:v1-generate"}
 	case "typesafe":
 		return []string{"typesafe:v1"}
 	default:

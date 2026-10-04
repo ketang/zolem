@@ -38,10 +38,10 @@ go_runtime_values:
 functions:
   "loader.go:loadOne":
     defaults:
-      dir: "/home/ketan/project/zolem/testdata/fixtures/sample-anthropic"
+      dir: "testdata/fixtures/sample-anthropic"
   "loader.go:NewLoader":
     defaults:
-      dir: "/home/ketan/project/zolem/testdata/fixtures"
+      dir: "testdata/fixtures"
 
   # NormalizeGeminiDiscovery: seed version and data so the discovery-doc parser
   # reaches the schema-extraction and JSON-normalization code paths instead of

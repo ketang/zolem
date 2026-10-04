@@ -19,6 +19,12 @@ test -f .shatter/config.yaml
 test -f shatter.config.json
 test -x scripts/shatter-full-scan.sh
 
+# The config must stay checkout-independent: no machine-specific absolute paths.
+if grep -nE '(^|[^[:alnum:]_./-])/(home|Users)/' .shatter/config.yaml; then
+  printf '.shatter/config.yaml contains an absolute machine-specific path\n' >&2
+  exit 1
+fi
+
 mkdir -p "${TMP_ROOT}/.shatter"
 cp -a cmd internal go.mod go.sum "${TMP_ROOT}/"
 cp -a .shatter/config.yaml "${TMP_ROOT}/.shatter/config.yaml"

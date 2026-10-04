@@ -40,6 +40,13 @@ func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator 
 	// the action suffix (:generateContent vs :streamGenerateContent).
 	h.mux.Post("/v1/models/*", h.handleCatchAll("v1"))
 	h.mux.Post("/v1beta/models/*", h.handleCatchAll("v1beta"))
+	for _, prefix := range []string{"/v1", "/v1beta"} {
+		h.mux.Get(prefix+"/models", h.handleListModels)
+		h.mux.Get(prefix+"/models/*", h.handleGetModel)
+	}
+	h.mux.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed.")
+	})
 	h.mux.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Not found.")
 	})
@@ -135,7 +142,11 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 			}
 			served := *matched
 			served.ResponseBody = rendered
-			serveFixture(w, r.Context(), &served, stream, model)
+			var newSink func() streamSink
+			if stream {
+				newSink = func() streamSink { return newStreamSink(w, r) }
+			}
+			serveFixture(w, r.Context(), &served, newSink, model)
 			return
 		}
 	}
@@ -144,7 +155,7 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 	responseModel := runtimecfg.ResponseModelForRequest(r.Context(), model)
 
 	if fd := geminiToolCallRequired(req); fd != nil {
-		serveGeminiFunctionCallResponse(r.Context(), w, req, fd, responseModel, promptTokens, stream)
+		serveGeminiFunctionCallResponse(r.Context(), w, sinkFor(w, r, stream), req, fd, responseModel, promptTokens)
 		return
 	}
 
@@ -160,7 +171,7 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 	}
 
 	if stream {
-		streamGenerateContent(r.Context(), w, cb, genReq, responseModel, promptTokens)
+		streamGenerateContent(r.Context(), newStreamSink(w, r), cb, genReq, responseModel, promptTokens)
 		return
 	}
 
@@ -187,11 +198,11 @@ func (h *Handler) handleGenerate(w http.ResponseWriter, r *http.Request, version
 	json.NewEncoder(w).Encode(resp)
 }
 
-func serveGeminiFunctionCallResponse(ctx context.Context, w http.ResponseWriter, req GenerateContentRequest, fd *FunctionDeclaration, model string, promptTokens int, stream bool) {
+func serveGeminiFunctionCallResponse(ctx context.Context, w http.ResponseWriter, sink streamSink, req GenerateContentRequest, fd *FunctionDeclaration, model string, promptTokens int) {
 	args := backend.SynthArgsForTool(fd.Name, fd.argsSchema())
 	fc := FunctionCall{Name: fd.Name, Args: json.RawMessage(args)}
-	if stream {
-		streamFunctionCallContent(ctx, w, fc, model, promptTokens)
+	if sink != nil {
+		streamFunctionCallContent(sink, fc, model, promptTokens)
 		return
 	}
 	resp := GenerateContentResponse{
@@ -236,9 +247,12 @@ func renderFixtureBody(w http.ResponseWriter, ctx context.Context, f *fixture.Fi
 	return body, true
 }
 
-func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture, stream bool, model string) {
+// serveFixture answers with the fixture body; a non-nil newSink streams it. The
+// sink is built lazily so a malformed fixture can still fall back to a verbatim
+// body without SSE headers already set.
+func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture, newSink func() streamSink, model string) {
 	responseModel := runtimecfg.ResponseModelForRequest(ctx, model)
-	if !stream {
+	if newSink == nil {
 		fixture.WriteVerbatim(w, f.Status, f.ResponseBody, "modelVersion", responseModel)
 		return
 	}
@@ -254,7 +268,15 @@ func serveFixture(w http.ResponseWriter, ctx context.Context, f *fixture.Fixture
 		text = resp.Candidates[0].Content.Parts[0].Text
 	}
 	tokens := backend.Tokenize(text)
-	streamResponse(ctx, w, responseModel, tokens, resp.UsageMetadata.PromptTokenCount)
+	streamResponse(ctx, newSink(), responseModel, tokens, resp.UsageMetadata.PromptTokenCount)
+}
+
+// sinkFor returns the stream encoding for streaming requests and nil otherwise.
+func sinkFor(w http.ResponseWriter, r *http.Request, stream bool) streamSink {
+	if !stream {
+		return nil
+	}
+	return newStreamSink(w, r)
 }
 
 func estimatePromptTokens(req GenerateContentRequest) int {
