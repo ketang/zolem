@@ -209,7 +209,7 @@ func TestStreamGenerateContent_OllamaBackend(t *testing.T) {
 	h := gemini.NewHandler(validator, matcher, lorem, chat)
 
 	body := `{"contents":[{"parts":[{"text":"hi"}],"role":"user"}]}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/models/gemini-2.0-flash:streamGenerateContent", bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPost, "/v1/models/gemini-2.0-flash:streamGenerateContent?alt=sse", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-goog-api-key", "any-key")
 
