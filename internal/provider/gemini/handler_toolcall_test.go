@@ -57,7 +57,7 @@ func TestFunctionCallANY_NonStreaming(t *testing.T) {
 func TestFunctionCallANY_Streaming(t *testing.T) {
 	h := newHandler(t)
 	body := `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[` + geminiFuncDecl + `],"toolConfig":{"functionCallingConfig":{"mode":"ANY"}}}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/models/gemini-2.0-flash:streamGenerateContent", bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPost, "/v1/models/gemini-2.0-flash:streamGenerateContent?alt=sse", bytes.NewBufferString(body))
 	req.Header.Set("x-goog-api-key", "test-key")
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

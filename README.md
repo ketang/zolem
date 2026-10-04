@@ -20,7 +20,7 @@ Zolem currently has two supported local execution paths:
 
 - Anthropic
 - OpenAI
-- Gemini
+- Gemini (`generateContent`, `streamGenerateContent`, `countTokens`, `GET /v1{,beta}/models[/{model}]`). `streamGenerateContent` answers with SSE only for `?alt=sse`; without `alt` (or with `alt=json`) it returns a JSON array of response chunks, as the real API does.
 - Ollama (native API: `/api/chat`, `/api/generate`, `/api/tags`, `/api/show`, `/api/ps`, `/api/version`)
 - TypeSafe (Jev System One API: `POST /v1/systemone`, `GET /v1/models`) — see [docs/typesafe.md](docs/typesafe.md)
 
