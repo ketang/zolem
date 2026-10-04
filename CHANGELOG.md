@@ -25,6 +25,14 @@
 - Ollama provider serves `POST /api/generate` (non-streaming JSON and NDJSON
   streaming), with `v1-generate` fixtures and a vendored `ollama:v1-generate`
   request schema.
+- Gemini listeners serve `GET /v1/models`, `GET /v1beta/models` and
+  `GET .../models/{model}` (static catalogue; a profile-pinned response model is
+  listed first), and wrong methods on those paths return a Gemini JSON 405.
+- Gemini `streamGenerateContent` honors `alt`: `alt=sse` keeps SSE; without
+  `alt` or with `alt=json` the body is a JSON array of chunks. A mid-stream
+  backend failure closes the array with an error object; a failure before the
+  first chunk returns a plain non-2xx JSON error. **Behavior change:** clients
+  that omitted `alt=sse` and parsed SSE must now send `?alt=sse`.
 - Opt-in non-loopback bind for containers: `-allow-non-loopback-bind` lets
   both modes bind `0.0.0.0` or `::` (specific non-loopback IPs stay rejected).
   It requires at least one `-allowed-host` (additive: `localhost` and loopback
