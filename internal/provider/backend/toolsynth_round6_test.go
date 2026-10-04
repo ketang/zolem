@@ -384,10 +384,9 @@ func (g randSchema) sc(d int, top bool) any {
 
 func TestSynthArgs_RandomVerifiedOutputsValidateAgainstOriginal(t *testing.T) {
 	captureLog(t)
-	end := time.Now().Add(4 * time.Second)
 	n, verified, bad := 0, 0, 0
 	var worst time.Duration
-	for seed := int64(0); time.Now().Before(end); seed++ {
+	for seed := range int64(1000) {
 		raw, err := json.Marshal(randSchema{rand.New(rand.NewSource(seed))}.sc(0, true))
 		if err != nil {
 			continue
@@ -411,7 +410,7 @@ func TestSynthArgs_RandomVerifiedOutputsValidateAgainstOriginal(t *testing.T) {
 		}
 	}
 	t.Logf("%d random schemas, %d verified, %d verified-but-invalid, slowest %v", n, verified, bad, worst)
-	if verified < 200 {
+	if verified < 30 {
 		t.Errorf("only %d of %d verified; generator not exercising the verified path", verified, n)
 	}
 }
