@@ -142,6 +142,18 @@ Each step directory uses `meta.yaml` with `version: v1-responses`; its
 
 Zolem sends each array element as one WebSocket text frame.
 
+## Ollama `/api/generate`
+
+Use `provider: ollama` with `version: v1-generate` for `POST /api/generate`
+fixtures; `version: v1` fixtures serve only `/api/chat`, so the two never
+collide. `response.json` is a generate response object
+(`{"model": ..., "response": "text", "done": true, ...}`). With `stream`
+true (the default) the `response` text is tokenized into
+`{"response": <token>, "done": false}` objects followed by the fixture's
+object with `response: ""` and `done: true`. A fixture without a `response`
+field, or with a non-2xx status, is served verbatim. A request with an empty
+prompt is answered as a model load/unload before fixtures are consulted.
+
 ## Response Body Fidelity
 
 Non-streamed fixture responses are served verbatim: the rendered `response.json`

@@ -82,3 +82,35 @@ type ChatResponse struct {
 	EvalCount          int   `json:"eval_count,omitempty"`
 	EvalDuration       int64 `json:"eval_duration,omitempty"`
 }
+
+// GenerateRequest is the native POST /api/generate request body. Stream
+// defaults to true when absent, exactly as for /api/chat.
+type GenerateRequest struct {
+	Model     string          `json:"model"`
+	Prompt    string          `json:"prompt"`
+	System    string          `json:"system,omitempty"`
+	Stream    *bool           `json:"stream,omitempty"`
+	KeepAlive json.RawMessage `json:"keep_alive,omitempty"`
+}
+
+func (r GenerateRequest) streamRequested() bool {
+	return r.Stream == nil || *r.Stream
+}
+
+// GenerateResponse is one native /api/generate response object. It mirrors
+// ChatResponse with Response in place of Message.
+type GenerateResponse struct {
+	Model      string `json:"model"`
+	CreatedAt  string `json:"created_at"`
+	Response   string `json:"response"`
+	Done       bool   `json:"done"`
+	DoneReason string `json:"done_reason,omitempty"`
+	Context    []int  `json:"context,omitempty"`
+
+	TotalDuration      int64 `json:"total_duration,omitempty"`
+	LoadDuration       int64 `json:"load_duration,omitempty"`
+	PromptEvalCount    int   `json:"prompt_eval_count,omitempty"`
+	PromptEvalDuration int64 `json:"prompt_eval_duration,omitempty"`
+	EvalCount          int   `json:"eval_count,omitempty"`
+	EvalDuration       int64 `json:"eval_duration,omitempty"`
+}

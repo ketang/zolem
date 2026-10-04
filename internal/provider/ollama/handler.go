@@ -51,6 +51,7 @@ func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator 
 	}
 	h.mux = chi.NewRouter()
 	h.mux.Post("/api/chat", h.handleChat)
+	h.mux.Post("/api/generate", h.handleGenerate)
 	h.mux.Get("/api/tags", h.handleTags)
 	h.mux.Get("/api/version", h.handleVersion)
 	h.mux.Post("/api/show", h.handleShow)
@@ -168,6 +169,18 @@ func nowRFC3339Nano() string {
 // measured elapsed time so the parts always stay consistent with the whole
 // (load + prompt_eval + eval <= total), which is the invariant tests assert.
 func applyMetrics(resp *ChatResponse, elapsed time.Duration, promptTokens, evalTokens int) {
+	m := computeMetrics(elapsed, promptTokens, evalTokens)
+	resp.TotalDuration = m.total
+	resp.LoadDuration = m.load
+	resp.PromptEvalCount = promptTokens
+	resp.PromptEvalDuration = m.promptEval
+	resp.EvalCount = evalTokens
+	resp.EvalDuration = m.eval
+}
+
+type metrics struct{ total, load, promptEval, eval int64 }
+
+func computeMetrics(elapsed time.Duration, promptTokens, evalTokens int) metrics {
 	total := elapsed.Nanoseconds()
 	if total <= 0 {
 		// A backend can complete faster than the clock resolution; keep the
@@ -176,14 +189,7 @@ func applyMetrics(resp *ChatResponse, elapsed time.Duration, promptTokens, evalT
 	}
 	load := total / 10
 	promptEval := total / 10
-	eval := total - load - promptEval
-
-	resp.TotalDuration = total
-	resp.LoadDuration = load
-	resp.PromptEvalCount = promptTokens
-	resp.PromptEvalDuration = promptEval
-	resp.EvalCount = evalTokens
-	resp.EvalDuration = eval
+	return metrics{total: total, load: load, promptEval: promptEval, eval: total - load - promptEval}
 }
 
 // estimatePromptTokens mirrors the word-count-plus-overhead estimate the other

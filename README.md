@@ -21,7 +21,7 @@ Zolem currently has two supported local execution paths:
 - Anthropic
 - OpenAI
 - Gemini
-- Ollama (native API: `/api/chat`, `/api/tags`, `/api/show`, `/api/ps`, `/api/version`)
+- Ollama (native API: `/api/chat`, `/api/generate`, `/api/tags`, `/api/show`, `/api/ps`, `/api/version`)
 - TypeSafe (Jev System One API: `POST /v1/systemone`, `GET /v1/models`) — see [docs/typesafe.md](docs/typesafe.md)
 
 OpenRouter shares OpenAI's chat-completions request shape; local runtime

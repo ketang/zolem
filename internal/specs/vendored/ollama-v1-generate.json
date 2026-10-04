@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ollama Native Generate API Request",
+  "description": "Normalized request schema for POST /api/generate derived from Ollama's public API docs (github.com/ollama/ollama/blob/main/docs/api.md, rev 2026-08-11, release v0.32.11). Hand-authored, like ollama:v1; the 'v1-generate' version is synthetic and keeps /api/generate fixtures and schema separate from /api/chat. Deliberately permissive: prompt is optional because a missing or empty prompt is Ollama's model load/unload request.",
+  "type": "object",
+  "required": ["model"],
+  "properties": {
+    "model": {"type": "string", "description": "Model name as model[:tag]."},
+    "prompt": {"type": "string", "description": "Optional; absent or empty means load/unload the model."},
+    "suffix": {"type": "string"},
+    "system": {"type": "string"},
+    "images": {"type": "array"},
+    "stream": {"type": "boolean", "description": "Defaults to TRUE when absent."},
+    "raw": {"type": "boolean"},
+    "format": {"anyOf": [{"type": "string"}, {"type": "object"}]},
+    "options": {"type": "object"},
+    "keep_alive": {"anyOf": [{"type": "string"}, {"type": "number"}]},
+    "think": {"anyOf": [{"type": "boolean"}, {"type": "string"}]}
+  },
+  "additionalProperties": true
+}

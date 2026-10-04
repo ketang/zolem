@@ -12,6 +12,7 @@ import _ "embed"
 //   - ollama:v1 is likewise a pre-normalized JSON Schema snapshot; Ollama
 //     publishes no OpenAPI or Discovery document. Its "v1" is synthetic — the
 //     native API is unversioned.
+//   - ollama:v1-generate is the same kind of snapshot for POST /api/generate.
 //   - typesafe:v1 is likewise a pre-normalized JSON Schema snapshot,
 //     hand-authored from the confirmed contract in docs.typesafe.ai (see the
 //     schema's own description field and docs/typesafe.md for provenance).
@@ -24,6 +25,9 @@ var (
 
 	//go:embed vendored/ollama-v1.json
 	ollamaV1Snapshot []byte
+
+	//go:embed vendored/ollama-v1-generate.json
+	ollamaV1GenerateSnapshot []byte
 
 	//go:embed vendored/typesafe-v1.json
 	typesafeV1Snapshot []byte
@@ -46,11 +50,12 @@ var (
 // LoadProviderSchema, which normalizes it for the provider.
 func VendoredFallbacks() map[string][]byte {
 	return map[string][]byte{
-		"anthropic:v1":  append([]byte(nil), anthropicV1Snapshot...),
-		"ollama:v1":     append([]byte(nil), ollamaV1Snapshot...),
-		"typesafe:v1":   append([]byte(nil), typesafeV1Snapshot...),
-		"openai:v1":     append([]byte(nil), openaiV1Source...),
-		"gemini:v1":     append([]byte(nil), geminiV1Source...),
-		"gemini:v1beta": append([]byte(nil), geminiV1betaSource...),
+		"anthropic:v1":       append([]byte(nil), anthropicV1Snapshot...),
+		"ollama:v1":          append([]byte(nil), ollamaV1Snapshot...),
+		"ollama:v1-generate": append([]byte(nil), ollamaV1GenerateSnapshot...),
+		"typesafe:v1":        append([]byte(nil), typesafeV1Snapshot...),
+		"openai:v1":          append([]byte(nil), openaiV1Source...),
+		"gemini:v1":          append([]byte(nil), geminiV1Source...),
+		"gemini:v1beta":      append([]byte(nil), geminiV1betaSource...),
 	}
 }
