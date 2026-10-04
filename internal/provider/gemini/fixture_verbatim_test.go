@@ -21,7 +21,7 @@ func TestServeFixture_ErrorBodyVerbatimWithRuntime(t *testing.T) {
 	rr := httptest.NewRecorder()
 	ctx := verbatimCtx()
 	f := &fixture.Fixture{Status: 429, ResponseBody: []byte(body)}
-	serveFixture(rr, ctx, f, false, "req-model")
+	serveFixture(rr, ctx, f, nil, "req-model")
 	if rr.Code != 429 || rr.Body.String() != body {
 		t.Fatalf("got %d %q, want 429 %q", rr.Code, rr.Body.String(), body)
 	}
@@ -31,7 +31,7 @@ func TestServeFixture_UnmodeledFieldsKeptWithRuntime(t *testing.T) {
 	rr := httptest.NewRecorder()
 	ctx := verbatimCtx()
 	f := &fixture.Fixture{Status: 200, ResponseBody: []byte(`{"modelVersion":"x","unmodeled_field":{"a":1}}`)}
-	serveFixture(rr, ctx, f, false, "req-model")
+	serveFixture(rr, ctx, f, nil, "req-model")
 	if want := `{"modelVersion":"req-model","unmodeled_field":{"a":1}}`; rr.Body.String() != want {
 		t.Fatalf("got %q want %q", rr.Body.String(), want)
 	}
