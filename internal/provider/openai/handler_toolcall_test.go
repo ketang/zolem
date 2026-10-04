@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 const toolsPayload = `[{"type":"function","function":{"name":"get_weather","description":"Get weather","parameters":{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}}}]`
@@ -181,5 +182,46 @@ func TestToolCallRequired_ArgumentsConformToSchema(t *testing.T) {
 	}
 	if args.K != "fixed" {
 		t.Errorf("k: got %q", args.K)
+	}
+}
+
+// Hostile numeric literals in a request-supplied schema must neither crash,
+// stall nor balloon synthesis.
+func TestToolCallRequired_HostileNumbersInSchema(t *testing.T) {
+	h := newHandler(t)
+	for _, n := range []string{"1e999999", "-1e999999", "1e-999999"} {
+		params := `{"type":"object","required":["a","b","c"],"properties":{` +
+			`"a":{"type":"array","items":{"type":"integer"},"minItems":` + n + `,"maxItems":` + n + `},` +
+			`"b":{"type":"number","minimum":` + n + `,"multipleOf":` + n + `,"enum":[` + n + `]},` +
+			`"c":{"type":"string","minLength":` + n + `,"const":` + n + `}}}`
+		body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"tool_choice":"required","tools":[{"type":"function","function":{"name":"f","parameters":` + params + `}}]}`
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer sk-test")
+		rr := httptest.NewRecorder()
+		start := time.Now()
+		h.ServeHTTP(rr, req)
+		if el := time.Since(start); el > time.Second {
+			t.Errorf("%s: took %v", n, el)
+		}
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s: status %d: %s", n, rr.Code, rr.Body.String())
+		}
+		var resp struct {
+			Choices []struct {
+				Message struct {
+					ToolCalls []struct {
+						Function struct {
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+				} `json:"message"`
+			} `json:"choices"`
+		}
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil || len(resp.Choices) == 0 || len(resp.Choices[0].Message.ToolCalls) == 0 {
+			t.Fatalf("%s: decode: %v", n, err)
+		}
+		if args := resp.Choices[0].Message.ToolCalls[0].Function.Arguments; !json.Valid([]byte(args)) || len(args) > 4096 {
+			t.Errorf("%s: bad arguments %q", n, args)
+		}
 	}
 }

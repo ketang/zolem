@@ -7,6 +7,7 @@ import (
 	"log"
 	"maps"
 	"math"
+	"math/big"
 	"net/url"
 	"slices"
 	"strconv"
@@ -22,7 +23,6 @@ import (
 // "Tool Calling".
 const (
 	maxSchemaBytes    = 64 << 10 // raw schema size above which verification is skipped
-	maxSchemaNodes    = 2000     // JSON objects in the schema above which verification is skipped
 	maxDepth          = 8        // nesting / $ref depth
 	maxOutputBytes    = 64 << 10 // synthesized arguments are never larger than this
 	maxWholeChecks    = 16       // whole-schema validations per call
@@ -32,13 +32,10 @@ const (
 	maxWork           = 20000 // generation steps (nodes, candidates, validations) per call
 	maxWorkTime       = 250 * time.Millisecond
 	maxNormalizeDepth = 64
-	maxExpandedNodes  = 500       // schema objects after inlining $refs; above this verification is skipped
-	maxExpandedBytes  = 128 << 10 // approximate JSON size of the inlined tree (keys + enum/const/default data)
-	maxDataBytes      = 64 << 10  // enum/const/default bytes across the inlined tree
-	maxRecursion      = 2         // times one $ref target may appear on a single expansion path
-	maxValidationWork = 50000     // schema nodes x instance nodes per validation
-	maxInstanceNodes  = 2000      // JSON values generated per attempt
-	maxConcurrent     = 8         // concurrent verified syntheses
+	maxRecursion      = 2     // times one $ref target may appear on a single expansion path
+	maxValidationWork = 50000 // schema nodes x instance nodes per validation
+	maxInstanceNodes  = 2000  // JSON values generated per attempt
+	maxConcurrent     = 8     // concurrent verified syntheses
 	semWait           = 100 * time.Millisecond
 	hardTimeout       = maxWorkTime + 100*time.Millisecond
 
@@ -106,9 +103,17 @@ type synthStats struct {
 	Valid            bool
 }
 
-func synthesize(tool string, schema json.RawMessage) (json.RawMessage, synthStats) {
+func synthesize(tool string, schema json.RawMessage) (out json.RawMessage, st synthStats) {
 	empty := json.RawMessage("{}")
-	var st synthStats
+	// Synthesis runs on the request goroutine; a panic here (outside the
+	// verification goroutine, which recovers on its own) must not take down
+	// the server.
+	defer func() {
+		if r := recover(); r != nil {
+			warnOnce(tool, fmt.Sprint("internal error: ", r))
+			out, st = empty, synthStats{}
+		}
+	}()
 	if len(bytes.TrimSpace(schema)) == 0 {
 		return empty, st
 	}
@@ -128,18 +133,13 @@ func synthesize(tool string, schema json.RawMessage) (json.RawMessage, synthStat
 		warnOnce(tool, "schema exceeds the 64 KiB verification limit")
 		return simpleArgs(doc), st
 	}
-	if countObjects(doc) > maxSchemaNodes {
-		warnOnce(tool, "schema exceeds the 2000-node verification limit")
-		return simpleArgs(doc), st
-	}
-
-	// Inline every $ref into a bounded, ref-free tree. Verification then costs
-	// at most (expanded schema nodes) x (generated instance nodes), so shared
-	// definitions, DAGs and cycles cannot blow up validation.
-	ex := &expander{doc: doc}
-	expanded, ok := ex.schema(root, 0).(map[string]any)
-	if ex.err != nil || !ok {
-		warnOnce(tool, ex.err)
+	// Build the verification tree from scratch (allow-listed keywords,
+	// clamped numbers, inlined refs, capped size). Generation also runs on
+	// this tree, so hostile numbers never reach the generator either.
+	vb := &verifyBuilder{doc: doc}
+	expanded := vb.build(root)
+	if expanded == nil {
+		warnOnce(tool, vb.err)
 		return simpleArgs(doc), st
 	}
 
@@ -149,9 +149,9 @@ func synthesize(tool string, schema json.RawMessage) (json.RawMessage, synthStat
 		warnOnce(tool, "verification capacity exhausted")
 		return simpleArgs(doc), st
 	}
-	g := &synth{root: expanded, compiled: map[string]*jsonschema.Schema{}, deadline: time.Now().Add(maxWorkTime),
+	g := &synth{root: expanded, hints: vb.hints, compiled: map[string]*jsonschema.Schema{}, deadline: time.Now().Add(maxWorkTime),
 		// Bound validation work: (schema nodes) x (instance nodes) <= maxValidationWork.
-		instCap: min(maxInstanceNodes, max(64, maxValidationWork/max(ex.nodes, 1)))}
+		instCap: min(maxInstanceNodes, max(64, maxValidationWork/max(vb.nodes, 1)))}
 	type result struct {
 		out   json.RawMessage
 		st    synthStats
@@ -244,6 +244,7 @@ type sch struct {
 
 type synth struct {
 	root      any
+	hints     map[string]string
 	compiler  *jsonschema.Compiler
 	compiled  map[string]*jsonschema.Schema
 	rot       int
@@ -426,9 +427,6 @@ func (g *synth) candidates(sc *sch, depth int) []any {
 	if e, ok := m["enum"].([]any); ok {
 		out = append(out, e...)
 	}
-	if d, ok := m["default"]; ok {
-		out = append(out, d)
-	}
 
 	if isCombined(m) {
 		return append(out, g.branchCandidates(sc, depth)...)
@@ -445,7 +443,7 @@ func (g *synth) candidates(sc *sch, depth int) []any {
 	for _, t := range types {
 		switch t {
 		case "string":
-			out = append(out, stringValue(m))
+			out = append(out, stringValue(m, g.hints[sc.base]))
 		case "integer":
 			out = append(out, numberCandidates(m, true)...)
 		case "number":
@@ -584,12 +582,16 @@ func toInt(v any) (int, bool) {
 	return int(f), true
 }
 
-func stringValue(m map[string]any) string {
+// stringValue generates a string for m; hint is a format the verification
+// tree does not assert but the client schema asked for.
+func stringValue(m map[string]any, hint string) string {
 	s := loremValue
-	if f, ok := m["format"].(string); ok {
-		if v, ok := formatValues[f]; ok {
-			s = v
-		}
+	f, _ := m["format"].(string)
+	if f == "" {
+		f = hint
+	}
+	if v, ok := formatValues[f]; ok {
+		s = v
 	}
 	if n, ok := toInt(m["minLength"]); ok && len(s) < n {
 		pad := n
@@ -834,7 +836,7 @@ func mergeProp(list []*sch) *sch {
 				merged["enum"] = e
 			}
 		}
-		for _, k := range []string{"const", "default", "format"} {
+		for _, k := range []string{"const", "format"} {
 			if _, ok := merged[k]; !ok {
 				if v, ok := s.m[k]; ok {
 					merged[k] = v
@@ -873,27 +875,12 @@ func intersectEnum(a, b []any) []any {
 	return out
 }
 
-func countObjects(v any) int {
-	n := 0
-	switch t := v.(type) {
-	case map[string]any:
-		n = 1
-		for _, c := range t {
-			n += countObjects(c)
-		}
-	case []any:
-		for _, c := range t {
-			n += countObjects(c)
-		}
-	}
-	return n
-}
-
 // simpleArgs is the unverified type-walker used when the schema cannot be
 // verified (compile failure, input limits, unsupported ref forms, timeouts):
 // required properties (all properties when required is absent) with constant
 // values by type. It follows in-document $refs a few hops, takes the first
-// enum/const value and the first non-null anyOf/oneOf branch, and visits at
+// enum/const value (when it passes the verification clamp) and the first
+// non-null anyOf/oneOf branch, and visits at
 // most maxSimpleNodes schemas, so its work is bounded for any input.
 func simpleArgs(schema any) json.RawMessage {
 	w := &simpleWalker{root: schema, budget: maxSimpleNodes}
@@ -930,11 +917,17 @@ func (w *simpleWalker) leaf(schema any, depth, hops int, top bool) any {
 			return w.leaf(target, depth, hops+1, top)
 		}
 	}
+	// enum/const values are used only when they pass the verification
+	// clamp, so huge or unparseable numbers never reach the client.
 	if c, ok := m["const"]; ok && !top {
-		return c
+		if cv, ok := cleanValue(c, 0, new(int)); ok {
+			return cv
+		}
 	}
 	if e := listOf(m["enum"]); e != nil && !top {
-		return e[0]
+		if cv, ok := cleanValue(e[0], 0, new(int)); ok {
+			return cv
+		}
 	}
 	if !top {
 		for _, key := range []string{"anyOf", "oneOf"} {
@@ -1076,164 +1069,455 @@ func normalizeGeminiNode(m map[string]any, depth int) {
 
 var synthSem = make(chan struct{}, maxConcurrent)
 
-// expander inlines in-document $refs into a copy of the schema, walking only
-// schema positions (so property names like "enum" or "$ref" are just names).
-// It fails on anything it cannot inline soundly: non-local refs, anchors,
-// dynamic refs, ref keywords inside data, or more than maxExpandedNodes
-// schema objects. Annotation-free $ref siblings are merged; recursion deeper
-// than maxDepth hops is replaced by the accept-anything schema.
-type expander struct {
-	doc   any
-	nodes int
-	bytes int // approximate size of the inlined tree (keys + data)
-	data  int // enum/const/default and other verbatim data bytes
-	path  map[string]int
-	err   error
-}
-
-var (
-	schemaKeys     = map[string]bool{"items": true, "additionalProperties": true, "not": true, "if": true, "then": true, "else": true, "contains": true, "propertyNames": true, "unevaluatedItems": true, "unevaluatedProperties": true, "additionalItems": true}
-	schemaMapKeys  = map[string]bool{"properties": true, "patternProperties": true, "dependentSchemas": true}
-	schemaListKeys = map[string]bool{"anyOf": true, "oneOf": true, "allOf": true, "prefixItems": true}
-	annotationKeys = map[string]bool{"description": true, "title": true, "$comment": true, "examples": true, "example": true, "deprecated": true, "readOnly": true, "writeOnly": true}
-	refLikeKeys    = []string{"$ref", "$dynamicRef", "$recursiveRef", "$anchor", "$dynamicAnchor", "$recursiveAnchor"}
+// Verification tree.
+//
+// jsonschema/v6 cannot interrupt Compile or Validate, so the schema it sees
+// must be cheap by construction. It is never the client's schema (nor a
+// stripped copy of it): verifyBuilder builds a NEW tree that contains only
+// the allow-listed keywords below, with every number re-encoded canonically
+// and every structural dimension capped. Cost is therefore bounded by
+//   - at most maxVerifyNodes schema nodes, maxVerifyDepth deep, anyOf/oneOf/
+//     allOf fan-out <= maxFanOut, and maxVerifyBytes of keys and data;
+//   - numbers that are finite, |x| <= 1e15 (and 0 or >= 1e-15), at most
+//     maxNumberLiteral characters, and exactly representable by their
+//     canonical encoding (so no huge exponents reach big.Rat);
+//   - enum/const values of at most maxValueBytes each;
+//   - formats whose checkers reject long input early or scan it linearly;
+//   - at most maxInstanceNodes generated JSON values per validated instance.
+//
+// Checked keywords: type, properties, required, additionalProperties, items
+// (single schema), min/maxItems, min/maxLength, min/maxProperties, enum,
+// const, minimum, maximum, exclusiveMinimum, exclusiveMaximum, anyOf, oneOf,
+// allOf, not, and format for verifiedFormats. In-document $refs are inlined.
+// Every other keyword (pattern, patternProperties, multipleOf, uniqueItems,
+// contains, dependent*, propertyNames, if/then/else, prefixItems, tuple
+// items, unevaluated*, ...) is omitted, which only weakens verification.
+// A value failing a clamp or an exceeded cap skips verification entirely.
+const (
+	maxVerifyDepth   = 32
+	maxVerifyNodes   = 500
+	maxVerifyBytes   = 64 << 10
+	maxFanOut        = 16
+	maxRequired      = 256
+	maxEnumValues    = 256
+	maxValueBytes    = 4 << 10
+	maxNumberLiteral = 40
+	maxAbsNumber     = 1e15
+	minAbsNumber     = 1e-15
 )
 
-func (e *expander) fail(msg string) any {
-	if e.err == nil {
-		e.err = fmt.Errorf("%s", msg)
+// verifiedFormats are the formats asserted during verification: each is
+// produced by the generator, and its jsonschema/v6 checker rejects long
+// input in constant time (email: > 254 bytes) or parses a fixed-size prefix
+// (date, date-time). Other formats in formatValues (uri, uuid) guide
+// generation only; regex, idn-email, uri-reference, iri*, uri-template and
+// json-pointer variants are never asserted.
+var verifiedFormats = map[string]bool{"email": true, "date": true, "date-time": true}
+
+var primitiveTypes = map[string]bool{"null": true, "boolean": true, "object": true, "array": true, "number": true, "integer": true, "string": true}
+
+var countKeys = map[string]bool{"minItems": true, "maxItems": true, "minLength": true, "maxLength": true, "minProperties": true, "maxProperties": true}
+
+var boundKeys = map[string]bool{"minimum": true, "maximum": true, "exclusiveMinimum": true, "exclusiveMaximum": true}
+
+// unsupportedRefKeys cannot be inlined soundly; schemas using them (in a
+// reachable schema position) skip verification.
+var unsupportedRefKeys = []string{"$dynamicRef", "$recursiveRef", "$anchor", "$dynamicAnchor", "$recursiveAnchor"}
+
+// verifyBuilder builds the verification tree described above from a decoded
+// client schema, walking schema positions only (property names such as
+// "enum" or "$ref" are just names) and inlining in-document $refs. hints
+// records, by JSON pointer in the new tree, formats the generator should
+// produce but verification does not assert.
+type verifyBuilder struct {
+	doc   any
+	nodes int
+	bytes int
+	path  map[string]int
+	hints map[string]string
+	err   error
+	// negated is true under an odd number of enclosing "not"s.
+	negated bool
+}
+
+func (b *verifyBuilder) fail(format string, args ...any) any {
+	if b.err == nil {
+		b.err = fmt.Errorf(format, args...)
 	}
 	return nil
 }
 
-func (e *expander) schema(v any, hops int) any {
-	m, ok := v.(map[string]any)
-	if !ok || e.err != nil {
-		return v
+func (b *verifyBuilder) charge(n int) bool {
+	b.bytes += n
+	if b.bytes > maxVerifyBytes {
+		b.fail("schema exceeds the %d KiB verification limit", maxVerifyBytes>>10)
+		return false
 	}
-	e.nodes++
-	if e.nodes > maxExpandedNodes {
-		return e.fail("schema exceeds the verification size limit after inlining $refs")
-	}
-	for _, k := range refLikeKeys[1:] {
-		if _, has := m[k]; has {
-			return e.fail("schema uses " + k + ", which is not verified")
-		}
-	}
-	out := make(map[string]any, len(m))
-	for k, val := range m {
-		e.bytes += len(k) + 4
-		if e.bytes > maxExpandedBytes {
-			return e.fail("schema exceeds the verification byte limit after inlining $refs")
-		}
-		switch {
-		case k == "$ref" || k == "$id" || k == "$defs" || k == "definitions":
-		case k == "pattern" || k == "patternProperties":
-			// Dropped from the verification copy: compiling request-supplied
-			// regular expressions has unbounded CPU/memory cost, and the
-			// generator never builds strings from patterns anyway.
-		case schemaKeys[k]:
-			out[k] = e.schema(val, hops)
-		case schemaMapKeys[k]:
-			pm, ok := val.(map[string]any)
-			if !ok {
-				out[k] = val
-				continue
-			}
-			cp := make(map[string]any, len(pm))
-			for name, sub := range pm {
-				cp[name] = e.schema(sub, hops)
-			}
-			out[k] = cp
-		case schemaListKeys[k] || k == "items":
-			l, ok := val.([]any)
-			if !ok {
-				out[k] = val
-				continue
-			}
-			cp := make([]any, len(l))
-			for i, sub := range l {
-				cp[i] = e.schema(sub, hops)
-			}
-			out[k] = cp
-		default:
-			if containsRefKeyword(val) {
-				return e.fail("schema carries a reference keyword inside data")
-			}
-			d := dataSize(val)
-			e.bytes += d
-			if e.data += d; e.bytes > maxExpandedBytes || e.data > maxDataBytes {
-				return e.fail("schema exceeds the verification byte limit after inlining $refs")
-			}
-			out[k] = val
-		}
-	}
-	ref, has := m["$ref"]
-	if !has {
-		return out
-	}
-	rs, _ := ref.(string)
-	if !strings.HasPrefix(rs, "#") {
-		return e.fail("schema has a $ref that is not an in-document pointer")
-	}
-	target, _, ok := lookupPointer(e.doc, rs)
-	if !ok {
-		return e.fail("schema has an unresolvable $ref")
-	}
-	if hops+1 > maxDepth || e.path[rs] >= maxRecursion {
-		// Cut recursion: keep only the target's type so the cut value is at
-		// least shaped like the real one.
-		cut := map[string]any{}
-		if t, ok := target["type"]; ok {
-			cut["type"] = t
-		}
-		return cut
-	}
-	if e.path == nil {
-		e.path = map[string]int{}
-	}
-	e.path[rs]++
-	exp, _ := e.schema(target, hops+1).(map[string]any)
-	e.path[rs]--
-	if e.err != nil {
+	return true
+}
+
+// build returns the verification tree for root, or nil with b.err set.
+func (b *verifyBuilder) build(root map[string]any) map[string]any {
+	m, _ := b.schema(root, "", 0, 0).(map[string]any)
+	if b.err != nil || m == nil {
 		return nil
 	}
-	for k := range annotationKeys {
-		delete(out, k)
+	return m
+}
+
+func (b *verifyBuilder) schema(v any, ptr string, depth, hops int) any {
+	if b.err != nil {
+		return nil
 	}
-	if len(out) == 0 {
-		return exp
+	if depth > maxVerifyDepth {
+		return b.fail("schema nests deeper than %d levels", maxVerifyDepth)
 	}
-	for k := range out {
-		if _, clash := exp[k]; clash {
-			return map[string]any{"allOf": []any{exp, out}}
+	switch t := v.(type) {
+	case bool:
+		b.charge(6)
+		return t
+	case map[string]any:
+		b.nodes++
+		if b.nodes > maxVerifyNodes {
+			return b.fail("schema exceeds the %d-node verification limit", maxVerifyNodes)
+		}
+		for _, k := range unsupportedRefKeys {
+			if _, has := t[k]; has {
+				return b.fail("schema uses %s, which is not verified", k)
+			}
+		}
+		if _, has := t["$id"]; has && (ptr != "" || hops > 0) {
+			return b.fail("schema uses a nested $id, which is not verified")
+		}
+		if _, has := t["$ref"]; has {
+			return b.ref(t, ptr, depth, hops)
+		}
+		return b.object(t, ptr, depth, hops)
+	}
+	return b.fail("schema position holds a non-schema value")
+}
+
+// ref inlines an in-document $ref. Siblings are merged when no emitted
+// keyword clashes; a clash skips verification. Recursion through the same
+// ref beyond maxRecursion (or maxDepth hops) is cut (see below).
+func (b *verifyBuilder) ref(m map[string]any, ptr string, depth, hops int) any {
+	rs, _ := m["$ref"].(string)
+	if !strings.HasPrefix(rs, "#") {
+		return b.fail("schema has a $ref that is not an in-document pointer")
+	}
+	target, _, ok := lookupPointer(b.doc, rs)
+	if !ok {
+		return b.fail("schema has an unresolvable $ref")
+	}
+	var exp map[string]any
+	if hops+1 > maxDepth || b.path[rs] >= maxRecursion {
+		// Cut recursion with the schema that makes verification STRICTER
+		// here: false (no value) normally, true under an odd number of nots.
+		// Recursive structures then verify through their null/empty
+		// alternatives, and the output validates against the uncut schema.
+		exp = map[string]any{}
+		if !b.negated {
+			exp["not"] = map[string]any{}
+		}
+	} else {
+		if b.path == nil {
+			b.path = map[string]int{}
+		}
+		b.path[rs]++
+		e := b.schema(target, ptr, depth, hops+1)
+		b.path[rs]--
+		if bv, isBool := e.(bool); isBool {
+			exp = map[string]any{}
+			if !bv {
+				exp["not"] = map[string]any{}
+			}
+		} else {
+			exp, _ = e.(map[string]any)
 		}
 	}
-	maps.Copy(exp, out)
+	rest := make(map[string]any, len(m))
+	for k, v := range m {
+		if k != "$ref" {
+			rest[k] = v
+		}
+	}
+	sib := b.object(rest, ptr, depth, hops)
+	if b.err != nil {
+		return nil
+	}
+	for k, v := range sib {
+		if _, clash := exp[k]; clash {
+			return b.fail("schema has a $ref whose sibling %q clashes with its target", k)
+		}
+		exp[k] = v
+	}
 	return exp
 }
 
-func containsRefKeyword(v any) bool {
+// object emits the allow-listed keywords of schema object m.
+func (b *verifyBuilder) object(m map[string]any, ptr string, depth, hops int) map[string]any {
+	out := map[string]any{}
+	for _, k := range slices.Sorted(maps.Keys(m)) {
+		if b.err != nil {
+			return nil
+		}
+		val := m[k]
+		switch {
+		case k == "type":
+			t, ok := cleanType(val)
+			if !ok {
+				b.fail("schema has an unsupported type %v", val)
+				return nil
+			}
+			out[k] = t
+		case k == "properties":
+			pm, ok := val.(map[string]any)
+			if !ok {
+				b.fail("schema has non-object properties")
+				return nil
+			}
+			cp := make(map[string]any, len(pm))
+			for _, name := range slices.Sorted(maps.Keys(pm)) {
+				if !b.charge(len(name) + 4) {
+					return nil
+				}
+				cp[name] = b.schema(pm[name], childPtr(ptr, "properties", name), depth+1, hops)
+			}
+			out[k] = cp
+		case k == "required":
+			l, ok := val.([]any)
+			if !ok || len(l) > maxRequired {
+				b.fail("schema has an unsupported required list")
+				return nil
+			}
+			var req []any
+			seen := map[string]bool{}
+			for _, r := range l {
+				s, ok := r.(string)
+				if !ok {
+					b.fail("schema has a non-string required entry")
+					return nil
+				}
+				if !seen[s] {
+					seen[s] = true
+					req = append(req, s)
+					b.charge(len(s) + 3)
+				}
+			}
+			out[k] = req
+		case k == "additionalProperties":
+			out[k] = b.schema(val, childPtr(ptr, k), depth+1, hops)
+		case k == "not":
+			b.negated = !b.negated
+			out[k] = b.schema(val, childPtr(ptr, k), depth+1, hops)
+			b.negated = !b.negated
+		case k == "items":
+			if _, tuple := val.([]any); tuple {
+				continue // tuple form: not verified
+			}
+			out[k] = b.schema(val, childPtr(ptr, k), depth+1, hops)
+		case k == "anyOf" || k == "oneOf" || k == "allOf":
+			l, ok := val.([]any)
+			if !ok || len(l) == 0 || len(l) > maxFanOut {
+				b.fail("schema has %s with more than %d entries", k, maxFanOut)
+				return nil
+			}
+			cp := make([]any, len(l))
+			for i, sub := range l {
+				cp[i] = b.schema(sub, childPtr(ptr, k, strconv.Itoa(i)), depth+1, hops)
+			}
+			out[k] = cp
+		case countKeys[k]:
+			n, ok := cleanCount(val)
+			if !ok {
+				b.fail("schema has an out-of-range %s", k)
+				return nil
+			}
+			b.charge(len(k) + len(n) + 4)
+			out[k] = n
+		case boundKeys[k]:
+			n, ok := cleanNumber(val)
+			if !ok {
+				b.fail("schema has an out-of-range %s", k)
+				return nil
+			}
+			b.charge(len(k) + len(n) + 4)
+			out[k] = n
+		case k == "enum":
+			l, ok := val.([]any)
+			if !ok || len(l) > maxEnumValues {
+				b.fail("schema has an unsupported enum")
+				return nil
+			}
+			cp := make([]any, len(l))
+			for i, e := range l {
+				if cp[i], ok = b.value(e); !ok {
+					return nil
+				}
+			}
+			out[k] = cp
+		case k == "const":
+			c, ok := b.value(val)
+			if !ok {
+				return nil
+			}
+			out[k] = c
+		case k == "format":
+			f, _ := val.(string)
+			if verifiedFormats[f] {
+				out[k] = f
+				b.charge(len(f) + 12)
+			} else if _, gen := formatValues[f]; gen {
+				if b.hints == nil {
+					b.hints = map[string]string{}
+				}
+				b.hints[ptr] = f
+			}
+		}
+		// Everything else is dropped.
+	}
+	if b.err != nil {
+		return nil
+	}
+	return out
+}
+
+// value returns a canonical copy of an enum/const value: at most
+// maxValueBytes, nested at most maxVerifyDepth, every number cleaned.
+func (b *verifyBuilder) value(v any) (any, bool) {
+	size := 0
+	out, ok := cleanValue(v, 0, &size)
+	if !ok {
+		b.fail("schema has an enum/const value that is too large or out of range")
+		return nil, false
+	}
+	return out, b.charge(size)
+}
+
+func cleanValue(v any, depth int, size *int) (any, bool) {
+	if depth > maxVerifyDepth || *size > maxValueBytes {
+		return nil, false
+	}
 	switch t := v.(type) {
-	case map[string]any:
-		for _, k := range refLikeKeys {
-			if _, has := t[k]; has {
-				return true
-			}
-		}
-		for _, c := range t {
-			if containsRefKeyword(c) {
-				return true
-			}
-		}
+	case nil, bool:
+		*size += 5
+		return t, true
+	case string:
+		*size += len(t) + 2
+		return t, *size <= maxValueBytes
+	case json.Number, float64:
+		n, ok := cleanNumber(t)
+		*size += len(n)
+		return n, ok
 	case []any:
-		for _, c := range t {
-			if containsRefKeyword(c) {
-				return true
+		out := make([]any, len(t))
+		for i, e := range t {
+			var ok bool
+			if out[i], ok = cleanValue(e, depth+1, size); !ok {
+				return nil, false
 			}
+			*size++
+		}
+		return out, true
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			*size += len(k) + 3
+			c, ok := cleanValue(e, depth+1, size)
+			if !ok {
+				return nil, false
+			}
+			out[k] = c
+		}
+		return out, true
+	}
+	return nil, false
+}
+
+// cleanNumber re-encodes a JSON number canonically, refusing anything that is
+// not finite, has |x| > 1e15, is nonzero with |x| < 1e-15, has a literal
+// longer than maxNumberLiteral, or whose canonical encoding is not exactly
+// equal to the literal. The rational comparison is cheap because the literal
+// is short and its magnitude bounded, so its exponent is small.
+func cleanNumber(v any) (json.Number, bool) {
+	var lit string
+	switch n := v.(type) {
+	case json.Number:
+		lit = string(n)
+	case float64:
+		lit = strconv.FormatFloat(n, 'g', -1, 64)
+	default:
+		return "", false
+	}
+	if len(lit) > maxNumberLiteral {
+		return "", false
+	}
+	f, err := strconv.ParseFloat(lit, 64)
+	if err != nil || math.IsInf(f, 0) || math.IsNaN(f) || math.Abs(f) > maxAbsNumber {
+		return "", false
+	}
+	if f == 0 {
+		// ParseFloat underflows 1e-999999 to 0 without error: accept only
+		// literals whose mantissa is all zeros.
+		mant, _, _ := strings.Cut(strings.ToLower(lit), "e")
+		if strings.Trim(mant, "+-0.") != "" {
+			return "", false
+		}
+		return "0", true
+	}
+	if math.Abs(f) < minAbsNumber {
+		return "", false
+	}
+	canon := strconv.FormatFloat(f, 'g', -1, 64)
+	if canon != lit {
+		a, okA := new(big.Rat).SetString(lit)
+		c, okC := new(big.Rat).SetString(canon)
+		if !okA || !okC || a.Cmp(c) != 0 {
+			return "", false
 		}
 	}
-	return false
+	return json.Number(canon), true
+}
+
+// cleanCount accepts a non-negative integer <= 1e15 and re-encodes it in
+// plain decimal.
+func cleanCount(v any) (json.Number, bool) {
+	n, ok := cleanNumber(v)
+	if !ok {
+		return "", false
+	}
+	f, _ := strconv.ParseFloat(string(n), 64)
+	if f < 0 || f != math.Trunc(f) {
+		return "", false
+	}
+	return json.Number(strconv.FormatInt(int64(f), 10)), true
+}
+
+// cleanType accepts a primitive type name or a non-empty array of distinct
+// primitive type names.
+func cleanType(v any) (any, bool) {
+	switch t := v.(type) {
+	case string:
+		return t, primitiveTypes[t]
+	case []any:
+		if len(t) == 0 || len(t) > len(primitiveTypes) {
+			return nil, false
+		}
+		seen := map[string]bool{}
+		out := make([]any, 0, len(t))
+		for _, e := range t {
+			s, ok := e.(string)
+			if !ok || !primitiveTypes[s] {
+				return nil, false
+			}
+			if !seen[s] {
+				seen[s] = true
+				out = append(out, s)
+			}
+		}
+		return out, true
+	}
+	return nil, false
 }
 
 func countInstance(v any) int {
@@ -1249,27 +1533,4 @@ func countInstance(v any) int {
 		}
 	}
 	return n
-}
-
-// dataSize approximates the JSON size of a decoded value without allocating.
-func dataSize(v any) int {
-	switch t := v.(type) {
-	case string:
-		return len(t) + 2
-	case map[string]any:
-		n := 2
-		for k, c := range t {
-			n += len(k) + 3 + dataSize(c)
-		}
-		return n
-	case []any:
-		n := 2
-		for _, c := range t {
-			n += dataSize(c) + 1
-		}
-		return n
-	case json.Number:
-		return len(t)
-	}
-	return 5
 }

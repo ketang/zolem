@@ -172,7 +172,6 @@ func TestSynthArgs_NoExternalLoading(t *testing.T) {
 	for _, schema := range []string{
 		`{"type":"object","required":["a"],"properties":{"a":{"$ref":"file:///etc/hostname"}}}`,
 		`{"type":"object","required":["a"],"properties":{"a":{"$ref":"http://127.0.0.1:1/x"}}}`,
-		`{"$schema":"file:///tmp/x.json","type":"object","required":["a"],"properties":{"a":{"type":"string"}}}`,
 	} {
 		buf := captureLog(t)
 		out := SynthArgsForTool(uniqueTool(), json.RawMessage(schema))
@@ -184,15 +183,19 @@ func TestSynthArgs_NoExternalLoading(t *testing.T) {
 			t.Errorf("%s: missing warning, log=%q", schema, buf.String())
 		}
 	}
-	// The loader rejects everything, so any attempt was refused; nothing may
-	// have been resolved from outside the in-memory resource.
-	for _, u := range loads {
-		if u == rootSchemaURL {
-			t.Errorf("root schema should be added in memory, not loaded: %s", u)
-		}
+	// $schema is not part of the verification tree, so a non-standard
+	// metaschema is never fetched; the tree is checked as draft 2020-12.
+	out, st := synthesize(uniqueTool(), json.RawMessage(`{"$schema":"file:///tmp/x.json","type":"object","required":["a"],"properties":{"a":{"type":"string"}}}`))
+	if !st.Valid || string(out) != `{"a":"lorem ipsum"}` {
+		t.Errorf("$schema: got %s valid=%v", out, st.Valid)
+	}
+	// External refs are refused while building the verification tree, so
+	// the compiler never even attempts a load.
+	if len(loads) != 0 {
+		t.Errorf("loads attempted: %v", loads)
 	}
 	// In-document refs keep working.
-	out, st := synthesize(uniqueTool(), json.RawMessage(`{"type":"object","required":["a"],"properties":{"a":{"$ref":"#/$defs/a"}},"$defs":{"a":{"type":"integer"}}}`))
+	out, st = synthesize(uniqueTool(), json.RawMessage(`{"type":"object","required":["a"],"properties":{"a":{"$ref":"#/$defs/a"}},"$defs":{"a":{"type":"integer"}}}`))
 	if !st.Valid || string(out) != `{"a":42}` {
 		t.Errorf("in-document $ref: got %s valid=%v", out, st.Valid)
 	}
@@ -344,11 +347,12 @@ func FuzzSynthArgs(f *testing.F) {
 		f.Add(tc.schema)
 	}
 	f.Add(fanoutSchema(16))
-	for _, sc := range adversarialShapes() {
+	for _, sc := range allBoundedShapes() {
 		f.Add(sc)
 	}
-	f.Add(patternBomb(0))
-	f.Add(patternBomb(2))
+	for _, tc := range realisticSchemas {
+		f.Add(tc.schema)
+	}
 	for _, tc := range limitCases[:6] {
 		if len(tc.schema) < 8192 {
 			f.Add(tc.schema)
@@ -374,6 +378,9 @@ func FuzzSynthArgs(f *testing.F) {
 		}
 		if st.WholeValidations > maxWholeChecks {
 			t.Fatalf("whole validations %d", st.WholeValidations)
+		}
+		if err := checkBuiltSchema(schema); err != nil {
+			t.Fatalf("verification tree violates the allow-list: %v", err)
 		}
 	})
 }
@@ -498,54 +505,79 @@ func TestSynthArgs_RefDAGExpansionIsBounded(t *testing.T) {
 	}
 }
 
-func TestExpander(t *testing.T) {
-	parse := func(in string) map[string]any {
-		doc, err := jsonschema.UnmarshalJSON(strings.NewReader(in))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return doc.(map[string]any)
+func parseSchema(t testing.TB, in string) map[string]any {
+	t.Helper()
+	doc, err := jsonschema.UnmarshalJSON(strings.NewReader(in))
+	if err != nil {
+		t.Fatal(err)
 	}
+	return doc.(map[string]any)
+}
+
+func TestVerifyBuilder(t *testing.T) {
 	// Property names that look like keywords are just names; refs inline.
-	root := parse(`{"type":"object","properties":{"enum":{"$ref":"#/$defs/a","description":"d"},"default":{"type":"string"}},"$defs":{"a":{"type":"integer"}}}`)
-	ex := &expander{doc: root}
-	out := ex.schema(root, 0).(map[string]any)
-	if ex.err != nil {
-		t.Fatal(ex.err)
+	root := parseSchema(t, `{"type":"object","properties":{"enum":{"$ref":"#/$defs/a","description":"d"},"default":{"type":"string"}},"$defs":{"a":{"type":"integer"}}}`)
+	b := &verifyBuilder{doc: root}
+	out := b.build(root)
+	if b.err != nil {
+		t.Fatal(b.err)
 	}
 	props := out["properties"].(map[string]any)
 	if props["enum"].(map[string]any)["type"] != "integer" || out["$defs"] != nil {
 		t.Errorf("not inlined: %v", out)
 	}
+	if _, has := props["enum"].(map[string]any)["description"]; has {
+		t.Errorf("annotation copied: %v", out)
+	}
 	for name, in := range map[string]string{
-		"anchor_ref":   `{"properties":{"a":{"$ref":"#x"}}}`,
-		"abs_ref":      `{"properties":{"a":{"$ref":"mem://zolem/tool-schema.json#/$defs/a"}},"$defs":{"a":{}}}`,
-		"dynamic_ref":  `{"properties":{"a":{"$dynamicRef":"#a"}}}`,
-		"recursiveRef": `{"$recursiveRef":"#"}`,
-		"anchor":       `{"$anchor":"a"}`,
-		"ref_in_data":  `{"properties":{"a":{"enum":[{"$ref":"x"}]}}}`,
-		"unresolvable": `{"properties":{"a":{"$ref":"#/$defs/nope"}}}`,
+		"anchor_ref":     `{"properties":{"a":{"$ref":"#x"}}}`,
+		"abs_ref":        `{"properties":{"a":{"$ref":"mem://zolem/tool-schema.json#/$defs/a"}},"$defs":{"a":{}}}`,
+		"dynamic_ref":    `{"properties":{"a":{"$dynamicRef":"#a"}}}`,
+		"recursiveRef":   `{"$recursiveRef":"#"}`,
+		"anchor":         `{"$anchor":"a"}`,
+		"nested_id":      `{"properties":{"a":{"$id":"x"}}}`,
+		"unresolvable":   `{"properties":{"a":{"$ref":"#/$defs/nope"}}}`,
+		"sibling_clash":  `{"properties":{"a":{"$ref":"#/$defs/a","type":"string"}},"$defs":{"a":{"type":"integer"}}}`,
+		"bad_type":       `{"type":"file"}`,
+		"wide_anyOf":     `{"anyOf":[` + strings.TrimSuffix(strings.Repeat(`{},`, 17), ",") + `]}`,
+		"huge_minimum":   `{"minimum":1e999999}`,
+		"tiny_minimum":   `{"minimum":1e-999999}`,
+		"subnormal":      `{"maximum":5e-324}`,
+		"inexact":        `{"maximum":0.10000000000000001}`,
+		"long_literal":   `{"maximum":1.0000000000000000000000000000000000000000}`,
+		"bool_exclusive": `{"exclusiveMinimum":true}`,
+		"fraction_count": `{"minItems":1.5}`,
+		"negative_count": `{"minLength":-1}`,
+		"enum_big_value": `{"enum":["` + strings.Repeat("x", 5000) + `"]}`,
+		"enum_huge_num":  `{"enum":[1,{"a":[1e999999]}]}`,
+		"const_tiny_num": `{"const":1e-999999}`,
+		"too_deep":       strings.Repeat(`{"not":`, 40) + `{}` + strings.Repeat(`}`, 40),
+		"too_many_nodes": bigSchema(600),
 	} {
-		d := parse(in)
-		ex := &expander{doc: d}
-		ex.schema(d, 0)
-		if ex.err == nil {
-			t.Errorf("%s: expected expansion to be refused", name)
+		d := parseSchema(t, in)
+		b := &verifyBuilder{doc: d}
+		if b.build(d) != nil || b.err == nil {
+			t.Errorf("%s: expected verification to be refused", name)
 		}
 	}
-	// Sibling clash wraps in allOf.
-	d := parse(`{"properties":{"a":{"$ref":"#/$defs/a","type":"string"}},"$defs":{"a":{"type":"integer"}}}`)
-	ex = &expander{doc: d}
-	if got := ex.schema(d, 0).(map[string]any)["properties"].(map[string]any)["a"].(map[string]any); got["allOf"] == nil {
-		t.Errorf("clash should wrap in allOf: %v", got)
+	// Ref-like keys inside data are only data; tuple items and the rest of
+	// the vocabulary are dropped; numbers are canonical.
+	d := parseSchema(t, `{"properties":{"a":{"enum":[{"$ref":"x"},1.50,0e5],"items":[{"type":"string"}],"pattern":"^a","multipleOf":1e999999,"minimum":1.0E2,"maxLength":1e3,"format":"regex","default":1e999999}}}`)
+	b = &verifyBuilder{doc: d}
+	got := b.build(d)
+	if b.err != nil {
+		t.Fatal(b.err)
+	}
+	j, _ := json.Marshal(got)
+	if want := `{"properties":{"a":{"enum":[{"$ref":"x"},1.5,0],"maxLength":1000,"minimum":100}}}`; string(j) != want {
+		t.Errorf("got  %s\nwant %s", j, want)
 	}
 	// Ordinary schemas stay verified.
 	for _, tc := range supportedCases {
-		d := parse(tc.schema)
-		ex := &expander{doc: d}
-		ex.schema(d, 0)
-		if ex.err != nil || ex.nodes > maxExpandedNodes/5 {
-			t.Errorf("%s: err=%v nodes=%d", tc.name, ex.err, ex.nodes)
+		d := parseSchema(t, tc.schema)
+		b := &verifyBuilder{doc: d}
+		if b.build(d) == nil || b.nodes > maxVerifyNodes/5 {
+			t.Errorf("%s: err=%v nodes=%d", tc.name, b.err, b.nodes)
 		}
 	}
 }
@@ -739,10 +771,10 @@ func TestSimpleArgs_FollowsRefsAndBranches(t *testing.T) {
 	}
 }
 
-func TestExpander_DropsPatternsAndCapsData(t *testing.T) {
-	doc, _ := jsonschema.UnmarshalJSON(strings.NewReader(`{"properties":{"pattern":{"type":"string","pattern":"^a+$"},"p":{"patternProperties":{"x":{}}}}}`))
-	ex := &expander{doc: doc}
-	out := ex.schema(doc, 0).(map[string]any)["properties"].(map[string]any)
+func TestVerifyBuilder_DropsPatternsAndCapsData(t *testing.T) {
+	doc := parseSchema(t, `{"properties":{"pattern":{"type":"string","pattern":"^a+$"},"p":{"patternProperties":{"x":{}}}}}`)
+	b := &verifyBuilder{doc: doc}
+	out := b.build(doc)["properties"].(map[string]any)
 	if _, ok := out["pattern"].(map[string]any)["pattern"]; ok {
 		t.Error("pattern keyword should be dropped")
 	}
@@ -752,11 +784,14 @@ func TestExpander_DropsPatternsAndCapsData(t *testing.T) {
 	if _, ok := out["p"].(map[string]any)["patternProperties"]; ok {
 		t.Error("patternProperties should be dropped")
 	}
-	big := `{"properties":{"a":{"enum":["` + strings.Repeat("x", 100<<10) + `"]}}}`
-	doc, _ = jsonschema.UnmarshalJSON(strings.NewReader(big))
-	ex = &expander{doc: doc}
-	ex.schema(doc, 0)
-	if ex.err == nil {
+	// 20 enum values of 4000 bytes each: each fits, the total does not.
+	var vals []string
+	for i := 0; i < 20; i++ {
+		vals = append(vals, fmt.Sprintf(`"%d%s"`, i, strings.Repeat("x", 4000)))
+	}
+	doc = parseSchema(t, `{"properties":{"a":{"enum":[`+strings.Join(vals, ",")+`]}}}`)
+	b = &verifyBuilder{doc: doc}
+	if b.build(doc) != nil || b.err == nil {
 		t.Error("oversized enum data should refuse verification")
 	}
 }

@@ -661,24 +661,47 @@ the schema is the tool's JSON Schema; for Gemini it is `parameters` (Gemini's
 upper-case OpenAPI subset, normalized first: lower-cased types, `nullable`) or,
 when `parameters` is absent, `parametersJsonSchema`.
 
-Supported subset (output validates when a valid value exists within the
-limits below): `type` (including type arrays and `null`), `const`, `enum`,
-`default`, `properties`/`required`, in-document `$ref` into `$defs`/`definitions`
-(depth 8), string `minLength`/`maxLength` and `format` (`email`, `date-time`,
-`date`, `uri`, `uuid`), numeric `minimum`/`maximum`/`exclusiveMinimum`/
-`exclusiveMaximum`, array `items`/`minItems`/`maxItems`, `anyOf`, `oneOf`, and
-`allOf` of object schemas (same-type primitive overlaps merge bounds and
-intersect enums). Required properties are always generated; optional ones (all
-properties when `required` is absent) are omitted when no valid value is found.
+Verification never runs on the client's schema. Zolem builds a new
+verification tree from an allow-list and validates against that, so the cost
+of verifying is bounded by construction: at most 500 schema nodes, 32 levels
+deep, `anyOf`/`oneOf`/`allOf` with at most 16 entries, 64 KiB of keys and
+data, `enum`/`const` values of at most 4 KiB each, numbers that are finite with
+`|x| <= 1e15` and re-encoded canonically, and at most 2,000 generated JSON
+values per checked instance. Verification additionally runs under a 250 ms
+work deadline, a 350 ms hard timeout, and at most 8 concurrent verifications.
 
-Anything else (`pattern`, `not`, `if/then/else`, `patternProperties`,
-`dependentRequired`, non-object `allOf`, ...) is ignored when generating, so the
-result may not validate. Limits: schemas over 64 KiB or 2,000 objects, external
-`$ref`s, and non-standard `$schema` values skip verification and use a simple
-type-based fallback (`"lorem ipsum"`, `42`, `true`, `[]`); output is capped at
-64 KiB. When the result still does not satisfy the schema it is returned
-anyway and a `warn: synthesized tool arguments do not satisfy schema for tool`
-line is logged once per tool name.
+Checked keywords: `type` (a primitive type name or an array of them),
+`properties`, `required`, `additionalProperties`, `items` (single-schema form),
+`minItems`/`maxItems`, `minLength`/`maxLength`, `minProperties`/
+`maxProperties`, `enum`, `const`, `minimum`/`maximum`/`exclusiveMinimum`/
+`exclusiveMaximum`, `anyOf`, `oneOf`, `allOf`, `not`, `format` for `email`,
+`date` and `date-time`, and in-document `$ref` into `$defs`/`definitions`
+(inlined; a recursive `$ref` is followed twice per path and then treated as
+matching nothing, so recursive structures end in their `null`/empty
+alternatives). The generator also produces `uri` and `uuid` strings for those
+formats, but they are not asserted.
+
+Not checked (omitted from the verification tree, so output may not satisfy
+them): `pattern`, `patternProperties`, `multipleOf`, `uniqueItems`,
+`contains`/`minContains`/`maxContains`, `dependentRequired`/
+`dependentSchemas`, `propertyNames`, `if`/`then`/`else`, `prefixItems`, tuple
+`items`, `unevaluatedItems`/`unevaluatedProperties`, other `format` values,
+and `$schema` (the tree is checked as draft 2020-12). `default`, `examples`,
+`title`, `description` and `$comment` are ignored.
+
+Required properties are always generated; optional ones (all properties when
+`required` is absent) are omitted when no valid value is found. `allOf` of
+object schemas is merged (same-type primitive overlaps merge bounds and
+intersect enums).
+
+Verification is skipped, and a simple type-based fallback (`"lorem ipsum"`,
+`42`, `true`, `[]`, first `enum`/`const` value when it passes the limits above)
+is used, when the schema is over 64 KiB, exceeds any limit above, has a number
+outside the limits (for example `1e999999` or `1e-999999`), uses an external
+or anchor `$ref`, `$dynamicRef`, a nested `$id`, or a `$ref` whose sibling
+keywords clash with its target. Output is capped at 64 KiB. When the result is
+not verified it is returned anyway and a `warn: synthesized tool arguments do
+not satisfy schema for tool` line is logged once per tool name.
 
 ## Response Model Policy
 

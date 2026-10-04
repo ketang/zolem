@@ -204,3 +204,12 @@ func TestFunctionCallANY_ParametersJsonSchema(t *testing.T) {
 		t.Errorf("args.city: want non-empty string, got %v (args=%v)", args["city"], args)
 	}
 }
+
+func TestFunctionCallANY_HostileNumbersInSchema(t *testing.T) {
+	for _, n := range []string{"1e999999", "-1e999999", "1e-999999"} {
+		args := geminiANYArgs(t, `{"name":"f","parameters":{"type":"OBJECT","properties":{"a":{"type":"ARRAY","items":{"type":"INTEGER"},"minItems":`+n+`},"b":{"type":"NUMBER","minimum":`+n+`,"maximum":`+n+`,"enum":[`+n+`]},"c":{"type":"STRING","maxLength":`+n+`}},"required":["a","b","c"]}}`)
+		if len(args) != 3 {
+			t.Errorf("%s: args=%v", n, args)
+		}
+	}
+}
