@@ -155,3 +155,61 @@ func TestFunctionCallAllowedNames_Filtered(t *testing.T) {
 		t.Errorf("expected 'search' (from allowedFunctionNames), got %v", fc["name"])
 	}
 }
+
+func geminiANYArgs(t *testing.T, decl string) map[string]any {
+	t.Helper()
+	h := newHandler(t)
+	body := `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"tools":[{"functionDeclarations":[` + decl + `]}],"toolConfig":{"functionCallingConfig":{"mode":"ANY"}}}`
+	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.0-flash:generateContent", bytes.NewBufferString(body))
+	req.Header.Set("x-goog-api-key", "test-key")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					FunctionCall *struct {
+						Args map[string]any `json:"args"`
+					} `json:"functionCall"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	fc := resp.Candidates[0].Content.Parts[0].FunctionCall
+	if fc == nil {
+		t.Fatalf("expected functionCall part")
+	}
+	return fc.Args
+}
+
+func TestFunctionCallANY_UpperCaseSchemaTypes(t *testing.T) {
+	args := geminiANYArgs(t, `{"name":"get_weather","parameters":{"type":"OBJECT","properties":{"city":{"type":"STRING"},"unit":{"type":"STRING","enum":["c","f"]},"note":{"type":"STRING","nullable":true}},"required":["city","unit"]}}`)
+	if s, _ := args["city"].(string); s == "" {
+		t.Errorf("args.city: want non-empty string, got %v (args=%v)", args["city"], args)
+	}
+	if u := args["unit"]; u != "c" && u != "f" {
+		t.Errorf("args.unit: want enum member, got %v", u)
+	}
+}
+
+func TestFunctionCallANY_ParametersJsonSchema(t *testing.T) {
+	args := geminiANYArgs(t, `{"name":"get_weather","parametersJsonSchema":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}`)
+	if s, _ := args["city"].(string); s == "" {
+		t.Errorf("args.city: want non-empty string, got %v (args=%v)", args["city"], args)
+	}
+}
+
+func TestFunctionCallANY_HostileNumbersInSchema(t *testing.T) {
+	for _, n := range []string{"1e999999", "-1e999999", "1e-999999"} {
+		args := geminiANYArgs(t, `{"name":"f","parameters":{"type":"OBJECT","properties":{"a":{"type":"ARRAY","items":{"type":"INTEGER"},"minItems":`+n+`},"b":{"type":"NUMBER","minimum":`+n+`,"maximum":`+n+`,"enum":[`+n+`]},"c":{"type":"STRING","maxLength":`+n+`}},"required":["a","b","c"]}}`)
+		if len(args) != 3 {
+			t.Errorf("%s: args=%v", n, args)
+		}
+	}
+}

@@ -153,7 +153,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveAnthropicToolCallResponse(ctx context.Context, w http.ResponseWriter, req MessagesRequest, tool *AnthropicTool, model string, inputTokens int) {
-	args := backend.SynthArgs(tool.InputSchema)
+	args := backend.SynthArgsForTool(tool.Name, tool.InputSchema)
 	block := ContentBlock{
 		Type:  "tool_use",
 		ID:    newToolUseID(),

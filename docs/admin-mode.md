@@ -659,6 +659,63 @@ For Gemini specifically:
 If you need a guaranteed function call from the local runtime, send
 `mode = "ANY"`.
 
+### Synthesized arguments
+
+The arguments of a synthesized call are generated deterministically from the
+tool's schema and then verified against it (JSON Schema validation with format
+assertions; nothing is loaded from disk or network). For OpenAI and Anthropic
+the schema is the tool's JSON Schema; for Gemini it is `parameters` (Gemini's
+upper-case OpenAPI subset, normalized first: lower-cased types, `nullable`) or,
+when `parameters` is absent, `parametersJsonSchema`.
+
+Verification never runs on the client's schema. Zolem builds a new
+verification tree from an allow-list and validates against that, so the cost
+of verifying is bounded by construction: at most 500 schema nodes, 32 levels
+deep, `anyOf`/`oneOf`/`allOf` with at most 16 entries, 64 KiB of keys and
+data, `enum`/`const` values of at most 4 KiB each, numbers that are finite with
+`|x| <= 1e15` and re-encoded canonically, and at most 2,000 generated JSON
+values per checked instance. Verification additionally runs under a 250 ms
+work deadline, a 350 ms hard timeout, and at most 8 concurrent verifications.
+
+Checked keywords: `type` (a primitive type name or an array of them),
+`properties`, `required`, `additionalProperties`, `items` (single-schema form),
+`minItems`/`maxItems`, `minLength`/`maxLength`, `minProperties`/
+`maxProperties`, `enum`, `const`, `minimum`/`maximum`/`exclusiveMinimum`/
+`exclusiveMaximum`, `anyOf`, `oneOf`, `allOf`, `not`, `format` for `email`,
+`date` and `date-time`, and in-document `$ref` into `$defs`/`definitions`
+(inlined; a recursive `$ref` is followed twice per path and then treated as
+matching nothing, so recursive structures end in their `null`/empty
+alternatives). The generator also produces `uri` and `uuid` strings for those
+formats, but they are not asserted.
+
+Not checked (omitted from the verification tree, so output may not satisfy
+them): `pattern`, `patternProperties`, `multipleOf`, `uniqueItems`,
+`contains`/`minContains`/`maxContains`, `dependentRequired`/
+`dependentSchemas`, `propertyNames`, `if`/`then`/`else`,
+`unevaluatedItems`/`unevaluatedProperties`, other `format` values, and
+`$schema` (the tree is checked as draft 2020-12). `default`, `examples`,
+`title`, `description` and `$comment` are ignored. Omitting a keyword never
+changes what a checked keyword means, except for `prefixItems` and array-form
+(tuple) `items`, which change which elements `items` covers; schemas using them
+skip verification.
+
+Required properties are always generated; optional ones (all properties when
+`required` is absent) are omitted when no valid value is found. `allOf` of
+object schemas is merged (same-type primitive overlaps merge bounds and
+intersect enums).
+
+Verification is skipped, and a simple type-based fallback (`"lorem ipsum"`,
+`42`, `true`, `[]`, first `enum`/`const` value when it passes the limits above)
+is used, when the schema is over 64 KiB, exceeds any limit above, has a number
+outside the limits (for example `1e999999` or `1e-999999`), uses an external,
+anchor or over-1 KiB `$ref`, `$dynamicRef`, a nested `$id`, `prefixItems` or
+tuple `items`, or a `$ref` whose sibling keywords clash with its target. The
+fallback has its own fixed work budget (at most 256 keys per object, a few
+`$ref` hops, 20,000 steps), so it is cheap for any schema. Output is capped at
+64 KiB. When the result is
+not verified it is returned anyway and a `warn: synthesized tool arguments do
+not satisfy schema for tool` line is logged once per tool name.
+
 ## Response Model Policy
 
 Local runtime listeners can shape the provider-visible `model` field without

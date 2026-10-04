@@ -17,6 +17,8 @@ type FunctionDeclaration struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	Parameters  json.RawMessage `json:"parameters,omitempty"`
+	// ParametersJsonSchema is the plain JSON Schema alternative to Parameters.
+	ParametersJsonSchema json.RawMessage `json:"parametersJsonSchema,omitempty"`
 }
 
 type ToolConfig struct {

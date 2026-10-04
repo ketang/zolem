@@ -1,5 +1,21 @@
 package gemini
 
+import (
+	"encoding/json"
+
+	"github.com/ketang/zolem/internal/provider/backend"
+)
+
+// argsSchema returns the declaration's argument schema as JSON Schema:
+// parameters (Gemini's OpenAPI subset, normalized) when present, otherwise
+// parametersJsonSchema (already JSON Schema).
+func (fd *FunctionDeclaration) argsSchema() json.RawMessage {
+	if len(fd.Parameters) > 0 {
+		return backend.NormalizeGeminiSchema(fd.Parameters)
+	}
+	return fd.ParametersJsonSchema
+}
+
 // geminiToolCallRequired reports whether the request's ToolConfig mandates a
 // function call (mode == "ANY"). Returns the first matching FunctionDeclaration
 // to call, or nil if no call is required.
