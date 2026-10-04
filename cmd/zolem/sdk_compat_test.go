@@ -12,6 +12,7 @@ import (
 	openai "github.com/openai/openai-go/v3"
 	openaioption "github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/param"
+	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
 )
 
@@ -212,6 +213,22 @@ func TestSDKCompatibility_OpenAI(t *testing.T) {
 		}
 		if got := completion.Choices[0].Message.Content; got != "Fixture says hello from openai." {
 			t.Fatalf("content: got %q", got)
+		}
+	})
+
+	t.Run("responses_non_streaming", func(t *testing.T) {
+		resp, err := client.Responses.New(context.Background(), responses.ResponseNewParams{
+			Model: shared.ResponsesModel("gpt-4o"),
+			Input: responses.ResponseNewParamsInputUnion{OfString: param.NewOpt("hello")},
+		})
+		if err != nil {
+			t.Fatalf("responses.new: %v", err)
+		}
+		if resp.Object != "response" {
+			t.Fatalf("object: got %q", resp.Object)
+		}
+		if resp.OutputText() == "" {
+			t.Fatalf("empty output text: %+v", resp)
 		}
 	})
 
