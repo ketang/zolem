@@ -524,8 +524,8 @@ curl -sS -X PUT \
   http://127.0.0.1:18090/_zolem/listeners/ollama-demo
 ```
 
-Endpoints served: `POST /api/chat`, `GET /api/tags`, `GET /api/version`,
-`POST /api/show`, and `GET /api/ps`. Model-management endpoints
+Endpoints served: `POST /api/chat`, `POST /api/generate`, `GET /api/tags`,
+`GET /api/version`, `POST /api/show`, and `GET /api/ps`. Model-management endpoints
 (`/api/pull`, `/api/push`, `/api/create`, `/api/delete`) are not served and
 return a native 404 — zolem has no model store to mutate.
 
@@ -539,6 +539,13 @@ Four differences from the other providers will be visible to clients:
   the OpenAI chat-completions API.
 - **There is no authentication.** Requests need no `Authorization` header.
 - **Errors are flat** `{"error": "..."}` strings, not a nested envelope.
+
+`POST /api/generate` follows the same pipeline as `/api/chat` with `response`
+in place of `message.content`; `system` and `prompt` reach the backend as chat
+messages. An absent or empty `prompt` returns one non-streamed
+`{"done": true, "done_reason": "load"}` object (`"unload"` when `keep_alive` is
+`0`, `"0"` or `"0s"`). `format` is accepted and ignored. Its fixtures use
+`version: v1-generate` (see [fixture-authoring.md](fixture-authoring.md)).
 
 `POST /api/chat` accepts any model name, because zolem has no model store;
 `response_model_policy` controls the model reported back. `POST /api/show`

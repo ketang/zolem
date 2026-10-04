@@ -19,6 +19,9 @@
 
 ### Added
 
+- Ollama provider serves `POST /api/generate` (non-streaming JSON and NDJSON
+  streaming), with `v1-generate` fixtures and a vendored `ollama:v1-generate`
+  request schema.
 - Opt-in non-loopback bind for containers: `-allow-non-loopback-bind` lets
   both modes bind `0.0.0.0` or `::` (specific non-loopback IPs stay rejected).
   It requires at least one `-allowed-host` (additive: `localhost` and loopback
