@@ -157,11 +157,11 @@ func runProfiles(ctx context.Context, client admincli.Client, opts admincli.Opti
 		fs.StringVar(&payload.OllamaUpstream, "ollama-upstream", "", "ollama upstream URL (loopback or RFC1918 only, e.g. http://127.0.0.1:11434)")
 		fs.BoolVar(&payload.AllowExternalOllamaUpstream, "allow-external-ollama-upstream", false, "allow ollama-upstream to point outside loopback/RFC1918")
 		fs.Float64Var(&calibrationTemperature, "calibration-temperature", 0, "ollama-logprob only: positive divisor applied to each log probability (default 1.0; above 1 flattens, below 1 sharpens); omitted when unset")
-		fs.StringVar(&payload.StreamDelay.Mode, "stream-delay-mode", "", "streaming pacing mode: fixed, uniform, or token")
-		fs.IntVar(&streamDelayMS, "stream-delay-ms", 0, "fixed streaming delay in milliseconds")
-		fs.IntVar(&streamDelayMinMS, "stream-delay-min-ms", 0, "minimum streaming delay in milliseconds (uniform mode)")
-		fs.IntVar(&streamDelayMaxMS, "stream-delay-max-ms", 0, "maximum streaming delay in milliseconds (uniform mode)")
-		fs.Int64Var(&streamDelaySeed, "stream-delay-seed", 0, "seed for deterministic streaming pacing (uniform mode); omitted when unset")
+		fs.StringVar(&payload.StreamDelay.Mode, "stream-delay-mode", "", fmt.Sprintf("streaming pacing mode: %s (with -stream-delay-ms) or %s (with -stream-delay-min-ms, -stream-delay-max-ms, -stream-delay-seed)", runtimecfg.StreamDelayFixed, runtimecfg.StreamDelayRandom))
+		fs.IntVar(&streamDelayMS, "stream-delay-ms", 0, "streaming delay in milliseconds (requires -stream-delay-mode fixed)")
+		fs.IntVar(&streamDelayMinMS, "stream-delay-min-ms", 0, "minimum streaming delay in milliseconds (requires -stream-delay-mode random)")
+		fs.IntVar(&streamDelayMaxMS, "stream-delay-max-ms", 0, "maximum streaming delay in milliseconds (requires -stream-delay-mode random)")
+		fs.Int64Var(&streamDelaySeed, "stream-delay-seed", 0, "seed for deterministic streaming pacing (requires -stream-delay-mode random); omitted when unset")
 		if err := fs.Parse(flagArgs); err != nil {
 			return err
 		}
@@ -170,6 +170,9 @@ func runProfiles(ctx context.Context, client admincli.Client, opts admincli.Opti
 		}
 		if name == "" || fs.NArg() > 1 {
 			return errors.New("profiles create requires exactly one profile name")
+		}
+		if err := validateStreamDelayFlags(fs, payload.StreamDelay.Mode); err != nil {
+			return err
 		}
 		if flagWasSet(fs, "stream-delay-ms") {
 			payload.StreamDelay.MS = streamDelayMS
@@ -593,6 +596,30 @@ func splitOptionalLeadingName(args []string) (string, []string) {
 	return args[0], args[1:]
 }
 
+// validateStreamDelayFlags enforces, by flag presence rather than value, that
+// each stream-delay flag is paired with the mode it belongs to. This is
+// stricter than the server on purpose: no implicit mode, and no flags that
+// are meaningless for the chosen mode.
+func validateStreamDelayFlags(fs *flag.FlagSet, mode string) error {
+	switch mode {
+	case "", runtimecfg.StreamDelayFixed, runtimecfg.StreamDelayRandom:
+	default:
+		return fmt.Errorf("-stream-delay-mode must be %s or %s, got %q", runtimecfg.StreamDelayFixed, runtimecfg.StreamDelayRandom, mode)
+	}
+	required := map[string]string{
+		"stream-delay-ms":     runtimecfg.StreamDelayFixed,
+		"stream-delay-min-ms": runtimecfg.StreamDelayRandom,
+		"stream-delay-max-ms": runtimecfg.StreamDelayRandom,
+		"stream-delay-seed":   runtimecfg.StreamDelayRandom,
+	}
+	for _, name := range []string{"stream-delay-ms", "stream-delay-min-ms", "stream-delay-max-ms", "stream-delay-seed"} {
+		if flagWasSet(fs, name) && mode != required[name] {
+			return fmt.Errorf("-%s requires -stream-delay-mode %s", name, required[name])
+		}
+	}
+	return nil
+}
+
 func flagWasSet(fs *flag.FlagSet, name string) bool {
 	seen := false
 	fs.Visit(func(f *flag.Flag) {
@@ -734,6 +761,8 @@ Admin control-plane commands (use -admin-url):
   profiles list
   profiles create <name> [-backend lorem|faker|fixture|ollama|wasm|error] [...]
     [-wasm-module-file PATH] [-wasm-timeout-ms N]
+    [-stream-delay-mode fixed -stream-delay-ms N]
+    [-stream-delay-mode random -stream-delay-min-ms N -stream-delay-max-ms N [-stream-delay-seed N]]
     typesafe supports lorem, faker, fixture, and error backends
   profiles delete <name>
   listeners list

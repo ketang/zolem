@@ -4,6 +4,9 @@
 
 ### Changed
 
+- `zolemc profiles create` help now lists the stream-delay modes the server
+  accepts (`fixed`, `random`) instead of `uniform`/`token`, and validates the
+  mode and its paired flags client-side before sending (zolem-3ik).
 - Ollama upstream IP policy is now one shared classifier for profile
   validation and dialing. `0.0.0.0/8`, `::`, multicast, zoned literals,
   Teredo, NAT64 local-use, and NAT64/6to4/IPv4-compatible forms embedding
