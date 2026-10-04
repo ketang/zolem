@@ -469,7 +469,7 @@ func providerSpecKeys(provider string) []string {
 	case "anthropic":
 		return []string{"anthropic:v1"}
 	case "openai":
-		return []string{"openai:v1"}
+		return []string{"openai:v1", "openai:v1-responses"}
 	case "gemini":
 		return []string{"gemini:v1", "gemini:v1beta"}
 	case "ollama":

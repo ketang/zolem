@@ -37,8 +37,15 @@ func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator 
 	h.mux = chi.NewRouter()
 	h.mux.Post("/v1/chat/completions", h.handleChatCompletions)
 	h.mux.Get("/v1/responses", h.handleResponses)
+	h.mux.Post("/v1/responses", h.handleResponsesPost)
 	h.mux.Get("/v1/models", h.handleListModels)
 	h.mux.Get("/v1/models/*", h.handleListModels)
+	h.mux.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/responses" {
+			w.Header().Set("Allow", "GET, POST")
+		}
+		writeError(w, http.StatusMethodNotAllowed, "invalid_request_error", "Method not allowed.", nil)
+	})
 	h.mux.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "invalid_request_error", "Not found.", nil)
 	})

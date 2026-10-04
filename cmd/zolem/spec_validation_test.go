@@ -131,3 +131,16 @@ func TestSpecValidation_StateReportsLoadedSchemas(t *testing.T) {
 		t.Fatalf("schemas_loaded missing openai:v1: %v", payload.SchemasLoaded)
 	}
 }
+
+func TestSpecValidation_OpenAIResponsesRejectsMissingModel(t *testing.T) {
+	app := buildProviderApp(t, "openai")
+	defer app.close()
+
+	req := httptestRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"input":"hi"}`))
+	req.Header.Set("Authorization", "Bearer sk-test")
+	resp := doRequest(t, app.handler, req)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("missing model: got %d, want 400", resp.StatusCode)
+	}
+}
