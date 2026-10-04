@@ -691,10 +691,13 @@ formats, but they are not asserted.
 Not checked (omitted from the verification tree, so output may not satisfy
 them): `pattern`, `patternProperties`, `multipleOf`, `uniqueItems`,
 `contains`/`minContains`/`maxContains`, `dependentRequired`/
-`dependentSchemas`, `propertyNames`, `if`/`then`/`else`, `prefixItems`, tuple
-`items`, `unevaluatedItems`/`unevaluatedProperties`, other `format` values,
-and `$schema` (the tree is checked as draft 2020-12). `default`, `examples`,
-`title`, `description` and `$comment` are ignored.
+`dependentSchemas`, `propertyNames`, `if`/`then`/`else`,
+`unevaluatedItems`/`unevaluatedProperties`, other `format` values, and
+`$schema` (the tree is checked as draft 2020-12). `default`, `examples`,
+`title`, `description` and `$comment` are ignored. Omitting a keyword never
+changes what a checked keyword means, except for `prefixItems` and array-form
+(tuple) `items`, which change which elements `items` covers; schemas using them
+skip verification.
 
 Required properties are always generated; optional ones (all properties when
 `required` is absent) are omitted when no valid value is found. `allOf` of
@@ -704,9 +707,12 @@ intersect enums).
 Verification is skipped, and a simple type-based fallback (`"lorem ipsum"`,
 `42`, `true`, `[]`, first `enum`/`const` value when it passes the limits above)
 is used, when the schema is over 64 KiB, exceeds any limit above, has a number
-outside the limits (for example `1e999999` or `1e-999999`), uses an external
-or anchor `$ref`, `$dynamicRef`, a nested `$id`, or a `$ref` whose sibling
-keywords clash with its target. Output is capped at 64 KiB. When the result is
+outside the limits (for example `1e999999` or `1e-999999`), uses an external,
+anchor or over-1 KiB `$ref`, `$dynamicRef`, a nested `$id`, `prefixItems` or
+tuple `items`, or a `$ref` whose sibling keywords clash with its target. The
+fallback has its own fixed work budget (at most 256 keys per object, a few
+`$ref` hops, 20,000 steps), so it is cheap for any schema. Output is capped at
+64 KiB. When the result is
 not verified it is returned anyway and a `warn: synthesized tool arguments do
 not satisfy schema for tool` line is logged once per tool name.
 

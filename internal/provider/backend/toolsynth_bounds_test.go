@@ -74,6 +74,9 @@ func allBoundedShapes() map[string]string {
 	for k, v := range adversarialShapes() {
 		m[k] = v
 	}
+	for k, v := range round6Shapes() {
+		m[k] = v
+	}
 	for _, refs := range []int{0, 2, 8} {
 		m[fmt.Sprintf("pattern_bomb_refs%d", refs)] = patternBomb(refs)
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"runtime"
 	"strings"
 	"sync"
@@ -312,7 +313,7 @@ func TestSynthArgs_OversizeFallsBackToTypeWalker(t *testing.T) {
 		t.Errorf("missing warning")
 	}
 	var m map[string]any
-	if err := json.Unmarshal(out, &m); err != nil || len(m) != 3000 || m["p0"] != "lorem ipsum" {
+	if err := json.Unmarshal(out, &m); err != nil || len(m) != maxSimpleKeys || m["p0"] != "lorem ipsum" {
 		t.Errorf("type-walker output unexpected: err=%v len=%d", err, len(m))
 	}
 }
@@ -352,6 +353,12 @@ func FuzzSynthArgs(f *testing.F) {
 	}
 	for _, tc := range realisticSchemas {
 		f.Add(tc.schema)
+	}
+	f.Add(fallbackRequiredShape(300))
+	f.Add(fallbackAnyOfShape(300))
+	for seed := range int64(50) {
+		raw, _ := json.Marshal(randSchema{rand.New(rand.NewSource(seed))}.sc(0, true))
+		f.Add(string(raw))
 	}
 	for _, tc := range limitCases[:6] {
 		if len(tc.schema) < 8192 {
@@ -553,6 +560,9 @@ func TestVerifyBuilder(t *testing.T) {
 		"const_tiny_num": `{"const":1e-999999}`,
 		"too_deep":       strings.Repeat(`{"not":`, 40) + `{}` + strings.Repeat(`}`, 40),
 		"too_many_nodes": bigSchema(600),
+		"tuple_items":    `{"items":[{"type":"string"}]}`,
+		"prefixItems":    `{"prefixItems":[{"type":"string"}],"items":{}}`,
+		"long_ref":       `{"properties":{"a":{"$ref":"#/` + strings.Repeat("a", 2000) + `"}}}`,
 	} {
 		d := parseSchema(t, in)
 		b := &verifyBuilder{doc: d}
@@ -560,9 +570,9 @@ func TestVerifyBuilder(t *testing.T) {
 			t.Errorf("%s: expected verification to be refused", name)
 		}
 	}
-	// Ref-like keys inside data are only data; tuple items and the rest of
-	// the vocabulary are dropped; numbers are canonical.
-	d := parseSchema(t, `{"properties":{"a":{"enum":[{"$ref":"x"},1.50,0e5],"items":[{"type":"string"}],"pattern":"^a","multipleOf":1e999999,"minimum":1.0E2,"maxLength":1e3,"format":"regex","default":1e999999}}}`)
+	// Ref-like keys inside data are only data; the rest of the vocabulary
+	// is dropped; numbers are canonical.
+	d := parseSchema(t, `{"properties":{"a":{"enum":[{"$ref":"x"},1.50,0e5],"pattern":"^a","multipleOf":1e999999,"minimum":1.0E2,"maxLength":1e3,"format":"regex","default":1e999999}}}`)
 	b = &verifyBuilder{doc: d}
 	got := b.build(d)
 	if b.err != nil {

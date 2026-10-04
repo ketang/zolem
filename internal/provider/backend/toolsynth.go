@@ -71,14 +71,30 @@ var (
 	warnedTools = map[string]bool{}
 )
 
+// warnOnce logs, once per tool name, why synthesized arguments are not
+// verified. Tool names and causes can carry client-supplied text (property
+// names, $refs), so both are truncated and quoted.
 func warnOnce(tool string, cause any) {
+	tool = truncateText(tool, maxWarnTool)
 	warnedMu.Lock()
 	defer warnedMu.Unlock()
 	if warnedTools[tool] || len(warnedTools) >= 1024 {
 		return
 	}
 	warnedTools[tool] = true
-	log.Printf("warn: synthesized tool arguments do not satisfy schema for tool %q: %v", tool, cause)
+	log.Printf("warn: synthesized tool arguments do not satisfy schema for tool %q: %q", tool, truncateText(fmt.Sprint(cause), maxWarnCause))
+}
+
+const (
+	maxWarnTool  = 128
+	maxWarnCause = 256
+)
+
+func truncateText(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return strings.ToValidUTF8(s[:n], "") + "..."
 }
 
 // SynthArgs generates deterministic JSON arguments for a tool's JSON Schema.
@@ -443,7 +459,7 @@ func (g *synth) candidates(sc *sch, depth int) []any {
 	for _, t := range types {
 		switch t {
 		case "string":
-			out = append(out, stringValue(m, g.hints[sc.base]))
+			out = append(out, stringValue(m, g.hintFor(sc)))
 		case "integer":
 			out = append(out, numberCandidates(m, true)...)
 		case "number":
@@ -551,10 +567,10 @@ func typeAllows(t any, want string) bool {
 	case nil:
 		return true
 	case string:
-		return v == want
+		return strings.EqualFold(v, want)
 	case []any:
 		for _, e := range v {
-			if e == want {
+			if s, _ := e.(string); strings.EqualFold(s, want) {
 				return true
 			}
 		}
@@ -580,6 +596,21 @@ func toInt(v any) (int, bool) {
 		return 0, false
 	}
 	return int(f), true
+}
+
+// hintFor returns the generation-only format hint for sc: its own position
+// first, then the positions it is validated against (merged allOf
+// properties, the parent of an anyOf/oneOf branch).
+func (g *synth) hintFor(sc *sch) string {
+	if h := g.hints[sc.base]; h != "" {
+		return h
+	}
+	for _, p := range sc.vptrs {
+		if h := g.hints[p]; h != "" {
+			return h
+		}
+	}
+	return ""
 }
 
 // stringValue generates a string for m; hint is a format the verification
@@ -756,7 +787,8 @@ func (g *synth) objectValue(contribs []*sch, depth int) any {
 	var order []string
 	for _, c := range contribs {
 		pm, _ := c.m["properties"].(map[string]any)
-		for name, raw := range pm {
+		for _, name := range slices.Sorted(maps.Keys(pm)) {
+			raw := pm[name]
 			pmap, ok := raw.(map[string]any)
 			if !ok {
 				pmap = map[string]any{}
@@ -787,7 +819,13 @@ func (g *synth) objectValue(contribs []*sch, depth int) any {
 	for _, k := range keys {
 		list := props[k]
 		if len(list) == 0 {
-			result[k] = loremValue
+			// A required name without a property schema is governed by
+			// additionalProperties (whose format hint must apply too).
+			if ap := additionalSchema(contribs); ap != nil {
+				result[k], _ = g.node(ap, depth+1)
+			} else {
+				result[k] = loremValue
+			}
 			continue
 		}
 		v, ok := g.node(mergeProp(list), depth+1)
@@ -796,6 +834,25 @@ func (g *synth) objectValue(contribs []*sch, depth int) any {
 		}
 	}
 	return result
+}
+
+// additionalSchema returns the additionalProperties schema of the first
+// contributor that has one as an object (validated against every
+// contributor's), or nil.
+func additionalSchema(contribs []*sch) *sch {
+	var out *sch
+	for _, c := range contribs {
+		ap, ok := c.m["additionalProperties"].(map[string]any)
+		if !ok {
+			continue
+		}
+		ptr := childPtr(c.base, "additionalProperties")
+		if out == nil {
+			out = &sch{m: ap, base: ptr}
+		}
+		out.vptrs = append(out.vptrs, ptr)
+	}
+	return out
 }
 
 // mergeProp combines same-named property schemas from allOf branches. Only
@@ -860,6 +917,8 @@ func mergeBound(dst, src map[string]any, key string, wantMax bool) {
 }
 
 func intersectEnum(a, b []any) []any {
+	// a and b come from the verification tree: at most maxEnumValues values
+	// of at most maxValueBytes each.
 	keep := map[string]bool{}
 	for _, v := range b {
 		j, _ := json.Marshal(v)
@@ -880,58 +939,91 @@ func intersectEnum(a, b []any) []any {
 // required properties (all properties when required is absent) with constant
 // values by type. It follows in-document $refs a few hops, takes the first
 // enum/const value (when it passes the verification clamp) and the first
-// non-null anyOf/oneOf branch, and visits at
-// most maxSimpleNodes schemas, so its work is bounded for any input.
+// non-null anyOf/oneOf branch.
+//
+// It runs on the request goroutine with no timeout or semaphore, so its cost
+// is bounded on its own: every schema visited, required entry, property key,
+// anyOf/oneOf branch, type-array entry and $ref byte is charged against
+// maxSimpleWork, each object emits at most maxSimpleKeys keys, and the
+// output is abandoned ("{}") as soon as its estimated size exceeds
+// maxOutputBytes.
 func simpleArgs(schema any) json.RawMessage {
-	w := &simpleWalker{root: schema, budget: maxSimpleNodes}
-	out, _ := json.Marshal(w.leaf(schema, 0, 0, true))
-	if len(out) > maxOutputBytes {
+	w := &simpleWalker{root: schema, work: maxSimpleWork}
+	v := w.leaf(schema, 0, 0, true)
+	if w.outBytes > maxOutputBytes {
+		return json.RawMessage("{}")
+	}
+	out, err := json.Marshal(v)
+	if err != nil || len(out) > maxOutputBytes {
 		return json.RawMessage("{}")
 	}
 	return out
 }
 
 const (
-	maxSimpleNodes = 500
+	maxSimpleWork  = 20000
+	maxSimpleKeys  = 256
 	maxSimpleHops  = 3
+	maxRefBytes    = 1 << 10
+	simpleRefShare = 64 // $ref bytes per work unit
 )
 
 type simpleWalker struct {
-	root   any
-	budget int
+	root     any
+	work     int
+	outBytes int
 }
+
+// charge spends n work units and reports whether the walk may continue.
+func (w *simpleWalker) charge(n int) bool {
+	w.work -= n
+	return w.work >= 0 && w.outBytes <= maxOutputBytes
+}
+
+func (w *simpleWalker) emit(n int) { w.outBytes += n }
 
 func (w *simpleWalker) leaf(schema any, depth, hops int, top bool) any {
 	m, ok := schema.(map[string]any)
 	if !ok {
 		if top {
+			w.emit(2)
 			return map[string]any{}
 		}
+		w.emit(len(loremValue) + 2)
 		return loremValue
 	}
-	if w.budget--; w.budget < 0 {
+	if !w.charge(1) {
+		w.emit(len(loremValue) + 2)
 		return loremValue
 	}
-	if ref, _ := m["$ref"].(string); ref != "" && hops < maxSimpleHops {
+	if ref, _ := m["$ref"].(string); ref != "" && hops < maxSimpleHops && len(ref) <= maxRefBytes && w.charge(1+len(ref)/simpleRefShare) {
 		if target, _, ok := lookupPointer(w.root, ref); ok {
 			return w.leaf(target, depth, hops+1, top)
 		}
 	}
 	// enum/const values are used only when they pass the verification
 	// clamp, so huge or unparseable numbers never reach the client.
-	if c, ok := m["const"]; ok && !top {
-		if cv, ok := cleanValue(c, 0, new(int)); ok {
-			return cv
-		}
-	}
-	if e := listOf(m["enum"]); e != nil && !top {
-		if cv, ok := cleanValue(e[0], 0, new(int)); ok {
-			return cv
-		}
-	}
+	// Each attempt is charged as if the value were maxValueBytes long.
 	if !top {
+		if c, ok := m["const"]; ok && w.charge(maxValueBytes/simpleRefShare) {
+			size := 0
+			if cv, ok := cleanValue(c, 0, &size); ok {
+				w.emit(size)
+				return cv
+			}
+		}
+		if e := listOf(m["enum"]); e != nil && w.charge(maxValueBytes/simpleRefShare) {
+			size := 0
+			if cv, ok := cleanValue(e[0], 0, &size); ok {
+				w.emit(size)
+				return cv
+			}
+		}
 		for _, key := range []string{"anyOf", "oneOf"} {
 			for _, b := range listOf(m[key]) {
+				if !w.charge(1) {
+					break
+				}
 				if bm, ok := b.(map[string]any); ok && bm["type"] != "null" {
 					return w.leaf(b, depth+1, hops, false)
 				}
@@ -941,16 +1033,21 @@ func (w *simpleWalker) leaf(schema any, depth, hops int, top bool) any {
 	t, _ := m["type"].(string)
 	if ts, ok := m["type"].([]any); ok {
 		for _, e := range ts {
+			if !w.charge(1) {
+				break
+			}
 			if s, _ := e.(string); s != "null" && s != "" {
 				t = s
 				break
 			}
 		}
 	}
+	t = strings.ToLower(t)
 	if t == "" && (m["properties"] != nil || m["required"] != nil) {
 		t = "object"
 	}
 	if top && t != "" && t != "object" {
+		w.emit(2)
 		return map[string]any{}
 	}
 	if top {
@@ -958,31 +1055,42 @@ func (w *simpleWalker) leaf(schema any, depth, hops int, top bool) any {
 	}
 	switch t {
 	case "number", "integer":
+		w.emit(3)
 		return 42
 	case "boolean":
+		w.emit(5)
 		return true
 	case "array":
+		w.emit(3)
 		return []any{}
 	case "object":
+		w.emit(2)
 		if depth > maxDepth {
 			return map[string]any{}
 		}
 		props, _ := m["properties"].(map[string]any)
 		var keys []string
 		for _, r := range listOf(m["required"]) {
+			if len(keys) >= maxSimpleKeys || !w.charge(1) {
+				break
+			}
 			if s, ok := r.(string); ok {
 				keys = append(keys, s)
 			}
 		}
-		if len(keys) == 0 {
-			for k := range props {
-				keys = append(keys, k)
-			}
+		if len(keys) == 0 && len(props) > 0 && w.charge(len(props)) {
+			keys = slices.Sorted(maps.Keys(props))
+			keys = keys[:min(len(keys), maxSimpleKeys)]
 		}
 		result := make(map[string]any, len(keys))
 		for _, k := range keys {
+			if !w.charge(1) {
+				break
+			}
+			w.emit(len(k) + 4)
 			p, ok := props[k]
 			if !ok {
+				w.emit(len(loremValue) + 2)
 				result[k] = loremValue
 				continue
 			}
@@ -990,6 +1098,7 @@ func (w *simpleWalker) leaf(schema any, depth, hops int, top bool) any {
 		}
 		return result
 	default:
+		w.emit(len(loremValue) + 2)
 		return loremValue
 	}
 }
@@ -999,10 +1108,20 @@ func (w *simpleWalker) leaf(schema any, depth, hops int, top bool) any {
 // array including "null", and string-encoded integer bounds (minItems etc.,
 // which the Gemini API serializes as strings) as numbers. Input that does not
 // parse is returned unchanged.
-func NormalizeGeminiSchema(raw json.RawMessage) json.RawMessage {
-	if len(bytes.TrimSpace(raw)) == 0 {
+//
+// Like synthesis, it runs on the request goroutine: schemas over
+// maxSchemaBytes are returned unchanged (synthesis then uses its fallback,
+// which accepts upper-case types), the walk visits each node of the decoded
+// tree once (at most maxNormalizeDepth deep), and a panic returns raw.
+func NormalizeGeminiSchema(raw json.RawMessage) (out json.RawMessage) {
+	if len(bytes.TrimSpace(raw)) == 0 || len(raw) > maxSchemaBytes {
 		return raw
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			out = raw
+		}
+	}()
 	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
 	if err != nil {
 		return raw
@@ -1012,11 +1131,11 @@ func NormalizeGeminiSchema(raw json.RawMessage) json.RawMessage {
 		return raw
 	}
 	normalizeGeminiNode(m, 0)
-	out, err := json.Marshal(m)
+	enc, err := json.Marshal(m)
 	if err != nil {
 		return raw
 	}
-	return out
+	return enc
 }
 
 func normalizeGeminiNode(m map[string]any, depth int) {
@@ -1025,8 +1144,9 @@ func normalizeGeminiNode(m map[string]any, depth int) {
 	}
 	for _, k := range []string{"minItems", "maxItems", "minLength", "maxLength", "minProperties", "maxProperties"} {
 		if s, ok := m[k].(string); ok {
-			if _, err := strconv.ParseInt(s, 10, 64); err == nil {
-				m[k] = json.Number(s)
+			// Re-encode: "+5" or "05" parse but are not JSON numbers.
+			if n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64); err == nil {
+				m[k] = json.Number(strconv.FormatInt(n, 10))
 			}
 		}
 	}
@@ -1085,13 +1205,28 @@ var synthSem = make(chan struct{}, maxConcurrent)
 //   - formats whose checkers reject long input early or scan it linearly;
 //   - at most maxInstanceNodes generated JSON values per validated instance.
 //
+// Building the tree is itself charged against maxVerifyBytes: every key of
+// every visited schema object (kept or dropped), every JSON pointer
+// materialized for a node, every $ref string (at most maxRefBytes), and all
+// emitted keys and data. Total builder work is therefore O(maxVerifyBytes)
+// regardless of request size or how often $refs revisit the same object.
+//
 // Checked keywords: type, properties, required, additionalProperties, items
 // (single schema), min/maxItems, min/maxLength, min/maxProperties, enum,
 // const, minimum, maximum, exclusiveMinimum, exclusiveMaximum, anyOf, oneOf,
 // allOf, not, and format for verifiedFormats. In-document $refs are inlined.
-// Every other keyword (pattern, patternProperties, multipleOf, uniqueItems,
-// contains, dependent*, propertyNames, if/then/else, prefixItems, tuple
-// items, unevaluated*, ...) is omitted, which only weakens verification.
+//
+// Every other keyword (pattern, multipleOf, uniqueItems, contains, dependent*,
+// propertyNames, if/then/else, unevaluated*, other formats, ...) is omitted.
+// An omitted keyword is simply not checked, so a VERIFIED output can still
+// violate it (for example a pattern); omission never changes what a kept
+// keyword means, with these exceptions:
+//   - prefixItems and array-form (tuple) items change which elements a kept
+//     items covers, so schemas using them skip verification instead;
+//   - patternProperties narrows what a kept additionalProperties covers, so
+//     omitting it makes the tree stricter (it can reject a valid output and
+//     fall back, never accept an invalid one).
+//
 // A value failing a clamp or an exceeded cap skips verification entirely.
 const (
 	maxVerifyDepth   = 32
@@ -1181,6 +1316,11 @@ func (b *verifyBuilder) schema(v any, ptr string, depth, hops int) any {
 		if b.nodes > maxVerifyNodes {
 			return b.fail("schema exceeds the %d-node verification limit", maxVerifyNodes)
 		}
+		// Every node materializes its JSON pointer (built from the whole
+		// ancestor key path), so pointer bytes count against the cap too.
+		if !b.charge(len(ptr) + 1) {
+			return nil
+		}
 		for _, k := range unsupportedRefKeys {
 			if _, has := t[k]; has {
 				return b.fail("schema uses %s, which is not verified", k)
@@ -1204,6 +1344,14 @@ func (b *verifyBuilder) ref(m map[string]any, ptr string, depth, hops int) any {
 	rs, _ := m["$ref"].(string)
 	if !strings.HasPrefix(rs, "#") {
 		return b.fail("schema has a $ref that is not an in-document pointer")
+	}
+	if len(rs) > maxRefBytes {
+		return b.fail("schema has a $ref longer than %d bytes", maxRefBytes)
+	}
+	// lookupPointer unescapes and splits the ref; the sibling copy below
+	// touches every key of m.
+	if !b.charge(len(rs) + 2*len(m)) {
+		return nil
 	}
 	target, _, ok := lookupPointer(b.doc, rs)
 	if !ok {
@@ -1256,6 +1404,21 @@ func (b *verifyBuilder) ref(m map[string]any, ptr string, depth, hops int) any {
 
 // object emits the allow-listed keywords of schema object m.
 func (b *verifyBuilder) object(m map[string]any, ptr string, depth, hops int) map[string]any {
+	// Every key is iterated (and sorted) even when dropped: charge them all
+	// before touching them, so repeated visits through $refs stay bounded.
+	if !b.charge(2 * len(m)) {
+		return nil
+	}
+	// prefixItems and array-form items change which elements a kept "items"
+	// covers; dropping them would make the tree check a different schema.
+	if _, has := m["prefixItems"]; has {
+		b.fail("schema uses prefixItems, which is not verified")
+		return nil
+	}
+	if _, tuple := m["items"].([]any); tuple {
+		b.fail("schema uses array-form items, which is not verified")
+		return nil
+	}
 	out := map[string]any{}
 	for _, k := range slices.Sorted(maps.Keys(m)) {
 		if b.err != nil {
@@ -1276,9 +1439,12 @@ func (b *verifyBuilder) object(m map[string]any, ptr string, depth, hops int) ma
 				b.fail("schema has non-object properties")
 				return nil
 			}
+			if !b.charge(4 * len(pm)) {
+				return nil
+			}
 			cp := make(map[string]any, len(pm))
 			for _, name := range slices.Sorted(maps.Keys(pm)) {
-				if !b.charge(len(name) + 4) {
+				if !b.charge(len(name)) {
 					return nil
 				}
 				cp[name] = b.schema(pm[name], childPtr(ptr, "properties", name), depth+1, hops)
@@ -1312,9 +1478,6 @@ func (b *verifyBuilder) object(m map[string]any, ptr string, depth, hops int) ma
 			out[k] = b.schema(val, childPtr(ptr, k), depth+1, hops)
 			b.negated = !b.negated
 		case k == "items":
-			if _, tuple := val.([]any); tuple {
-				continue // tuple form: not verified
-			}
 			out[k] = b.schema(val, childPtr(ptr, k), depth+1, hops)
 		case k == "anyOf" || k == "oneOf" || k == "allOf":
 			l, ok := val.([]any)
@@ -1410,6 +1573,9 @@ func cleanValue(v any, depth int, size *int) (any, bool) {
 		*size += len(n)
 		return n, ok
 	case []any:
+		if len(t) > maxValueBytes-*size {
+			return nil, false // every element costs at least one byte
+		}
 		out := make([]any, len(t))
 		for i, e := range t {
 			var ok bool
@@ -1420,6 +1586,9 @@ func cleanValue(v any, depth int, size *int) (any, bool) {
 		}
 		return out, true
 	case map[string]any:
+		if 3*len(t) > maxValueBytes-*size {
+			return nil, false // every member costs at least three bytes
+		}
 		out := make(map[string]any, len(t))
 		for k, e := range t {
 			*size += len(k) + 3
