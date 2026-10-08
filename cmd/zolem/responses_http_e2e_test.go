@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -176,6 +177,43 @@ func TestE2E_ResponsesHTTP(t *testing.T) {
 		assertOpenAIErrorEnvelope(t, body, "invalid_request_error")
 	})
 
+	t.Run("no_usable_input_400", func(t *testing.T) {
+		base := createRuntimeListener(t, admin, "openai", map[string]any{"backend": "lorem"})
+		for _, body := range []string{
+			`{"model":"gpt-4o","input":[]}`,
+			`{"model":"gpt-4o","input":[{"type":"input_image","image_url":"x"}]}`,
+		} {
+			resp, out := postResponses(t, base, body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("%s: status %d: %s", body, resp.StatusCode, out)
+			}
+			assertOpenAIErrorEnvelope(t, out, "invalid_request_error")
+		}
+	})
+
+	t.Run("input_tokens_include_instructions", func(t *testing.T) {
+		base := createRuntimeListener(t, admin, "openai", map[string]any{"backend": "lorem"})
+		resp, body := postResponses(t, base, `{"model":"gpt-4o","instructions":"one two three","input":"a b"}`)
+		defer resp.Body.Close()
+		var p responsesPayload
+		mustJSONUnmarshal(t, body, &p)
+		if want := (3 + 4) + (2 + 4); p.Usage.InputTokens != want {
+			t.Fatalf("input_tokens: got %d, want %d", p.Usage.InputTokens, want)
+		}
+	})
+
+	t.Run("chat_put_405_allow", func(t *testing.T) {
+		base := createRuntimeListener(t, admin, "openai", map[string]any{"backend": "lorem"})
+		resp, body := doRequest(t, base, http.MethodPut, "/v1/chat/completions", `{}`, "Content-Type: application/json")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusMethodNotAllowed || resp.Header.Get("Allow") != "POST" ||
+			!strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") {
+			t.Fatalf("status %d allow %q: %s", resp.StatusCode, resp.Header.Get("Allow"), body)
+		}
+		assertOpenAIErrorEnvelope(t, body, "invalid_request_error")
+	})
+
 	t.Run("input_conversion", func(t *testing.T) {
 		var mu sync.Mutex
 		var last []map[string]string
@@ -207,12 +245,14 @@ func TestE2E_ResponsesHTTP(t *testing.T) {
 			{
 				name: "array",
 				body: `{"model":"gpt-4o","instructions":"sys","input":[` +
+					`{"role":"developer","content":"dev"},` +
 					`{"role":"user","content":"a"},` +
 					`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"b"}]},` +
 					`{"type":"function_call_output","call_id":"c1","output":"42"},` +
 					`{"type":"input_image","image_url":"x"}]}`,
 				want: []map[string]string{
 					{"role": "system", "content": "sys"},
+					{"role": "system", "content": "dev"},
 					{"role": "user", "content": "a"},
 					{"role": "assistant", "content": "b"},
 					{"role": "tool", "content": "42"},
@@ -254,9 +294,15 @@ func TestE2E_ResponsesHTTPFixtures(t *testing.T) {
   {"type":"response.completed","sequence_number":1,"response":{"id":"resp_fx","object":"response","status":"completed","model":"fixture-model","output":[{"type":"message","id":"msg_fx","role":"assistant","status":"completed","content":[{"type":"output_text","text":"from fixture","annotations":[]}]}]}}
 ]`)
 	writeResponsesHTTPFixture(t, fixturesDir, "fx-bad", `[{"type":"response.created","sequence_number":0,"response":{"id":"resp_bad","status":"in_progress","output":[]}}]`)
+	writeResponsesHTTPFixtureStatus(t, fixturesDir, "fx-err", 429, `{"error":{"type":"rate_limit_error","message":"slow down"},"model":"keep-me"}`)
+	writeResponsesHTTPFixture(t, fixturesDir, "fx-null", `[{"type":"response.completed","sequence_number":0,"response":null}]`)
 	yaml := `provider: openai
 version: v1-responses
 fixtures:
+  - expression: 'body["input"] == "use-err"'
+    fixture: fx-err
+  - expression: 'body["input"] == "use-null"'
+    fixture: fx-null
   - expression: 'body["input"] == "use-ok"'
     fixture: fx-ok
   - expression: 'body["input"] == "use-bad"'
@@ -282,6 +328,22 @@ fixtures:
 		}
 	})
 
+	t.Run("fixture_non_2xx_verbatim", func(t *testing.T) {
+		resp, body := postResponses(t, base, `{"model":"gpt-4o","input":"use-err"}`)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(string(body), "keep-me") {
+			t.Fatalf("status %d: %s", resp.StatusCode, body)
+		}
+	})
+
+	t.Run("fixture_null_response_rejected", func(t *testing.T) {
+		resp, body := postResponses(t, base, `{"model":"gpt-4o","input":"use-null"}`)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadGateway {
+			t.Fatalf("status %d: %s", resp.StatusCode, body)
+		}
+	})
+
 	t.Run("fixture_missing_completed", func(t *testing.T) {
 		resp, body := postResponses(t, base, `{"model":"gpt-4o","input":"use-bad"}`)
 		defer resp.Body.Close()
@@ -296,9 +358,14 @@ fixtures:
 
 func writeResponsesHTTPFixture(t *testing.T, root, id, events string) {
 	t.Helper()
+	writeResponsesHTTPFixtureStatus(t, root, id, 200, events)
+}
+
+func writeResponsesHTTPFixtureStatus(t *testing.T, root, id string, status int, events string) {
+	t.Helper()
 	dir := filepath.Join(root, id)
 	mustMkdir(t, dir)
-	meta := "id: " + id + "\nprovider: openai\nversion: v1-responses\nstatus: 200\n"
+	meta := "id: " + id + "\nprovider: openai\nversion: v1-responses\nstatus: " + strconv.Itoa(status) + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "meta.yaml"), []byte(meta), 0o644); err != nil {
 		t.Fatalf("write meta.yaml: %v", err)
 	}

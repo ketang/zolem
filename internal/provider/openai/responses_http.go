@@ -87,6 +87,10 @@ func (h *Handler) handleResponsesPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	input := responsesInputMessages(req.Input)
+	if len(input) == 0 {
+		writeInvalidRequest(ctx, w, "input contains no usable text")
+		return
+	}
 	messages := input
 	if instructions := rawString(req.Instructions); instructions != "" {
 		messages = append([]ollama.ChatMessage{{Role: "system", Content: instructions}}, input...)
@@ -108,8 +112,8 @@ func (h *Handler) handleResponsesPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	inputTokens := 0
-	for _, m := range input {
-		inputTokens += len(strings.Fields(m.Content)) + 4
+	for _, m := range messages {
+		inputTokens += estimateMessageTokens(m.Content)
 	}
 	outputTokens := response.CountNonEmpty(tokens)
 	now := time.Now()
@@ -159,7 +163,7 @@ func serveResponsesFixture(w http.ResponseWriter, f *fixture.Fixture, body []byt
 		return
 	}
 	for i := len(events) - 1; i >= 0; i-- {
-		if events[i].Type == "response.completed" && len(events[i].Response) > 0 {
+		if events[i].Type == "response.completed" && isJSONObject(events[i].Response) {
 			fixture.WriteVerbatim(w, f.Status, events[i].Response, "model", model)
 			return
 		}
@@ -189,7 +193,11 @@ func responsesInputMessages(raw json.RawMessage) []ollama.ChatMessage {
 		case item.Type == "function_call_output":
 			add("tool", rawString(item.Output))
 		case (item.Type == "" || item.Type == "message") && item.Role != "":
-			add(item.Role, responsesContentText(item.Content))
+			role := item.Role
+			if role == "developer" {
+				role = "system"
+			}
+			add(role, responsesContentText(item.Content))
 		}
 	}
 	return messages
@@ -221,4 +229,8 @@ func rawString(raw json.RawMessage) string {
 		return ""
 	}
 	return s
+}
+
+func isJSONObject(raw json.RawMessage) bool {
+	return len(raw) > 0 && strings.HasPrefix(strings.TrimSpace(string(raw)), "{")
 }
