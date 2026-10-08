@@ -21,7 +21,7 @@ There are two resources:
 
 Each listener exposes:
 
-- provider-compatible endpoints such as `/v1/chat/completions` or `/v1/messages`
+- provider-compatible endpoints such as `/v1/chat/completions`, `POST /v1/responses` (OpenAI, non-streaming), or `/v1/messages`
 - a local health endpoint at `/_zolem/health`
 - a local introspection endpoint at `/_zolem/state`
 

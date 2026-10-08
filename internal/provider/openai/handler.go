@@ -37,8 +37,15 @@ func NewHandler(validator *specs.Validator, matcher *fixture.Matcher, generator 
 	h.mux = chi.NewRouter()
 	h.mux.Post("/v1/chat/completions", h.handleChatCompletions)
 	h.mux.Get("/v1/responses", h.handleResponses)
+	h.mux.Post("/v1/responses", h.handleResponsesPost)
 	h.mux.Get("/v1/models", h.handleListModels)
 	h.mux.Get("/v1/models/*", h.handleListModels)
+	h.mux.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+		if allow := allowedMethods(r.URL.Path); allow != "" {
+			w.Header().Set("Allow", allow)
+		}
+		writeError(w, http.StatusMethodNotAllowed, "invalid_request_error", "Method not allowed.", nil)
+	})
 	h.mux.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "invalid_request_error", "Not found.", nil)
 	})
@@ -202,10 +209,30 @@ func includeUsage(req ChatCompletionRequest) bool {
 	return req.StreamOptions != nil && req.StreamOptions.IncludeUsage
 }
 
+// allowedMethods lists the methods registered for an OpenAI route, for the
+// Allow header on a 405.
+func allowedMethods(path string) string {
+	switch {
+	case path == "/v1/chat/completions":
+		return "POST"
+	case path == "/v1/responses":
+		return "GET, POST"
+	case path == "/v1/models" || strings.HasPrefix(path, "/v1/models/"):
+		return "GET"
+	}
+	return ""
+}
+
+// estimateMessageTokens is the shared prompt-token estimate for one message:
+// its word count plus 4.
+func estimateMessageTokens(text string) int {
+	return len(strings.Fields(text)) + 4
+}
+
 func estimatePromptTokens(req ChatCompletionRequest) int {
 	total := 0
 	for _, m := range req.Messages {
-		total += len(strings.Fields(m.Content.Text())) + 4
+		total += estimateMessageTokens(m.Content.Text())
 	}
 	return total
 }

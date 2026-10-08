@@ -108,6 +108,8 @@ func supportedOpenAPIOperation(source ContractSource) (path string, method strin
 	switch source.Key() {
 	case "openai:v1", "openrouter:v1":
 		return "/v1/chat/completions", "POST", nil
+	case "openai:v1-responses":
+		return "/v1/responses", "POST", nil
 	default:
 		return "", "", fmt.Errorf("no supported openapi operation configured for %s", source.Key())
 	}

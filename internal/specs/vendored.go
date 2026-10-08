@@ -35,6 +35,9 @@ var (
 	//go:embed vendored/openai-v1.openapi.yaml
 	openaiV1Source []byte
 
+	//go:embed vendored/openai-v1-responses.openapi.yaml
+	openaiV1ResponsesSource []byte
+
 	//go:embed vendored/gemini-v1.discovery.json
 	geminiV1Source []byte
 
@@ -50,12 +53,13 @@ var (
 // LoadProviderSchema, which normalizes it for the provider.
 func VendoredFallbacks() map[string][]byte {
 	return map[string][]byte{
-		"anthropic:v1":       append([]byte(nil), anthropicV1Snapshot...),
-		"ollama:v1":          append([]byte(nil), ollamaV1Snapshot...),
-		"ollama:v1-generate": append([]byte(nil), ollamaV1GenerateSnapshot...),
-		"typesafe:v1":        append([]byte(nil), typesafeV1Snapshot...),
-		"openai:v1":          append([]byte(nil), openaiV1Source...),
-		"gemini:v1":          append([]byte(nil), geminiV1Source...),
-		"gemini:v1beta":      append([]byte(nil), geminiV1betaSource...),
+		"anthropic:v1":        append([]byte(nil), anthropicV1Snapshot...),
+		"ollama:v1":           append([]byte(nil), ollamaV1Snapshot...),
+		"ollama:v1-generate":  append([]byte(nil), ollamaV1GenerateSnapshot...),
+		"typesafe:v1":         append([]byte(nil), typesafeV1Snapshot...),
+		"openai:v1":           append([]byte(nil), openaiV1Source...),
+		"openai:v1-responses": append([]byte(nil), openaiV1ResponsesSource...),
+		"gemini:v1":           append([]byte(nil), geminiV1Source...),
+		"gemini:v1beta":       append([]byte(nil), geminiV1betaSource...),
 	}
 }

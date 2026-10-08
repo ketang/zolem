@@ -33,6 +33,12 @@
   backend failure closes the array with an error object; a failure before the
   first chunk returns a plain non-2xx JSON error. **Behavior change:** clients
   that omitted `alt=sse` and parsed SSE must now send `?alt=sse`.
+- OpenAI `POST /v1/responses` (non-streaming): generates through the shared
+  backend path (lorem, faker, fixture, ollama, wasm, error), validates against
+  a new vendored `openai:v1-responses` schema, and serves `v1-responses`
+  fixtures as the final `response.completed` response object. `stream: true`
+  returns 400 until streaming lands. Other methods on `/v1/responses` now get
+  a JSON 405 with `Allow: GET, POST` (zolem-q75).
 - Opt-in non-loopback bind for containers: `-allow-non-loopback-bind` lets
   both modes bind `0.0.0.0` or `::` (specific non-loopback IPs stay rejected).
   It requires at least one `-allowed-host` (additive: `localhost` and loopback

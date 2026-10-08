@@ -144,6 +144,7 @@ Current local runtime limitations:
 - `fixture_namespace` can scope a profile to a relative subdirectory under that fixtures root
 - fixtures can use either `response.json` or `response.json.tmpl`; TypeSafe templates can read the parsed request body and are validated when rendered; other providers' templates are validated at setup and cannot read request data
 - OpenAI Responses WebSocket fixtures use `version: v1-responses` and a `response.json` array of event objects, one event per outbound WebSocket frame
+- OpenAI `POST /v1/responses` is served non-streaming (`stream: true` returns 400 for now); a `v1-responses` fixture answers it with the response object of its last `response.completed` event
 - `response_model_policy` controls the provider-visible `model` field for local runtime listeners
 
 Local runtime also supports an `error` backend for deterministic client

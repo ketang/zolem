@@ -1,0 +1,33 @@
+openapi: 3.1.0
+info:
+  title: OpenAI Responses API
+  version: v1-responses
+# Vendored, offline-first source document for the OpenAI Responses API request
+# schema (POST /v1/responses). Like the chat completions document it is a small
+# subset: it pins model (string, required) and input (string or array of input
+# items) and leaves the request open to every other field.
+paths:
+  /v1/responses:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - model
+              properties:
+                model:
+                  type: string
+                input:
+                  anyOf:
+                    - type: string
+                    - type: array
+                      items:
+                        type: object
+                stream:
+                  type: boolean
+      responses:
+        '200':
+          description: ok

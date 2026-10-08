@@ -142,6 +142,12 @@ Each step directory uses `meta.yaml` with `version: v1-responses`; its
 
 Zolem sends each array element as one WebSocket text frame.
 
+The same fixtures also answer the non-streaming HTTP `POST /v1/responses`: zolem
+serves the `response` object of the array's last `response.completed` event,
+with `model` replaced per `response_model_policy`. An array with no
+`response.completed` event returns a 502 zolem error. A fixture whose `status`
+is not 2xx is served verbatim with that status.
+
 ## Ollama `/api/generate`
 
 Use `provider: ollama` with `version: v1-generate` for `POST /api/generate`
