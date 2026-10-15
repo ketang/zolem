@@ -53,8 +53,17 @@ func writePermissionDenied(w http.ResponseWriter) {
 	writeErrorWithRequestID(w, http.StatusForbidden, "permission_error", "permission denied", "req_zolem_permission")
 }
 
-func writeRateLimit(w http.ResponseWriter) {
+func writeRateLimit(ctx context.Context, w http.ResponseWriter) {
+	runtimecfg.SetRetryHeaders(ctx, w)
 	writeErrorWithRequestID(w, http.StatusTooManyRequests, "rate_limit_error", "rate limit exceeded", "req_zolem_rate_limit")
+}
+
+// statusOverloaded is Anthropic's non-standard 529 overloaded status.
+const statusOverloaded = 529
+
+func writeOverloaded(ctx context.Context, w http.ResponseWriter) {
+	runtimecfg.SetRetryHeaders(ctx, w)
+	writeErrorWithRequestID(w, statusOverloaded, "overloaded_error", "Overloaded", "req_zolem_overloaded")
 }
 
 func writeServerError(w http.ResponseWriter) {
@@ -78,7 +87,9 @@ func writeForcedProfileError(ctx context.Context, w http.ResponseWriter) bool {
 	case runtimecfg.ErrorTypeInvalidRequest:
 		writeInvalidRequest(ctx, w, "invalid request")
 	case runtimecfg.ErrorTypeRateLimit:
-		writeRateLimit(w)
+		writeRateLimit(ctx, w)
+	case runtimecfg.ErrorTypeOverloaded:
+		writeOverloaded(ctx, w)
 	case runtimecfg.ErrorTypeServerError:
 		writeServerError(w)
 	default:

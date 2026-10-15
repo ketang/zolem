@@ -375,18 +375,27 @@ func validateErrorProfile(profile RuntimeProfile) error {
 		if profile.ErrorType != "" {
 			return errors.New("error_type is only allowed when backend is error")
 		}
+		if profile.RetryAfterSeconds != 0 {
+			return errors.New("retry_after_seconds is only allowed when backend is error")
+		}
+	}
+	if profile.RetryAfterSeconds < 0 || profile.RetryAfterSeconds > MaxRetryAfterSeconds {
+		return fmt.Errorf("retry_after_seconds must be between 0 and %d", MaxRetryAfterSeconds)
+	}
+	if profile.RetryAfterSeconds != 0 && profile.ErrorType != ErrorTypeRateLimit && profile.ErrorType != ErrorTypeOverloaded {
+		return errors.New("retry_after_seconds is only allowed when error_type is rate_limit or overloaded")
 	}
 	return nil
 }
 
 func validateErrorType(value string) error {
 	switch value {
-	case ErrorTypeAuthentication, ErrorTypePermission, ErrorTypeInvalidRequest, ErrorTypeRateLimit, ErrorTypeServerError:
+	case ErrorTypeAuthentication, ErrorTypePermission, ErrorTypeInvalidRequest, ErrorTypeRateLimit, ErrorTypeServerError, ErrorTypeOverloaded:
 		return nil
 	case "":
 		return errors.New("error_type is required when backend is error")
 	default:
-		return errors.New("error_type must be authentication, permission, invalid_request, rate_limit, or server_error")
+		return errors.New("error_type must be authentication, permission, invalid_request, rate_limit, server_error, or overloaded")
 	}
 }
 

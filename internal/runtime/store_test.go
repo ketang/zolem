@@ -547,3 +547,73 @@ func TestValidateProfile_CalibrationTemperature(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateProfileAcceptsOverloadedErrorType(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:      "demo",
+		Backend:   runtimecfg.BackendError,
+		ErrorType: runtimecfg.ErrorTypeOverloaded,
+	})
+	if err != nil {
+		t.Fatalf("expected overloaded error type to be valid, got %v", err)
+	}
+}
+
+func TestValidateProfileRejectsNegativeRetryAfterSeconds(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:              "demo",
+		Backend:           runtimecfg.BackendError,
+		ErrorType:         runtimecfg.ErrorTypeRateLimit,
+		RetryAfterSeconds: -1,
+	})
+	if err == nil {
+		t.Fatal("expected negative retry_after_seconds to fail validation")
+	}
+}
+
+func TestValidateProfileAcceptsRetryAfterSeconds(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:              "demo",
+		Backend:           runtimecfg.BackendError,
+		ErrorType:         runtimecfg.ErrorTypeRateLimit,
+		RetryAfterSeconds: 2,
+	})
+	if err != nil {
+		t.Fatalf("expected retry_after_seconds=2 to be valid, got %v", err)
+	}
+}
+
+func TestValidateProfileRejectsRetryAfterSecondsWithoutErrorBackend(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:              "demo",
+		Backend:           "lorem",
+		RetryAfterSeconds: 2,
+	})
+	if err == nil {
+		t.Fatal("expected retry_after_seconds without error backend to fail validation")
+	}
+}
+
+func TestValidateProfileRejectsRetryAfterSecondsAboveCap(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:              "demo",
+		Backend:           runtimecfg.BackendError,
+		ErrorType:         runtimecfg.ErrorTypeOverloaded,
+		RetryAfterSeconds: runtimecfg.MaxRetryAfterSeconds + 1,
+	})
+	if err == nil {
+		t.Fatal("expected retry_after_seconds above the cap to fail validation")
+	}
+}
+
+func TestValidateProfileRejectsRetryAfterSecondsForOtherErrorTypes(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:              "demo",
+		Backend:           runtimecfg.BackendError,
+		ErrorType:         runtimecfg.ErrorTypeServerError,
+		RetryAfterSeconds: 2,
+	})
+	if err == nil {
+		t.Fatal("expected retry_after_seconds with server_error to fail validation")
+	}
+}

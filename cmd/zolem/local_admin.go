@@ -153,6 +153,7 @@ func (c *localControlPlane) UpsertProfile(name string, payload localProfilePaylo
 		Backend:                     payload.Backend,
 		BackendModel:                payload.BackendModel,
 		ErrorType:                   payload.ErrorType,
+		RetryAfterSeconds:           payload.RetryAfterSeconds,
 		ResponseModelPolicy:         payload.ResponseModelPolicy,
 		ResponseModel:               payload.ResponseModel,
 		FixtureNamespace:            payload.FixtureNamespace,

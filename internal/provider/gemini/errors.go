@@ -75,10 +75,23 @@ func writePermissionDenied(w http.ResponseWriter) {
 	}})
 }
 
-func writeRateLimit(w http.ResponseWriter) {
+func writeRateLimit(ctx context.Context, w http.ResponseWriter) {
+	runtimecfg.SetRetryHeaders(ctx, w)
 	writeDetailedError(w, http.StatusTooManyRequests, "RESOURCE_EXHAUSTED", "Rate limit exceeded.", []apiDetail{{
 		Type:   "type.googleapis.com/google.rpc.ErrorInfo",
 		Reason: "RATE_LIMIT_EXCEEDED",
+		Domain: "googleapis.com",
+		Metadata: map[string]string{
+			"service": "generativelanguage.googleapis.com",
+		},
+	}})
+}
+
+func writeOverloaded(ctx context.Context, w http.ResponseWriter) {
+	runtimecfg.SetRetryHeaders(ctx, w)
+	writeDetailedError(w, http.StatusServiceUnavailable, "UNAVAILABLE", "The model is overloaded. Please try again later.", []apiDetail{{
+		Type:   "type.googleapis.com/google.rpc.ErrorInfo",
+		Reason: "MODEL_OVERLOADED",
 		Domain: "googleapis.com",
 		Metadata: map[string]string{
 			"service": "generativelanguage.googleapis.com",
@@ -114,7 +127,9 @@ func writeForcedProfileError(ctx context.Context, w http.ResponseWriter) bool {
 	case runtimecfg.ErrorTypeInvalidRequest:
 		writeInvalidRequest(ctx, w, "Invalid request.")
 	case runtimecfg.ErrorTypeRateLimit:
-		writeRateLimit(w)
+		writeRateLimit(ctx, w)
+	case runtimecfg.ErrorTypeOverloaded:
+		writeOverloaded(ctx, w)
 	case runtimecfg.ErrorTypeServerError:
 		writeServerError(w)
 	default:

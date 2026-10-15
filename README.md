@@ -201,7 +201,8 @@ For fixture-backed fixed listeners, also pass `-local-fixtures-dir`.
 
 For error-backed fixed listeners, pass `-local-backend error` together with
 `-local-error-type` (`authentication`, `permission`, `invalid_request`,
-`rate_limit`, or `server_error`). The listener returns that provider-native
+`rate_limit`, `server_error`, or `overloaded`; add
+`-local-retry-after-seconds` to set the `retry-after` value). The listener returns that provider-native
 error for every request. `-local-backend error` without `-local-error-type`
 is rejected at startup.
 

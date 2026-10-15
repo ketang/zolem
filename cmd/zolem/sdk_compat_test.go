@@ -329,3 +329,25 @@ func TestSDKCompatibility_OpenAI(t *testing.T) {
 		}
 	})
 }
+
+func TestSDKCompatibility_AnthropicOverloaded(t *testing.T) {
+	admin := startLocalAdminService(t, repoRoot(t))
+	t.Cleanup(admin.Close)
+	base := createRuntimeListener(t, admin, "anthropic", map[string]any{"backend": "error", "error_type": "overloaded"})
+	client := anthropicapi.NewClient(
+		anthropicoption.WithAPIKey("sk-test"),
+		anthropicoption.WithBaseURL(base),
+		anthropicoption.WithMaxRetries(0),
+	)
+	_, err := client.Messages.New(context.Background(), anthropicapi.MessageNewParams{
+		Model:     anthropicapi.Model("claude-3-5-sonnet-20241022"),
+		MaxTokens: 16,
+		Messages: []anthropicapi.MessageParam{
+			anthropicapi.NewUserMessage(anthropicapi.NewTextBlock("hello")),
+		},
+	})
+	var apiErr *anthropicapi.Error
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != 529 {
+		t.Fatalf("want *anthropic.Error with status 529, got %v", err)
+	}
+}

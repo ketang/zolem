@@ -202,6 +202,7 @@ func TestSystemOne_ErrorBackend_StatusMapping(t *testing.T) {
 		{runtimecfg.ErrorTypeInvalidRequest, http.StatusBadRequest},
 		{runtimecfg.ErrorTypeRateLimit, http.StatusTooManyRequests},
 		{runtimecfg.ErrorTypeServerError, http.StatusInternalServerError},
+		{runtimecfg.ErrorTypeOverloaded, http.StatusServiceUnavailable},
 	} {
 		t.Run(tc.errorType, func(t *testing.T) {
 			rr := postSystemOne(t, newHandler(t),
