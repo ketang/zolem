@@ -29,6 +29,7 @@ Profile fields you can use today:
 
 - `backend`: `lorem`, `faker`, `fixture`, `ollama`, `wasm`, or `error`
 - `error_type`: required when `backend` is `error`
+- `retry_after_seconds`: optional non-negative integer (default 0), only valid when `backend` is `error`; the `retry-after` value sent on `rate_limit` and `overloaded` responses
 - `fixture_namespace`: optional relative subdirectory under `-local-fixtures-dir`
 - `response_model_policy`: `echo_request`, `force_literal`, or `force_backend`
 - `response_model`: required when `response_model_policy` is `force_literal`
@@ -64,6 +65,15 @@ Supported `error_type` values:
 - `invalid_request`
 - `rate_limit`
 - `server_error`
+- `overloaded` (Anthropic HTTP 529 `overloaded_error`; OpenAI, Gemini, Ollama, and TypeSafe return 503)
+
+`rate_limit` and `overloaded` responses always carry `retry-after: <seconds>` and
+`retry-after-ms: <seconds*1000>` headers, taken from `retry_after_seconds` (0 when
+unset). Anthropic `rate_limit` also sends `anthropic-ratelimit-requests-remaining: 0`
+and OpenAI `rate_limit` sends `x-ratelimit-remaining-requests: 0`. On the OpenAI
+Responses WebSocket route the same status, headers, and body are returned on the
+pre-upgrade handshake response. SDKs differ in how they treat a 0 delay; set
+`retry_after_seconds` explicitly when a test needs a specific delay.
 
 Behavior:
 

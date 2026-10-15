@@ -55,7 +55,11 @@ func writeForcedProfileError(ctx context.Context, w http.ResponseWriter) bool {
 	case runtimecfg.ErrorTypeInvalidRequest:
 		writeError(w, http.StatusBadRequest, "invalid request")
 	case runtimecfg.ErrorTypeRateLimit:
+		runtimecfg.SetRetryHeaders(ctx, w)
 		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
+	case runtimecfg.ErrorTypeOverloaded:
+		runtimecfg.SetRetryHeaders(ctx, w)
+		writeError(w, http.StatusServiceUnavailable, "server overloaded")
 	case runtimecfg.ErrorTypeServerError:
 		writeError(w, http.StatusInternalServerError, "server error")
 	default:

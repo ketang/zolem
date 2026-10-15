@@ -10,6 +10,7 @@ type ProfilePayload struct {
 	Backend                     string                 `json:"backend,omitempty"`
 	BackendModel                string                 `json:"backend_model,omitempty"`
 	ErrorType                   string                 `json:"error_type,omitempty"`
+	RetryAfterSeconds           int                    `json:"retry_after_seconds,omitempty"`
 	ResponseModelPolicy         string                 `json:"response_model_policy,omitempty"`
 	ResponseModel               string                 `json:"response_model,omitempty"`
 	FixtureNamespace            string                 `json:"fixture_namespace,omitempty"`

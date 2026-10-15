@@ -73,6 +73,7 @@ type localOptions struct {
 	Profile                    string
 	Backend                    string
 	ErrorType                  string
+	RetryAfterSeconds          int
 	BackendModel               string
 	OllamaUpstream             string
 	CalibrationTemperature     *float64
@@ -510,6 +511,7 @@ func (o localOptions) runtime() (runtimecfg.ListenerRuntime, error) {
 		Backend:                backend,
 		BackendModel:           o.BackendModel,
 		ErrorType:              o.ErrorType,
+		RetryAfterSeconds:      o.RetryAfterSeconds,
 		OllamaUpstream:         o.OllamaUpstream,
 		CalibrationTemperature: o.CalibrationTemperature,
 	}

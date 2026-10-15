@@ -43,9 +43,16 @@ func writePermissionDenied(w http.ResponseWriter) {
 	writeError(w, http.StatusForbidden, "invalid_request_error", "You are not allowed to perform this action.", &code)
 }
 
-func writeRateLimit(w http.ResponseWriter) {
+func writeRateLimit(ctx context.Context, w http.ResponseWriter) {
+	runtimecfg.SetRetryHeaders(ctx, w)
+	w.Header().Set("x-ratelimit-remaining-requests", "0")
 	code := "rate_limit_exceeded"
 	writeError(w, http.StatusTooManyRequests, "rate_limit_error", "Rate limit exceeded.", &code)
+}
+
+func writeOverloaded(ctx context.Context, w http.ResponseWriter) {
+	runtimecfg.SetRetryHeaders(ctx, w)
+	writeError(w, http.StatusServiceUnavailable, "server_error", "The engine is currently overloaded, please try again later.", nil)
 }
 
 func writeServerError(w http.ResponseWriter) {
@@ -69,7 +76,9 @@ func writeForcedProfileError(ctx context.Context, w http.ResponseWriter) bool {
 	case runtimecfg.ErrorTypeInvalidRequest:
 		writeInvalidRequest(ctx, w, "Invalid request.")
 	case runtimecfg.ErrorTypeRateLimit:
-		writeRateLimit(w)
+		writeRateLimit(ctx, w)
+	case runtimecfg.ErrorTypeOverloaded:
+		writeOverloaded(ctx, w)
 	case runtimecfg.ErrorTypeServerError:
 		writeServerError(w)
 	default:

@@ -44,7 +44,8 @@ func main() {
 	localProvider := flag.String("local-provider", "", "provider for local fixed-listener mode")
 	localProfile := flag.String("local-profile", "default", "profile name for local fixed-listener mode")
 	localBackend := flag.String("local-backend", "lorem", "backend for local fixed-listener mode")
-	localErrorType := flag.String("local-error-type", "", "error type for the error backend in fixed-listener mode: authentication, permission, invalid_request, rate_limit, or server_error; required when -local-backend is error")
+	localErrorType := flag.String("local-error-type", "", "error type for the error backend in fixed-listener mode: authentication, permission, invalid_request, rate_limit, server_error, or overloaded; required when -local-backend is error")
+	localRetryAfterSeconds := flag.Int("local-retry-after-seconds", 0, "retry-after seconds sent on rate_limit and overloaded error-backend responses in fixed-listener mode (retry-after-ms is derived); default 0")
 	localBackendModel := flag.String("local-backend-model", "", "model the backend uses; required when -local-backend is ollama-logprob")
 	localOllamaUpstream := flag.String("local-ollama-upstream", "", "ollama upstream URL for the ollama and ollama-logprob backends (loopback or RFC1918 only; default http://localhost:11434)")
 	localCalibrationTemperature := flag.Float64("local-calibration-temperature", 0, "ollama-logprob only: divide each log probability by this positive number before exponentiating (default 1.0; flatter above 1, sharper below)")
@@ -108,6 +109,7 @@ func main() {
 			Profile:                *localProfile,
 			Backend:                *localBackend,
 			ErrorType:              *localErrorType,
+			RetryAfterSeconds:      *localRetryAfterSeconds,
 			BackendModel:           *localBackendModel,
 			OllamaUpstream:         *localOllamaUpstream,
 			CalibrationTemperature: calibrationTemperature,
@@ -160,7 +162,8 @@ listener (or 0.0.0.0/:: with -allow-non-loopback-bind) with a fixed profile and 
   -local-calibration-temperature T
                               ollama-logprob only: positive divisor applied to each log
                               probability (default 1.0; above 1 flattens, below 1 sharpens)
-  -local-error-type TYPE      error backend type; required when -local-backend is error
+  -local-error-type TYPE      error backend type (authentication, permission, invalid_request, rate_limit, server_error, overloaded); required when -local-backend is error
+  -local-retry-after-seconds N retry-after seconds on rate_limit/overloaded errors (default 0)
   -local-fixtures-dir DIR     fixtures directory for the fixture backend
   -local-calls-file PATH      append JSONL records of captured calls (credentials redacted; file kept 0600) to this file
   -local-record-request-body-cap-bytes N   max request-body bytes recorded per call

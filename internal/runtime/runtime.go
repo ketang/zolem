@@ -2,10 +2,13 @@ package runtimecfg
 
 // RuntimeProfile describes the configured response behavior for a listener.
 type RuntimeProfile struct {
-	Name                string `json:"name"`
-	Backend             string `json:"backend"`
-	BackendModel        string `json:"backend_model"`
-	ErrorType           string `json:"error_type"`
+	Name         string `json:"name"`
+	Backend      string `json:"backend"`
+	BackendModel string `json:"backend_model"`
+	ErrorType    string `json:"error_type"`
+	// RetryAfterSeconds is the retry-after value sent on rate_limit and
+	// overloaded error-backend responses. Zero is the wire default.
+	RetryAfterSeconds   int    `json:"retry_after_seconds,omitempty"`
 	ResponseModelPolicy string `json:"response_model_policy"`
 	ResponseModel       string `json:"response_model"`
 	FixtureNamespace    string `json:"fixture_namespace"`
