@@ -8,7 +8,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -167,6 +169,11 @@ func (c *localControlPlane) UpsertProfile(name string, payload localProfilePaylo
 	if err := runtimecfg.ValidateProfile(profile); err != nil {
 		return runtimecfg.RuntimeProfile{}, err
 	}
+	if profile.Backend == runtimecfg.BackendFixture {
+		if err := c.checkFixtureAvailable(profile); err != nil {
+			return runtimecfg.RuntimeProfile{}, err
+		}
+	}
 	if profile.Backend == runtimecfg.BackendWASM {
 		g, err := wasmGeneratorForProfile(profile)
 		if err != nil {
@@ -175,6 +182,27 @@ func (c *localControlPlane) UpsertProfile(name string, payload localProfilePaylo
 		_ = g.Close(context.Background())
 	}
 	return c.store.UpsertProfile(profile)
+}
+
+// checkFixtureAvailable rejects fixture-backend profiles the admin cannot
+// serve, phrased for the client user rather than in terms of server flags they
+// never passed. The listener-time check in loadLocalFixtures remains as a
+// backstop because the directory can change after the profile is created.
+func (c *localControlPlane) checkFixtureAvailable(profile runtimecfg.RuntimeProfile) error {
+	if c.fixturesDir == "" {
+		return errors.New("fixture backend unavailable: this zolem admin server was started without -local-fixtures-dir")
+	}
+	info, err := os.Stat(c.fixturesDir)
+	if err != nil || !info.IsDir() {
+		return fmt.Errorf("fixture backend unavailable: fixtures dir %q is not a directory", c.fixturesDir)
+	}
+	if ns := profile.FixtureNamespace; ns != "" {
+		nsInfo, err := os.Stat(filepath.Join(c.fixturesDir, filepath.FromSlash(ns)))
+		if err != nil || !nsInfo.IsDir() {
+			return fmt.Errorf("fixture_namespace %q not found under the admin's fixtures dir", ns)
+		}
+	}
+	return nil
 }
 
 func (c *localControlPlane) ListProfiles() []runtimecfg.RuntimeProfile {

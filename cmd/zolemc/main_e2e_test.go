@@ -78,6 +78,11 @@ func TestZolemcLocalRuntimeE2E(t *testing.T) {
 		t.Fatalf("missing profile error did not include status and body:\n%s", missing.stderr)
 	}
 
+	fixtureProfile := runZolemcFail(t, repoRoot, "-admin-url", admin.baseURL, "profiles", "create", "f", "-backend", "fixture")
+	if !strings.Contains(fixtureProfile.stderr, "-local-fixtures-dir") || !strings.Contains(fixtureProfile.stderr, "admin server") {
+		t.Fatalf("fixture profile create against fixtures-less admin should fail at create time:\n%s", fixtureProfile.stderr)
+	}
+
 	runZolemc(t, repoRoot, "-admin-url", admin.baseURL, "profiles", "create", "demo", "-backend", "lorem")
 
 	profiles := runZolemc(t, repoRoot, "-json", "-admin-url", admin.baseURL, "profiles", "list")
