@@ -22,7 +22,7 @@ Key flags:
 | `-local-addr <addr>` | Loopback address and port for the listener |
 | `-local-provider <provider>` | Provider: `anthropic`, `gemini`, `ollama`, or `openai` |
 | `-local-profile <name>` | Profile name (used in introspection output) |
-| `-local-backend <backend>` | Backend: `lorem`, `faker`, `fixture`, `ollama`, `wasm`, or `error` |
+| `-local-backend <backend>` | Backend: `lorem`, `faker`, `fixture`, `ollama`, or `error` |
 
 For fixture-backed listeners, also pass `-local-fixtures-dir <path>`. See
 [fixture-authoring.md](fixture-authoring.md) for how to write fixtures.
