@@ -223,7 +223,7 @@ Notes:
 - a profile cannot be deleted while a listener is still using it
 - unsupported backends are rejected at profile creation time
 - `error` profiles require `error_type`
-- `fixture` profiles only become usable when the admin server or fixed listener was started with `-local-fixtures-dir`
+- `fixture` profiles only become usable when the admin server or fixed listener was started with `-local-fixtures-dir`; creating one against an admin without a fixtures dir (or whose fixtures dir is not a directory, or with a `fixture_namespace` that does not exist under it) is rejected with `400` at profile create time. Listener creation re-checks as a backstop
 - `error_type` is only valid when `backend=error`
 - `fixture_namespace` must be a normalized relative subdirectory such as `team-a` or `team-a/smoke`
 - `response_model_policy=force_literal` requires `response_model`

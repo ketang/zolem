@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -214,19 +217,74 @@ func TestLocalAdminHandler_ProfileRejectsUnsupportedBackend(t *testing.T) {
 	}
 }
 
-func TestLocalAdminHandler_FixtureProfileRequiresFixturesDirAtListenerCreate(t *testing.T) {
-	control := newTestLocalControlPlane(t, localAdminOptions{})
+func TestLocalAdminHandler_FixtureProfileCreateTimeChecks(t *testing.T) {
+	withNamespace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(withNamespace, "team-a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	notADir := filepath.Join(t.TempDir(), "nope")
+	regularFile := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(regularFile, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name        string
+		fixturesDir string
+		body        string
+		wantStatus  int
+		wantErr     []string
+	}{
+		{"no fixtures dir", "", `{"backend":"fixture"}`, http.StatusBadRequest,
+			[]string{"fixture backend unavailable", "-local-fixtures-dir", "admin server"}},
+		{"fixtures dir set", t.TempDir(), `{"backend":"fixture"}`, http.StatusOK, nil},
+		{"missing namespace", t.TempDir(), `{"backend":"fixture","fixture_namespace":"missing"}`, http.StatusBadRequest,
+			[]string{`fixture_namespace "missing" not found`}},
+		{"existing namespace", withNamespace, `{"backend":"fixture","fixture_namespace":"team-a"}`, http.StatusOK, nil},
+		{"nonexistent fixtures dir", notADir, `{"backend":"fixture"}`, http.StatusBadRequest,
+			[]string{"is not a directory"}},
+		{"fixtures dir is a file", regularFile, `{"backend":"fixture"}`, http.StatusBadRequest,
+			[]string{"is not a directory"}},
+		{"namespace on non-fixture backend ignored", "", `{"backend":"lorem","fixture_namespace":"x"}`, http.StatusOK, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			control := newTestLocalControlPlane(t, localAdminOptions{FixturesDir: tc.fixturesDir})
+			handler := buildLocalAdminHandler(control)
+			resp := doRequest(t, handler, httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(tc.body)))
+			defer resp.Body.Close()
+			raw, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode != tc.wantStatus {
+				t.Fatalf("status: got %d, want %d (body %s)", resp.StatusCode, tc.wantStatus, raw)
+			}
+			var errBody struct {
+				Error string `json:"error"`
+			}
+			_ = json.Unmarshal(raw, &errBody)
+			for _, want := range tc.wantErr {
+				if !strings.Contains(errBody.Error, want) {
+					t.Errorf("error %q missing %q", errBody.Error, want)
+				}
+			}
+		})
+	}
+}
+
+func TestLocalAdminHandler_FixtureListenerCreateKeepsBackstop(t *testing.T) {
+	dir := t.TempDir()
+	control := newTestLocalControlPlane(t, localAdminOptions{FixturesDir: dir})
 	handler := buildLocalAdminHandler(control)
 
-	profileReq := httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"fixture"}`))
-	profileResp := doRequest(t, handler, profileReq)
+	profileResp := doRequest(t, handler, httptestRequest(http.MethodPut, "/_zolem/profiles/demo", bytes.NewBufferString(`{"backend":"fixture"}`)))
 	defer profileResp.Body.Close()
 	if profileResp.StatusCode != http.StatusOK {
 		t.Fatalf("profile put status: got %d, want 200", profileResp.StatusCode)
 	}
-
-	listenerReq := httptestRequest(http.MethodPut, "/_zolem/listeners/openai-demo", bytes.NewBufferString(`{"addr":"127.0.0.1:0","provider":"openai","profile":"demo"}`))
-	listenerResp := doRequest(t, handler, listenerReq)
+	// Directory disappears between profile and listener creation.
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	listenerResp := doRequest(t, handler, httptestRequest(http.MethodPut, "/_zolem/listeners/openai-demo", bytes.NewBufferString(`{"addr":"127.0.0.1:0","provider":"openai","profile":"demo"}`)))
 	defer listenerResp.Body.Close()
 	if listenerResp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("listener put status: got %d, want 400", listenerResp.StatusCode)
