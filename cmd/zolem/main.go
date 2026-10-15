@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -53,9 +54,9 @@ func main() {
 	localTLSCert := flag.String("local-tls-cert", "", "certificate file for local admin or fixed-listener TLS")
 	localTLSKey := flag.String("local-tls-key", "", "key file for local admin or fixed-listener TLS")
 	localCallsFile := flag.String("local-calls-file", "", "append JSONL records of captured HTTP calls and OpenAI Responses WebSocket connections to this file; empty disables recording; credential headers and secret-bearing query values are redacted; file is created 0600 and an existing looser file is tightened to 0600")
-	localRecordRequestBodyCap := flag.Int("local-record-request-body-cap-bytes", 262144, "maximum bytes of request body to record per call; excess is counted but dropped")
-	localRecordResponseBodyCap := flag.Int("local-record-response-body-cap-bytes", 262144, "maximum bytes of response body to record per call; excess is counted but dropped")
-	localRecordStreamEventCap := flag.Int("local-record-stream-event-cap", 1024, "maximum SSE events to record per streamed response; excess is counted but dropped")
+	localRecordRequestBodyCap := flag.Int("local-record-request-body-cap-bytes", 262144, "maximum bytes of request body to record per call; excess is counted but dropped; must be positive")
+	localRecordResponseBodyCap := flag.Int("local-record-response-body-cap-bytes", 262144, "maximum bytes of response body to record per call; excess is counted but dropped; must be positive")
+	localRecordStreamEventCap := flag.Int("local-record-stream-event-cap", 1024, "maximum SSE events to record per streamed response; excess is counted but dropped; must be positive")
 	var allowedHosts stringList
 	flag.Var(&allowedHosts, "allowed-host", "extra Host header value accepted in addition to localhost and loopback IPs (repeatable; any port is ignored); other Hosts get 403 (DNS-rebinding guard). Applies to both modes")
 	allowNonLoopbackBind := flag.Bool("allow-non-loopback-bind", false, "allow binding the wildcard hosts 0.0.0.0 and :: (for containers) in addition to loopback; requires at least one -allowed-host that is not localhost or a loopback IP (those always pass), and in control-plane mode also -listener-port-range. Specific non-loopback IPs stay rejected. Default is loopback-only")
@@ -95,6 +96,14 @@ func main() {
 	}
 
 	if *localProvider != "" {
+		if err := validateFixedModeFlags(*localBackend, map[string]int{
+			"local-record-request-body-cap-bytes":  *localRecordRequestBodyCap,
+			"local-record-response-body-cap-bytes": *localRecordResponseBodyCap,
+			"local-record-stream-event-cap":        *localRecordStreamEventCap,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "zolem: %v\n", err)
+			os.Exit(2)
+		}
 		var calibrationTemperature *float64
 		flag.Visit(func(f *flag.Flag) {
 			if f.Name == "local-calibration-temperature" {
@@ -134,6 +143,27 @@ func main() {
 	os.Exit(2)
 }
 
+// validateFixedModeFlags rejects fixed-listener flag values that would
+// silently change meaning downstream: non-positive record caps (negative means
+// unlimited, zero means "use the default") and the wasm backend, which has no
+// module flag in fixed-listener mode.
+func validateFixedModeFlags(backend string, caps map[string]int) error {
+	names := make([]string, 0, len(caps))
+	for name := range caps {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if caps[name] <= 0 {
+			return fmt.Errorf("-%s must be positive, got %d", name, caps[name])
+		}
+	}
+	if backend == "wasm" {
+		return errors.New("wasm backend is not available in fixed-listener mode; use control-plane mode: zolemc profiles create -wasm-module-file")
+	}
+	return nil
+}
+
 // usage prints a synopsis naming both run modes and grouping the flags that
 // apply to each. It is wired as flag.CommandLine.Usage and is also printed when
 // zolem is run with no mode selected.
@@ -153,7 +183,7 @@ listener (or 0.0.0.0/:: with -allow-non-loopback-bind) with a fixed profile and 
   -local-addr ADDR            loopback listen address (default 127.0.0.1:8080);
                               0.0.0.0 or :: only with -allow-non-loopback-bind
   -local-profile NAME         profile name (default "default")
-  -local-backend BACKEND      lorem, faker, fixture, ollama, ollama-logprob, wasm, or error
+  -local-backend BACKEND      lorem, faker, fixture, ollama, ollama-logprob, or error
                               (default "lorem"; typesafe supports lorem, faker, fixture,
                               ollama-logprob, error; ollama-logprob is typesafe-only)
   -local-backend-model MODEL  model the backend uses; required for ollama-logprob
@@ -166,9 +196,9 @@ listener (or 0.0.0.0/:: with -allow-non-loopback-bind) with a fixed profile and 
   -local-retry-after-seconds N retry-after seconds on rate_limit/overloaded errors (default 0)
   -local-fixtures-dir DIR     fixtures directory for the fixture backend
   -local-calls-file PATH      append JSONL records of captured calls (credentials redacted; file kept 0600) to this file
-  -local-record-request-body-cap-bytes N   max request-body bytes recorded per call
-  -local-record-response-body-cap-bytes N  max response-body bytes recorded per call
-  -local-record-stream-event-cap N          max SSE events recorded per response
+  -local-record-request-body-cap-bytes N   max request-body bytes recorded per call (positive; default 262144)
+  -local-record-response-body-cap-bytes N  max response-body bytes recorded per call (positive; default 262144)
+  -local-record-stream-event-cap N          max SSE events recorded per response (positive; default 1024)
 
 Admin control-plane mode (-local-admin-addr) serves the /_zolem admin API so
 profiles and listeners can be created and torn down at runtime with zolemc:

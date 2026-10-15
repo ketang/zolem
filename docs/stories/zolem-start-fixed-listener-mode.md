@@ -29,6 +29,8 @@ Only loopback addresses are accepted unless -allow-non-loopback-bind (which requ
 - zolem defaults -local-backend to lorem when unset
 - TLS requires both -local-tls-cert and -local-tls-key; supplying only one is an error
 - fixture backend without -local-fixtures-dir returns a startup error
+- zolem rejects non-positive -local-record-request-body-cap-bytes, -local-record-response-body-cap-bytes, and -local-record-stream-event-cap values with a usage error (exit 2) naming the flag
+- zolem rejects -local-backend wasm in fixed-listener mode with a usage error (exit 2) pointing at control-plane mode
 - requests whose Host header is not localhost, a loopback IP, or an -allowed-host entry get 403
 
 ## Evidence

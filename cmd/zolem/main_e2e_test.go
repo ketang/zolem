@@ -2,6 +2,8 @@ package main_test
 
 import (
 	"encoding/json"
+	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -113,6 +115,54 @@ func TestMain_E2E(t *testing.T) {
 		mustJSONUnmarshal(t, ctBody, &ct)
 		if ct.TotalTokens <= 0 {
 			t.Fatalf("countTokens totalTokens: got %d, want > 0", ct.TotalTokens)
+		}
+	})
+}
+
+// TestFixedModeRejectsInvalidRecordCapsAndWasm_E2E covers zolem-2m4: zero and
+// negative -local-record-* caps and the unusable wasm backend are usage errors
+// (exit 2) that name the problem and never reach the listening log line.
+func TestFixedModeRejectsInvalidRecordCapsAndWasm_E2E(t *testing.T) {
+	bin := buildZolemBinary(t)
+	run := func(t *testing.T, extra ...string) (string, int) {
+		t.Helper()
+		args := append([]string{"-local-provider", "openai", "-local-addr", "127.0.0.1:0"}, extra...)
+		out, err := exec.Command(bin, args...).CombinedOutput()
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("args %v: got err %v, want non-zero exit\n%s", extra, err, out)
+		}
+		return string(out), exitErr.ExitCode()
+	}
+
+	for _, flagName := range []string{
+		"local-record-request-body-cap-bytes",
+		"local-record-response-body-cap-bytes",
+		"local-record-stream-event-cap",
+	} {
+		for _, val := range []string{"-1", "0"} {
+			t.Run(flagName+"="+val, func(t *testing.T) {
+				out, code := run(t, "-"+flagName, val)
+				if code != 2 {
+					t.Fatalf("exit code: got %d, want 2\n%s", code, out)
+				}
+				if !strings.Contains(out, "-"+flagName+" must be positive") {
+					t.Fatalf("output does not name the flag:\n%s", out)
+				}
+				if strings.Contains(out, "zolem local listener") {
+					t.Fatalf("listener started despite invalid cap:\n%s", out)
+				}
+			})
+		}
+	}
+
+	t.Run("wasm-backend", func(t *testing.T) {
+		out, code := run(t, "-local-backend", "wasm")
+		if code != 2 {
+			t.Fatalf("exit code: got %d, want 2\n%s", code, out)
+		}
+		if !strings.Contains(out, "not available in fixed-listener mode") {
+			t.Fatalf("output missing wasm rejection:\n%s", out)
 		}
 	})
 }
