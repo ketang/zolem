@@ -46,7 +46,7 @@ func main() {
 	localProfile := flag.String("local-profile", "default", "profile name for local fixed-listener mode")
 	localBackend := flag.String("local-backend", "lorem", "backend for local fixed-listener mode")
 	localErrorType := flag.String("local-error-type", "", "error type for the error backend in fixed-listener mode: authentication, permission, invalid_request, rate_limit, server_error, or overloaded; required when -local-backend is error")
-	localRetryAfterSeconds := flag.Int("local-retry-after-seconds", 0, "retry-after seconds sent on rate_limit and overloaded error-backend responses in fixed-listener mode (retry-after-ms is derived); default 0")
+	localRetryAfterSeconds := flag.Int("local-retry-after-seconds", 0, "retry-after seconds sent on rate_limit and overloaded error-backend responses in fixed-listener mode (retry-after-ms is derived); 0-3600, headers omitted when 0")
 	localBackendModel := flag.String("local-backend-model", "", "model the backend uses; required when -local-backend is ollama-logprob")
 	localOllamaUpstream := flag.String("local-ollama-upstream", "", "ollama upstream URL for the ollama and ollama-logprob backends (loopback or RFC1918 only; default http://localhost:11434)")
 	localCalibrationTemperature := flag.Float64("local-calibration-temperature", 0, "ollama-logprob only: divide each log probability by this positive number before exponentiating (default 1.0; flatter above 1, sharper below)")

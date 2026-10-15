@@ -55,7 +55,6 @@ func writePermissionDenied(w http.ResponseWriter) {
 
 func writeRateLimit(ctx context.Context, w http.ResponseWriter) {
 	runtimecfg.SetRetryHeaders(ctx, w)
-	w.Header().Set("anthropic-ratelimit-requests-remaining", "0")
 	writeErrorWithRequestID(w, http.StatusTooManyRequests, "rate_limit_error", "rate limit exceeded", "req_zolem_rate_limit")
 }
 

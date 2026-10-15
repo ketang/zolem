@@ -1,10 +1,16 @@
 package main_test
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -74,7 +80,7 @@ func TestLocalErrorBackend_RetryAfterAndOverloaded_E2E(t *testing.T) {
 					admin := startLocalAdminService(t, repoRoot)
 					t.Cleanup(admin.Close)
 					profile := map[string]any{"backend": "error", "error_type": errType}
-					wantSecs, wantMS := "0", "0"
+					wantSecs, wantMS := "", ""
 					if retry != nil {
 						profile["retry_after_seconds"] = *retry
 						wantSecs, wantMS = "2", "2000"
@@ -98,16 +104,6 @@ func TestLocalErrorBackend_RetryAfterAndOverloaded_E2E(t *testing.T) {
 					}
 					if got := resp.Header.Get("Retry-After-Ms"); got != wantMS {
 						t.Fatalf("Retry-After-Ms: got %q, want %q", got, wantMS)
-					}
-					if p.provider == "anthropic" && errType == "rate_limit" {
-						if got := resp.Header.Get("Anthropic-Ratelimit-Requests-Remaining"); got != "0" {
-							t.Fatalf("anthropic-ratelimit-requests-remaining: got %q, want 0", got)
-						}
-					}
-					if p.provider == "openai" && errType == "rate_limit" {
-						if got := resp.Header.Get("X-Ratelimit-Remaining-Requests"); got != "0" {
-							t.Fatalf("x-ratelimit-remaining-requests: got %q, want 0", got)
-						}
 					}
 				})
 			}
@@ -155,18 +151,100 @@ func TestOpenAIResponsesWebSocket_ForcedErrorHandshake_E2E(t *testing.T) {
 			if got := resp.Header.Get("Retry-After-Ms"); got != "2000" {
 				t.Fatalf("Retry-After-Ms: got %q, want 2000", got)
 			}
+			raw, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("read handshake body: %v", err)
+			}
 			var env struct {
 				Error struct {
 					Type string `json:"type"`
+					Code string `json:"code"`
 				} `json:"error"`
 			}
-			buf := make([]byte, 4096)
-			n, _ := resp.Body.Read(buf)
-			if err := json.Unmarshal(buf[:n], &env); err != nil || env.Error.Type == "" {
-				t.Fatalf("handshake body not an OpenAI error envelope: %q (%v)", buf[:n], err)
+			if err := json.Unmarshal(raw, &env); err != nil {
+				t.Fatalf("handshake body not JSON: %q (%v)", raw, err)
+			}
+			wantType, wantCode := "rate_limit_error", "rate_limit_exceeded"
+			if tc.errType == "overloaded" {
+				wantType, wantCode = "server_error", ""
+			}
+			if env.Error.Type != wantType || env.Error.Code != wantCode {
+				t.Fatalf("handshake error: got type=%q code=%q, want type=%q code=%q (%s)", env.Error.Type, env.Error.Code, wantType, wantCode, raw)
 			}
 		})
 	}
 }
 
 func intPtr(v int) *int { return &v }
+
+// TestLocalErrorBackend_RetryAfterFlag_E2E covers the fixed-listener
+// -local-retry-after-seconds flag and its validation at startup.
+func TestLocalErrorBackend_RetryAfterFlag_E2E(t *testing.T) {
+	bin := buildZolemBinary(t)
+
+	t.Run("sets_headers", func(t *testing.T) {
+		svc := startZolemWithArgs(t, bin, "-local-provider", "anthropic", "-local-profile", "demo",
+			"-local-backend", "error", "-local-error-type", "overloaded", "-local-retry-after-seconds", "3")
+		resp, _ := doRequest(t, svc.baseURL, "POST", "/v1/messages", `{}`,
+			"Content-Type: application/json", "x-api-key: sk-test")
+		defer resp.Body.Close()
+		if resp.StatusCode != 529 {
+			t.Fatalf("status: got %d, want 529", resp.StatusCode)
+		}
+		if got := resp.Header.Get("Retry-After"); got != "3" {
+			t.Fatalf("Retry-After: got %q, want 3", got)
+		}
+		if got := resp.Header.Get("Retry-After-Ms"); got != "3000" {
+			t.Fatalf("Retry-After-Ms: got %q, want 3000", got)
+		}
+	})
+
+	t.Run("rejects_above_cap", func(t *testing.T) {
+		out, err := exec.Command(bin, "-local-addr", fmt.Sprintf("127.0.0.1:%d", pickPort(t)),
+			"-local-provider", "anthropic", "-local-backend", "error", "-local-error-type", "rate_limit",
+			"-local-retry-after-seconds", "999999").CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "retry_after_seconds must be between 0 and 3600") {
+			t.Fatalf("expected cap rejection, err=%v out=%s", err, out)
+		}
+	})
+}
+
+func startZolemWithArgs(t *testing.T, bin string, args ...string) *serviceProcess {
+	t.Helper()
+	port := pickPort(t)
+	var logs bytes.Buffer
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, bin, append([]string{"-local-addr", fmt.Sprintf("127.0.0.1:%d", port)}, args...)...)
+	cmd.Stdout = &logs
+	cmd.Stderr = &logs
+	configureProcReaping(cmd)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start zolem: %v", err)
+	}
+	svc := &serviceProcess{
+		baseURL: fmt.Sprintf("http://127.0.0.1:%d", port),
+		cmd:     cmd,
+		cancel:  cancel,
+		done:    make(chan struct{}),
+		errCh:   make(chan error, 1),
+		logs:    &logs,
+	}
+	t.Cleanup(svc.Close)
+	go func() {
+		svc.errCh <- cmd.Wait()
+		close(svc.done)
+	}()
+	client := &http.Client{Timeout: 2 * time.Second}
+	if err := waitForReady(client, svc, func(c *http.Client, baseURL string) error {
+		resp, _, err := doRequestRaw(c, baseURL, "POST", "/v1/messages", `{}`,
+			"Content-Type: application/json", "x-api-key: sk-test")
+		if err != nil {
+			return errProbeNotReady
+		}
+		resp.Body.Close()
+		return nil
+	}); err != nil {
+		t.Fatalf("zolem did not become ready: %v\nlogs:\n%s", err, logs.String())
+	}
+	return svc
+}

@@ -45,7 +45,6 @@ func writePermissionDenied(w http.ResponseWriter) {
 
 func writeRateLimit(ctx context.Context, w http.ResponseWriter) {
 	runtimecfg.SetRetryHeaders(ctx, w)
-	w.Header().Set("x-ratelimit-remaining-requests", "0")
 	code := "rate_limit_exceeded"
 	writeError(w, http.StatusTooManyRequests, "rate_limit_error", "Rate limit exceeded.", &code)
 }

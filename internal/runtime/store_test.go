@@ -593,3 +593,27 @@ func TestValidateProfileRejectsRetryAfterSecondsWithoutErrorBackend(t *testing.T
 		t.Fatal("expected retry_after_seconds without error backend to fail validation")
 	}
 }
+
+func TestValidateProfileRejectsRetryAfterSecondsAboveCap(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:              "demo",
+		Backend:           runtimecfg.BackendError,
+		ErrorType:         runtimecfg.ErrorTypeOverloaded,
+		RetryAfterSeconds: runtimecfg.MaxRetryAfterSeconds + 1,
+	})
+	if err == nil {
+		t.Fatal("expected retry_after_seconds above the cap to fail validation")
+	}
+}
+
+func TestValidateProfileRejectsRetryAfterSecondsForOtherErrorTypes(t *testing.T) {
+	err := runtimecfg.ValidateProfile(runtimecfg.RuntimeProfile{
+		Name:              "demo",
+		Backend:           runtimecfg.BackendError,
+		ErrorType:         runtimecfg.ErrorTypeServerError,
+		RetryAfterSeconds: 2,
+	})
+	if err == nil {
+		t.Fatal("expected retry_after_seconds with server_error to fail validation")
+	}
+}

@@ -44,7 +44,8 @@ Supported `error_type` values: `authentication`, `permission`, `invalid_request`
 `rate_limit`, `server_error`, `overloaded`.
 
 `rate_limit` and `overloaded` responses carry `retry-after` and `retry-after-ms`
-headers; set the value with `-local-retry-after-seconds N` (default 0). Anthropic
+headers when `-local-retry-after-seconds N` (1-3600) is set; by default no retry
+headers are sent. Anthropic
 `overloaded` is HTTP 529; the other providers return 503.
 
 `-local-backend error` without `-local-error-type` is rejected at startup with
